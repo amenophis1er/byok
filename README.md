@@ -141,6 +141,12 @@ What it guarantees:
   — with the same tools: calls and results become `function_call` /
   `function_call_output` items. No output cap is sent (the backend refuses
   one) and nothing is stored server-side (`store: false`).
+- **Its models come from the Codex catalog** (0.4.1). `listModels` for a
+  ChatGPT connection asks `chatgpt.com/backend-api/codex/models` for the
+  account's own list, hidden entries left out, and a new sign-in starts on the
+  first one. The backend hides models from clients it deems old, so the request
+  claims the Codex CLI version in `CODEX_CLIENT_VERSION`: bump it with releases.
+  When the catalog cannot be fetched the built-in `CODEX_MODELS` list stands in.
 - **Images and PDFs.** Content can be `{type:'image', mediaType, data}` or,
   since 0.3.0, `{type:'document', mediaType:'application/pdf', data, name?}`
   (base64). Anthropic gets `image` / `document` blocks; OpenAI-compatible

@@ -50,4 +50,4 @@ export declare function createAiMessageHandler(options?: AiHandlerOptions): (mes
 }, sendResponse: (r: unknown) => void) => boolean;
 /** One-call wiring: adds its own chrome.runtime.onMessage listener. */
 export declare function registerAiHandlers(options?: AiHandlerOptions): void;
-export { CODEX_MODELS } from './openai-oauth.js';
+export { CODEX_MODELS, CODEX_CLIENT_VERSION } from './openai-oauth.js';

@@ -19,8 +19,32 @@
  */
 /** The usercode response carries no expiry; this bounds the poll loop. */
 export declare const DEVICE_TIMEOUT_MS: number;
-/** Curated list — the Codex backend has no model-enumeration endpoint. */
+/**
+ * The Codex CLI version the catalog request claims. The backend hides models
+ * from clients it deems too old, so bump this with releases (`npm view
+ * @openai/codex version`).
+ */
+export declare const CODEX_CLIENT_VERSION = "0.162.0";
+/** What the dropdown shows when the catalog cannot be fetched (no network, a revoked sign-in). */
 export declare const CODEX_MODELS: string[];
+/**
+ * The models the Codex catalog lists for this client, in the backend's order
+ * (`priority`, lowest first): id is the slug the Responses API takes, name the
+ * display name. Entries the backend hides are left out, as the Codex CLI does.
+ * Returns [] for a body that is not a catalog.
+ */
+export declare function codexCatalogModels(body: unknown): Array<{
+    id: string;
+    name: string;
+}>;
+/** GET the Codex model catalog for a signed-in account. Throws on a failed request or an empty catalog. */
+export declare function codexModels(input: {
+    accessToken: string;
+    accountId?: string;
+}): Promise<Array<{
+    id: string;
+    name: string;
+}>>;
 export interface OpenAiTokens {
     accessToken: string;
     refreshToken: string;

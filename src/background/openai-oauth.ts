@@ -27,7 +27,15 @@ export const DEVICE_TIMEOUT_MS = 15 * 60 * 1000;
 /** Never poll faster than this, whatever the server suggests. */
 const MIN_POLL_MS = 2000;
 
-/** Curated list — the Codex backend has no model-enumeration endpoint. */
+const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models';
+/**
+ * The Codex CLI version the catalog request claims. The backend hides models
+ * from clients it deems too old, so bump this with releases (`npm view
+ * @openai/codex version`).
+ */
+export const CODEX_CLIENT_VERSION = '0.162.0';
+
+/** What the dropdown shows when the catalog cannot be fetched (no network, a revoked sign-in). */
 export const CODEX_MODELS = [
   'gpt-5.6-sol',
   'gpt-5.6-luna',
@@ -37,6 +45,46 @@ export const CODEX_MODELS = [
   'gpt-5.4-mini',
   'gpt-5.3-codex-spark',
 ];
+
+/**
+ * The models the Codex catalog lists for this client, in the backend's order
+ * (`priority`, lowest first): id is the slug the Responses API takes, name the
+ * display name. Entries the backend hides are left out, as the Codex CLI does.
+ * Returns [] for a body that is not a catalog.
+ */
+export function codexCatalogModels(body: unknown): Array<{ id: string; name: string }> {
+  const models = (body as { models?: unknown } | null)?.models;
+  if (!Array.isArray(models)) return [];
+  const listed: Array<{ id: string; name: string; priority: number }> = [];
+  for (const entry of models) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { slug, display_name: displayName, visibility, priority } = entry as Record<string, unknown>;
+    if (typeof slug !== 'string' || slug.length === 0) continue;
+    if (visibility !== undefined && visibility !== 'list') continue;
+    listed.push({
+      id: slug,
+      name: typeof displayName === 'string' && displayName.length > 0 ? displayName : slug,
+      priority: typeof priority === 'number' ? priority : Number.MAX_SAFE_INTEGER,
+    });
+  }
+  return listed.sort((a, b) => a.priority - b.priority).map(({ id, name }) => ({ id, name }));
+}
+
+/** GET the Codex model catalog for a signed-in account. Throws on a failed request or an empty catalog. */
+export async function codexModels(input: { accessToken: string; accountId?: string }): Promise<Array<{ id: string; name: string }>> {
+  const res = await fetch(`${CODEX_MODELS_URL}?client_version=${CODEX_CLIENT_VERSION}`, {
+    headers: {
+      authorization: `Bearer ${input.accessToken}`,
+      ...(input.accountId ? { 'chatgpt-account-id': input.accountId } : {}),
+      originator: 'codex_cli_rs',
+      accept: 'application/json',
+    },
+  });
+  if (!res.ok) throw new Error(`Codex model catalog failed (HTTP ${res.status})`);
+  const models = codexCatalogModels(await res.json().catch(() => null));
+  if (models.length === 0) throw new Error('Codex model catalog listed no models');
+  return models;
+}
 
 export interface OpenAiTokens {
   accessToken: string;

@@ -55,6 +55,7 @@ import {
 import {
   CODEX_MODELS,
   codexComplete,
+  codexModels,
   exchangeDeviceCode,
   nextPollDelayMs,
   pollDevice,
@@ -466,13 +467,15 @@ async function chatgptLoginPoll(label: string): Promise<AIResult<AIChatgptPoll>>
       codeVerifier: poll.codeVerifier,
     });
     await chrome.storage.session.remove(CHATGPT_PENDING);
+    // The catalog's first model is the one the backend puts forward for this account.
+    const catalog = await codexModels({ accessToken: tokens.accessToken, accountId: tokens.accountId }).catch(() => []);
     const conn: StoredConnection = {
       id: crypto.randomUUID(),
       kind: 'chatgpt',
       auth: 'oauth',
       label: label || 'ChatGPT (subscription)',
       baseUrl: '',
-      model: CODEX_MODELS[0] ?? '',
+      model: catalog[0]?.id ?? CODEX_MODELS[0] ?? '',
       apiKeyEnc: await encryptString(tokens.accessToken),
       refreshTokenEnc: tokens.refreshToken ? await encryptString(tokens.refreshToken) : null,
       expiresAt: tokens.expiresAt,
@@ -597,9 +600,9 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
     if (req.kind === 'chrome-builtin') {
       return { ok: true, data: [{ id: 'gemini-nano', name: 'Chrome on-device model' }] };
     }
-    // The Codex backend has no model-enumeration endpoint — use the list.
+    // The Codex catalog, for the signed-in account; the curated list when it cannot be fetched.
     if (req.kind === 'chatgpt') {
-      return { ok: true, data: CODEX_MODELS.map((id) => ({ id, name: id })) };
+      return { ok: true, data: stored ? await codexModelsFor(stored) : fallbackCodexModels() };
     }
     const apiKey = req.apiKey || (stored ? await freshToken(stored.id) : '');
     if (req.kind === 'anthropic' && !apiKey) throw new Error('Enter an API key first.');
@@ -850,6 +853,20 @@ function anthropicHeaders(token: string, subscription: boolean): Record<string, 
       };
 }
 
+function fallbackCodexModels(): ModelInfo[] {
+  return CODEX_MODELS.map((id) => ({ id, name: id }));
+}
+
+/** The Codex catalog for a ChatGPT connection, or the curated list when the request fails (the picker never comes up empty). */
+async function codexModelsFor(conn: StoredConnection): Promise<ModelInfo[]> {
+  try {
+    return await codexModels({ accessToken: await freshToken(conn.id), accountId: conn.accountId });
+  } catch (error) {
+    console.warn('Codex model catalog unavailable, using the built-in list:', errMessage(error));
+    return fallbackCodexModels();
+  }
+}
+
 async function anthropicModels(token: string, subscription: boolean): Promise<ModelInfo[]> {
   const res = await fetch(`${ANTHROPIC_BASE}/v1/models?limit=100`, {
     headers: anthropicHeaders(token, subscription),
@@ -1047,4 +1064,4 @@ export function registerAiHandlers(options: AiHandlerOptions = {}): void {
   );
 }
 
-export { CODEX_MODELS } from './openai-oauth.js';
+export { CODEX_MODELS, CODEX_CLIENT_VERSION } from './openai-oauth.js';
