@@ -1,8 +1,15 @@
-# extension-ai-connect
+# byok
 
-BYO-key AI provider connections for Chrome extensions (MV3). Extracted from
-[wassup](https://github.com/amenophis1er/wassup); one package, three provider
-families, one message-passing API:
+[![npm](https://img.shields.io/npm/v/@amenophis1er/byok)](https://www.npmjs.com/package/@amenophis1er/byok)
+[![CI](https://github.com/amenophis1er/byok/actions/workflows/ci.yml/badge.svg)](https://github.com/amenophis1er/byok/actions/workflows/ci.yml)
+
+**Bring-your-own-key AI for Chrome extensions (Manifest V3).** Your users
+connect the model they already pay for — an API key, or a sign-in with their
+Claude, ChatGPT or Ollama account — and your extension talks to it through one
+API, with keys encrypted at rest and never leaving the background worker.
+
+Three provider families, one message-passing API between your UI and your
+worker, and `chat()` with native tool calling for agents:
 
 - **Anthropic** — API key, Claude Pro/Max subscription OAuth (PKCE +
   paste-code, no redirect registration), or a pasted `claude setup-token`.
@@ -30,16 +37,18 @@ families, one message-passing API:
 ## Install
 
 ```
-npm install github:amenophis1er/extension-ai-connect
+npm install @amenophis1er/byok
 ```
 
-(Ships TypeScript compiled on install via `prepare`; no registry needed.)
+ESM, TypeScript types included, no runtime dependencies. Entry points:
+`@amenophis1er/byok/background` (the worker), `/client` (UI surfaces),
+`/types`, and `/dnr-rules.json`.
 
 ## Wire the background worker
 
 ```ts
 // service-worker.ts
-import { registerAiHandlers } from '@amenophis1er/extension-ai-connect/background';
+import { registerAiHandlers } from '@amenophis1er/byok/background';
 
 registerAiHandlers({
   prefix: 'myext',                       // messages become `myext:ai-*`
@@ -50,7 +59,7 @@ registerAiHandlers({
 Composing with an existing `onMessage` listener instead:
 
 ```ts
-import { createAiMessageHandler } from '@amenophis1er/extension-ai-connect/background';
+import { createAiMessageHandler } from '@amenophis1er/byok/background';
 const handleAi = createAiMessageHandler({ prefix: 'myext' });
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // ...your own messages...
@@ -61,7 +70,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 ## Call it from any UI surface
 
 ```ts
-import { createAiClient } from '@amenophis1er/extension-ai-connect/client';
+import { createAiClient } from '@amenophis1er/byok/client';
 
 const ai = createAiClient({ prefix: 'myext' });
 
@@ -101,7 +110,7 @@ worker. Call it directly — `runtime.sendMessage` does not reach the sender's
 own context — or send `${prefix}:ai-chat` from a page (`ai.chat(...)`).
 
 ```ts
-import { chat } from '@amenophis1er/extension-ai-connect/background';
+import { chat } from '@amenophis1er/byok/background';
 
 const result = await chat({
   system: 'You drive a browser.',
@@ -159,7 +168,7 @@ What it guarantees:
 - **Pinned connection.** With `connectionId` + `connectionRevision`, a deleted
   or edited connection fails the call instead of sending the conversation to a
   different provider.
-- Not yet: tool calling for the ChatGPT subscription and Chrome's built-in model.
+- Not yet: Chrome's built-in model (`gemini-nano`) through `chat()`.
 
 Live check: `npm run build && node scripts/smoke.mjs` runs a two-turn tool round
 trip against each provider it has credentials for (Ollama Cloud from
@@ -193,7 +202,7 @@ for `chrome.permissions.request`.
 
 **DNR rules** (subscription auth only): merge `manifest/dnr-rules.json` into
 your ruleset (it is exported as
-`@amenophis1er/extension-ai-connect/dnr-rules.json`). Anthropic subscription orgs reject CORS-classified requests
+`@amenophis1er/byok/dnr-rules.json`). Anthropic subscription orgs reject CORS-classified requests
 and the Codex backend rejects browser-shaped ones, so these strip
 `Origin`/`Sec-Fetch-*` (and set the expected `user-agent`) on those hosts.
 Rule ids are 9001–9003; renumber on collision.
@@ -225,10 +234,10 @@ Pass your legacy names so nothing is lost:
 
 ```ts
 registerAiHandlers({
-  prefix: 'wassup',              // keep existing message names
+  prefix: 'myext',               // keep existing message names
   storageKey: 'ai',              // keep stored connections
-  cryptoDbName: 'wassup-crypto', // keep decrypting existing ciphertext
-  debugFlagKey: 'wassupDebug',
+  cryptoDbName: 'myext-crypto',  // keep decrypting existing ciphertext
+  debugFlagKey: 'myextDebug',
 });
 ```
 
@@ -244,6 +253,32 @@ encrypted automatically on first load.
 - IndexedDB `<cryptoDbName>`: the non-extractable AES key, and one
   non-extractable Ed25519 key pair per Ollama Cloud connection
   (`ed25519:<connection id>`)
+
+## Versioning
+
+[Semantic versioning](https://semver.org). The public API is what the four
+entry points export; it is recorded in `api/*.api.md` and CI fails on any
+change to it that was not committed on purpose — so an additive change is a
+minor release and a breaking one a major (while on 0.x: a minor). The
+messages between `createAiClient` and the worker carry `PROTOCOL_VERSION`; a
+worker meeting a newer one than its own refuses the message with an error
+asking to reload the extension, instead of misreading it. Changes are listed
+in [CHANGELOG.md](CHANGELOG.md).
+
+## Coming from `extension-ai-connect`
+
+This package was published as a git dependency named
+`@amenophis1er/extension-ai-connect` until 0.4.1. Nothing changed in behaviour
+or storage: replace the dependency with `@amenophis1er/byok` and the import
+paths (`…/extension-ai-connect/background` → `…/byok/background`, and so on).
+Stored connections, encrypted keys and sign-ins carry over.
+
+## Releasing (maintainers)
+
+Bump `version` in package.json and add the release to CHANGELOG.md, merge,
+then tag: `git tag v0.5.1 && git push --tags`. The release workflow checks the
+tag against the version, runs the tests and the API check, and publishes to
+npm with provenance through trusted publishing (no token stored anywhere).
 
 ## License
 

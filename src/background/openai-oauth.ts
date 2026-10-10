@@ -1,6 +1,6 @@
 /**
- * OpenAI "Connect with ChatGPT" device flow + Codex inference, ported from
- * the proven ekip/vonzio/wassup implementations to the MV3 worker.
+ * OpenAI "Connect with ChatGPT" device flow and Codex inference, for the
+ * MV3 worker.
  *
  * The flow is non-standard in two ways that matter:
  *   - polling is keyed by `device_auth_id`, NOT the RFC-8628 device_code;

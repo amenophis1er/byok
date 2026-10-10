@@ -284,3 +284,13 @@ export interface AIResult<T> {
 }
 
 export type ModelInfo = { id: string; name: string };
+
+/**
+ * The version of the messages between `createAiClient` (UI) and the worker's
+ * handlers. Every client message carries it as `v`. A worker meeting a newer
+ * version than its own refuses the message with a clear error rather than
+ * misreading it (a UI page left open across an extension update); a message
+ * without `v` is version 1. Raised only when the messages change
+ * incompatibly — which is a major release of this package.
+ */
+export const PROTOCOL_VERSION = 1;

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ai-connect test host",
   "version": "0.0.1",
-  "description": "Manual test harness for extension-ai-connect: connections, sign-in flows and a test completion.",
+  "description": "Manual test harness for @amenophis1er/byok: connections, sign-in flows and a test completion.",
   "minimum_chrome_version": "137",
   "permissions": ["storage"],
   "host_permissions": [

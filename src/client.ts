@@ -1,16 +1,17 @@
-import type {
-  AIAnthropicLoginStart,
-  AIChatgptLoginStart,
-  AIChatgptPoll,
-  AIChatRequest,
-  AIChatResult,
-  AIConfigView,
-  AIOllamaLoginStart,
-  AIOllamaPoll,
-  AIResult,
-  ModelInfo,
-  ProviderKind,
-  AISaveConnectionRequest,
+import {
+  PROTOCOL_VERSION,
+  type AIAnthropicLoginStart,
+  type AIChatgptLoginStart,
+  type AIChatgptPoll,
+  type AIChatRequest,
+  type AIChatResult,
+  type AIConfigView,
+  type AIOllamaLoginStart,
+  type AIOllamaPoll,
+  type AIResult,
+  type ModelInfo,
+  type ProviderKind,
+  type AISaveConnectionRequest,
 } from './types.js';
 
 /**
@@ -50,7 +51,7 @@ export interface AiClient {
 export function createAiClient(options: { prefix?: string } = {}): AiClient {
   const p = options.prefix ?? 'aiconnect';
   const send = <T>(type: string, payload: Record<string, unknown> = {}): Promise<T> =>
-    chrome.runtime.sendMessage({ type: `${p}:${type}`, ...payload }) as Promise<T>;
+    chrome.runtime.sendMessage({ ...payload, type: `${p}:${type}`, v: PROTOCOL_VERSION }) as Promise<T>;
 
   return {
     get: () => send('ai-get'),
