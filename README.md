@@ -158,19 +158,19 @@ What it guarantees:
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
   calls.
-- **ChatGPT subscription too** (0.4.0). A ChatGPT Plus/Pro connection (signed
+- **ChatGPT subscription too.** A ChatGPT Plus/Pro connection (signed
   in with the device code) talks to OpenAI's Codex backend — the Responses API
   — with the same tools: calls and results become `function_call` /
   `function_call_output` items. No output cap is sent (the backend refuses
   one) and nothing is stored server-side (`store: false`).
-- **Its models come from the Codex catalog** (0.4.1). `listModels` for a
+- **Its models come from the Codex catalog.** `listModels` for a
   ChatGPT connection asks `chatgpt.com/backend-api/codex/models` for the
   account's own list, hidden entries left out, and a new sign-in starts on the
   first one. The backend hides models from clients it deems old, so the request
   claims the Codex CLI version in `CODEX_CLIENT_VERSION`: bump it with releases.
   When the catalog cannot be fetched the built-in `CODEX_MODELS` list stands in.
 - **Images and PDFs.** Content can be `{type:'image', mediaType, data}` or,
-  since 0.3.0, `{type:'document', mediaType:'application/pdf', data, name?}`
+  `{type:'document', mediaType:'application/pdf', data, name?}`
   (base64). Anthropic gets `image` / `document` blocks; OpenAI-compatible
   servers get `image_url` / `file` parts, moved out of tool messages into a
   user message after them. A server without image or PDF input rejects the
@@ -343,7 +343,7 @@ in [CHANGELOG.md](CHANGELOG.md).
 ## Releasing (maintainers)
 
 Bump `version` in package.json and add the release to CHANGELOG.md, merge,
-then tag: `git tag v0.5.1 && git push --tags`. The release workflow checks the
+then tag: `git tag v0.1.1 && git push --tags`. The release workflow checks the
 tag against the version, runs the tests and the API check, and publishes to
 npm with provenance through trusted publishing (no token stored anywhere).
 

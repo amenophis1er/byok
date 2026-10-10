@@ -201,9 +201,9 @@ export type AIOllamaPoll =
   | { status: 'pending' }
   | { status: 'created'; id: string };
 
-/* ── Chat with tools (v0.2.0) ─────────────────────────────────────── */
+/* ── Chat with tools ─────────────────────────────────────── */
 
-/** Message content: text, images for vision-capable providers, and PDF documents (v0.3.0). */
+/** Message content: text, images for vision-capable providers, and PDF documents. */
 export type AIContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; mediaType: 'image/png' | 'image/jpeg'; data: string /* base64 */ }
