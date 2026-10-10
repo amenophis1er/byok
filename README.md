@@ -127,7 +127,12 @@ npm run example        # builds the library into example/demo
 ```
 
 Then open `chrome://extensions`, turn on Developer mode, choose **Load
-unpacked**, pick `example/demo`, and click the extension's toolbar button. For
+unpacked**, pick `example/demo`, and click the extension's toolbar button.
+
+While working on the library, run `npm run dev` instead: it rebuilds into
+`example/demo` on every save, and the loaded demo reloads itself (the page for
+a page change, the whole extension for a library or worker change, reopening
+the page). For
 a local Ollama, allow extensions first: see
 [Local servers](#local-servers-ollama-lm-studio).
 

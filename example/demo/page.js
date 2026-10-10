@@ -2,8 +2,10 @@
 // messages to the worker. This page never sees a key or a token.
 import { createAiClient } from './lib/client.js';
 import { OPENAI_COMPATIBLE_PRESETS, normalizeBaseUrl, originPattern } from './lib/types.js';
+import { watchForChanges } from './dev.js';
 
 const ai = createAiClient({ prefix: 'byokdemo' });
+void watchForChanges(); // `npm run dev` only
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

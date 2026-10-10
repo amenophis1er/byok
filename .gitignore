@@ -3,3 +3,4 @@ example/demo/lib/
 example/demo/rules.json
 dist/
 temp/
+example/demo/dev-reload.json
