@@ -340,14 +340,6 @@ worker meeting a newer one than its own refuses the message with an error
 asking to reload the extension, instead of misreading it. Changes are listed
 in [CHANGELOG.md](CHANGELOG.md).
 
-## Coming from `extension-ai-connect`
-
-This package was published as a git dependency named
-`@amenophis1er/extension-ai-connect` until 0.4.1. Nothing changed in behaviour
-or storage: replace the dependency with `@amenophis1er/byok` and the import
-paths (`…/extension-ai-connect/background` → `…/byok/background`, and so on).
-Stored connections, encrypted keys and sign-ins carry over.
-
 ## Releasing (maintainers)
 
 Bump `version` in package.json and add the release to CHANGELOG.md, merge,

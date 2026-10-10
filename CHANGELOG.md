@@ -7,7 +7,8 @@ while on 0.x, a breaking change bumps the minor version.
 
 - Published to the npm registry as **`@amenophis1er/byok`**, with provenance,
   instead of installed from git as `@amenophis1er/extension-ai-connect`. Same
-  code, same storage: see "Coming from extension-ai-connect" in the README.
+  code, same storage: replace the dependency and the import paths
+  (`…/extension-ai-connect/background` becomes `…/byok/background`).
 - **`PROTOCOL_VERSION`**: every client message carries `v`; a worker meeting a
   newer protocol refuses the message with an error asking to reload the
   extension. Messages without `v` are read as version 1, so existing clients
