@@ -22,6 +22,19 @@ worker, and `chat()` with native tool calling for agents:
 - **Chrome built-in** (`gemini-nano`) is modeled as a connection kind, but
   inference runs in a page context; the host extension wires that side.
 
+> [!WARNING]
+> **The Claude Pro/Max and ChatGPT subscription sign-ins are unofficial.**
+> Neither Anthropic nor OpenAI offers OAuth for third-party apps, so these
+> flows reuse the Claude Code and Codex CLI client IDs and present their
+> traffic as those tools (a Claude Code system prompt, the `codex_cli_rs`
+> originator, and the header rewrites in `dnr-rules.json`). Either provider
+> can stop them working at any time, and using them may break its terms of
+> service and put your users' accounts at risk. Make API keys the default in
+> your extension, and present subscription sign-in as an at-your-own-risk
+> option. API keys and OpenAI-compatible servers use each provider's
+> documented API. The Ollama device sign-in follows the `ollama signin`
+> client too, but it pairs the extension under its own name.
+
 ## Security model
 
 - All secrets live in the **background worker only**. Keys are encrypted at
