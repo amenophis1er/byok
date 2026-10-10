@@ -80,6 +80,7 @@
     "@microsoft/api-extractor": "^7.59.4",
     "@types/chrome": "^0.0.280",
     "@types/node": "^22.20.4",
+    "fake-indexeddb": "^6.2.5",
     "typescript": "^5.6.0",
     "vitest": "^4.1.11"
   },
