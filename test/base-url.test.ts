@@ -148,6 +148,28 @@ describe('listModels', () => {
     expect((fetch.mock.calls[1] as unknown as [URL])[0].searchParams.get('pageToken')).toBe('p2');
   });
 
+  it('lists Workers AI text models from its own model search, across pages', async () => {
+    const page = (names: string[], total: number) => json({
+      success: true,
+      result: names.map((name) => ({ name, task: { name: name.includes('embed') ? 'Text Embeddings' : 'Text Generation' } })),
+      result_info: { total_count: total },
+    });
+    const first = Array.from({ length: 100 }, (_, i) => `@cf/m/model-${String(i).padStart(3, '0')}`);
+    const fetch = vi.fn().mockResolvedValueOnce(page(first, 102)).mockResolvedValueOnce(page(['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/baai/bge-embed'], 102));
+    vi.stubGlobal('fetch', fetch);
+    const res = await list('https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1');
+    expect(res.ok).toBe(true);
+    expect((res.data as Array<{ id: string }>)).toHaveLength(101);
+    expect((res.data as Array<{ id: string }>)[0]!.id).toBe('@cf/m/model-000');
+    expect((res.data as Array<{ id: string }>).some((m) => m.id === '@cf/meta/llama-3.3-70b-instruct-fp8-fast')).toBe(true);
+    const [url, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(`${url.origin}${url.pathname}`).toBe('https://api.cloudflare.com/client/v4/accounts/acct123/ai/models/search');
+    expect(url.searchParams.get('task')).toBe('Text Generation');
+    expect(init.headers).toEqual({ Authorization: 'Bearer k' });
+    expect((fetch.mock.calls[1] as unknown as [URL])[0].searchParams.get('page')).toBe('2');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("reads Together's bare array", async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json([{ id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' }])));
     expect(await list('https://api.together.xyz/v1')).toMatchObject({ ok: true, data: [{ id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' }] });

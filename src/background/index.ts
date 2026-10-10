@@ -646,10 +646,12 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
         ? await anthropicModels(apiKey, subscription)
         : isGemini(base)
           ? await geminiModels(apiKey, new URL(base).origin)
-          : await openaiModels(
-            stored && !req.apiKey ? await authorizerFor(stored, apiKey) : bearerAuth(apiKey),
-            base,
-          );
+          : workersAiAccount(base)
+            ? await workersAiModels(apiKey, workersAiAccount(base)!)
+            : await openaiModels(
+              stored && !req.apiKey ? await authorizerFor(stored, apiKey) : bearerAuth(apiKey),
+              base,
+            );
     return { ok: true, data: models };
   } catch (error) {
     return { ok: false, error: errMessage(error) };
@@ -943,6 +945,46 @@ async function geminiModels(apiKey: string, origin: string): Promise<ModelInfo[]
     }
     pageToken = json.nextPageToken ?? '';
   } while (pageToken);
+  return models.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** The account in a Workers AI root (`api.cloudflare.com/client/v4/accounts/<id>/ai/v1`), else undefined. */
+function workersAiAccount(base: string): string | undefined {
+  try {
+    const url = new URL(base);
+    if (url.hostname !== 'api.cloudflare.com') return undefined;
+    return /^\/client\/v4\/accounts\/([^/]+)\/ai\/v1$/.exec(url.pathname)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Workers AI has no OpenAI-style /models (405): its own model search lists
+ * the account's catalog. Keep the Text Generation models, across pages.
+ */
+async function workersAiModels(apiKey: string, account: string): Promise<ModelInfo[]> {
+  if (!apiKey) throw new Error('Enter an API token first.');
+  const models: ModelInfo[] = [];
+  const perPage = 100;
+  for (let page = 1; ; page++) {
+    const url = new URL(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/models/search`);
+    url.searchParams.set('task', 'Text Generation');
+    url.searchParams.set('per_page', String(perPage));
+    url.searchParams.set('page', String(page));
+    const res = await fetch(url, { headers: bearer(apiKey) });
+    if (!res.ok) throw new Error(await describeHttp(res));
+    const json = (await res.json()) as {
+      result?: { name?: string; task?: { name?: string } }[];
+      result_info?: { total_count?: number };
+    };
+    const result = json.result ?? [];
+    for (const m of result) {
+      if (m.name && (!m.task?.name || m.task.name === 'Text Generation')) models.push({ id: m.name, name: m.name });
+    }
+    const total = json.result_info?.total_count;
+    if (result.length < perPage || (total !== undefined && page * perPage >= total)) break;
+  }
   return models.sort((a, b) => a.id.localeCompare(b.id));
 }
 

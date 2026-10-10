@@ -22,7 +22,9 @@ while on 0.x, a breaking change bumps the minor version.
   next turn, which Gemini requires.
 - Model lists: Gemini's come from its own API, keeping only the models that
   support `generateContent` (its OpenAI-compatible list includes embedding,
-  image and agent models that 404 on chat); a bare array (Together) is read.
+  image and agent models that 404 on chat); Workers AI's come from its model
+  search (Text Generation only), as it has no `/models`; a bare array
+  (Together) is read.
 - Demo: placeholder URLs are editable, a model id can be typed when the server
   lists none, and Connect is disabled again after connecting.
 
