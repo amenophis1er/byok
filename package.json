@@ -68,7 +68,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "compile": "tsc --noEmit",
-    "example": "npm run build && rm -rf example/test-host/lib && cp -R dist example/test-host/lib",
+    "example": "npm run build && rm -rf example/demo/lib && cp -R dist example/demo/lib && cp manifest/dnr-rules.json example/demo/rules.json",
     "test": "vitest run",
     "smoke": "npm run build && node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",

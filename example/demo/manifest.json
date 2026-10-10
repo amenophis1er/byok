@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "byok demo",
+  "version": "0.5.0",
+  "description": "Demo of @amenophis1er/byok: connect Claude, ChatGPT, Ollama or any OpenAI-compatible server, then chat with tools.",
+  "minimum_chrome_version": "137",
+  "permissions": ["storage", "declarativeNetRequest"],
+  "host_permissions": [
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://ollama.com/*",
+    "https://openrouter.ai/*",
+    "https://claude.com/*",
+    "https://platform.claude.com/*",
+    "https://auth.openai.com/*",
+    "https://chatgpt.com/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "byok", "enabled": true, "path": "rules.json" }]
+  },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Open the byok demo" }
+}

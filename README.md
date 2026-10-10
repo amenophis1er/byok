@@ -100,8 +100,21 @@ const o = await ai.ollamaLoginStart('My Extension (Chrome)'); // name shown on t
 const done = await ai.ollamaLoginPoll(''); // '' = label "Ollama Cloud (<account>)"
 ```
 
-A runnable harness for all of this is in `example/test-host` (`npm run
-example`, then load that folder unpacked).
+## Demo extension
+
+`example/demo` is a complete host extension: every provider and sign-in flow,
+connection management, a model picker, and a chat playground where the model
+calls two tools that run in the page. About 400 lines of plain JavaScript on
+the client API, with no bundler.
+
+```
+npm run example        # builds the library into example/demo
+```
+
+Then open `chrome://extensions`, turn on Developer mode, choose **Load
+unpacked**, pick `example/demo`, and click the extension's toolbar button. For
+a local Ollama, start it with `OLLAMA_ORIGINS=chrome-extension://*`: it refuses
+requests from extensions otherwise.
 
 ## Chat with tools (agents)
 
