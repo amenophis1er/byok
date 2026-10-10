@@ -1,2 +1,5 @@
 node_modules/
-example/test-host/lib/
+example/demo/lib/
+example/demo/rules.json
+dist/
+temp/

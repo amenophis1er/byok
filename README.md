@@ -1,8 +1,15 @@
-# extension-ai-connect
+# byok
 
-BYO-key AI provider connections for Chrome extensions (MV3). Extracted from
-[wassup](https://github.com/amenophis1er/wassup); one package, three provider
-families, one message-passing API:
+[![npm](https://img.shields.io/npm/v/@amenophis1er/byok)](https://www.npmjs.com/package/@amenophis1er/byok)
+[![CI](https://github.com/amenophis1er/byok/actions/workflows/ci.yml/badge.svg)](https://github.com/amenophis1er/byok/actions/workflows/ci.yml)
+
+**Bring-your-own-key AI for Chrome extensions (Manifest V3).** Your users
+connect the model they already pay for — an API key, or a sign-in with their
+Claude, ChatGPT or Ollama account — and your extension talks to it through one
+API, with keys encrypted at rest and never leaving the background worker.
+
+Three provider families, one message-passing API between your UI and your
+worker, and `chat()` with native tool calling for agents:
 
 - **Anthropic** — API key, Claude Pro/Max subscription OAuth (PKCE +
   paste-code, no redirect registration), or a pasted `claude setup-token`.
@@ -30,16 +37,18 @@ families, one message-passing API:
 ## Install
 
 ```
-npm install github:amenophis1er/extension-ai-connect
+npm install @amenophis1er/byok
 ```
 
-(Ships TypeScript compiled on install via `prepare`; no registry needed.)
+ESM, TypeScript types included, no runtime dependencies. Entry points:
+`@amenophis1er/byok/background` (the worker), `/client` (UI surfaces),
+`/types`, and `/dnr-rules.json`.
 
 ## Wire the background worker
 
 ```ts
 // service-worker.ts
-import { registerAiHandlers } from '@amenophis1er/extension-ai-connect/background';
+import { registerAiHandlers } from '@amenophis1er/byok/background';
 
 registerAiHandlers({
   prefix: 'myext',                       // messages become `myext:ai-*`
@@ -50,7 +59,7 @@ registerAiHandlers({
 Composing with an existing `onMessage` listener instead:
 
 ```ts
-import { createAiMessageHandler } from '@amenophis1er/extension-ai-connect/background';
+import { createAiMessageHandler } from '@amenophis1er/byok/background';
 const handleAi = createAiMessageHandler({ prefix: 'myext' });
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // ...your own messages...
@@ -61,7 +70,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 ## Call it from any UI surface
 
 ```ts
-import { createAiClient } from '@amenophis1er/extension-ai-connect/client';
+import { createAiClient } from '@amenophis1er/byok/client';
 
 const ai = createAiClient({ prefix: 'myext' });
 
@@ -91,8 +100,21 @@ const o = await ai.ollamaLoginStart('My Extension (Chrome)'); // name shown on t
 const done = await ai.ollamaLoginPoll(''); // '' = label "Ollama Cloud (<account>)"
 ```
 
-A runnable harness for all of this is in `example/test-host` (`npm run
-example`, then load that folder unpacked).
+## Demo extension
+
+`example/demo` is a complete host extension: every provider and sign-in flow,
+connection management, a model picker, and a chat playground where the model
+calls two tools that run in the page. About 500 lines of plain JavaScript on
+the client API, with no bundler.
+
+```
+npm run example        # builds the library into example/demo
+```
+
+Then open `chrome://extensions`, turn on Developer mode, choose **Load
+unpacked**, pick `example/demo`, and click the extension's toolbar button. For
+a local Ollama, allow extensions first: see
+[Local servers](#local-servers-ollama-lm-studio).
 
 ## Chat with tools (agents)
 
@@ -101,7 +123,7 @@ worker. Call it directly — `runtime.sendMessage` does not reach the sender's
 own context — or send `${prefix}:ai-chat` from a page (`ai.chat(...)`).
 
 ```ts
-import { chat } from '@amenophis1er/extension-ai-connect/background';
+import { chat } from '@amenophis1er/byok/background';
 
 const result = await chat({
   system: 'You drive a browser.',
@@ -136,19 +158,19 @@ What it guarantees:
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
   calls.
-- **ChatGPT subscription too** (0.4.0). A ChatGPT Plus/Pro connection (signed
+- **ChatGPT subscription too.** A ChatGPT Plus/Pro connection (signed
   in with the device code) talks to OpenAI's Codex backend — the Responses API
   — with the same tools: calls and results become `function_call` /
   `function_call_output` items. No output cap is sent (the backend refuses
   one) and nothing is stored server-side (`store: false`).
-- **Its models come from the Codex catalog** (0.4.1). `listModels` for a
+- **Its models come from the Codex catalog.** `listModels` for a
   ChatGPT connection asks `chatgpt.com/backend-api/codex/models` for the
   account's own list, hidden entries left out, and a new sign-in starts on the
   first one. The backend hides models from clients it deems old, so the request
   claims the Codex CLI version in `CODEX_CLIENT_VERSION`: bump it with releases.
   When the catalog cannot be fetched the built-in `CODEX_MODELS` list stands in.
 - **Images and PDFs.** Content can be `{type:'image', mediaType, data}` or,
-  since 0.3.0, `{type:'document', mediaType:'application/pdf', data, name?}`
+  `{type:'document', mediaType:'application/pdf', data, name?}`
   (base64). Anthropic gets `image` / `document` blocks; OpenAI-compatible
   servers get `image_url` / `file` parts, moved out of tool messages into a
   user message after them. A server without image or PDF input rejects the
@@ -159,7 +181,7 @@ What it guarantees:
 - **Pinned connection.** With `connectionId` + `connectionRevision`, a deleted
   or edited connection fails the call instead of sending the conversation to a
   different provider.
-- Not yet: tool calling for the ChatGPT subscription and Chrome's built-in model.
+- Not yet: Chrome's built-in model (`gemini-nano`) through `chat()`.
 
 Live check: `npm run build && node scripts/smoke.mjs` runs a two-turn tool round
 trip against each provider it has credentials for (Ollama Cloud from
@@ -193,10 +215,72 @@ for `chrome.permissions.request`.
 
 **DNR rules** (subscription auth only): merge `manifest/dnr-rules.json` into
 your ruleset (it is exported as
-`@amenophis1er/extension-ai-connect/dnr-rules.json`). Anthropic subscription orgs reject CORS-classified requests
+`@amenophis1er/byok/dnr-rules.json`). Anthropic subscription orgs reject CORS-classified requests
 and the Codex backend rejects browser-shaped ones, so these strip
 `Origin`/`Sec-Fetch-*` (and set the expected `user-agent`) on those hosts.
 Rule ids are 9001–9003; renumber on collision.
+
+## Local servers (Ollama, LM Studio)
+
+A server on your machine sees requests from an extension with an
+`Origin: chrome-extension://<id>` header, and may refuse them: the request then
+fails with **HTTP 403**. The extension also needs the host permission for
+`http://localhost/*` (asked on demand, see above).
+
+**Ollama** accepts only the origins listed in `OLLAMA_ORIGINS`. Allow one
+extension with `chrome-extension://<its id>` (shown in `chrome://extensions`),
+or all of them with `chrome-extension://*`. Then restart Ollama. On a Mac, how
+depends on how Ollama runs:
+
+- **The Ollama app** (menu bar icon):
+
+  ```
+  launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
+  ```
+
+  Quit Ollama from the menu bar and open it again. `launchctl setenv` lasts
+  until you log out; to keep it, add the same line to a login item or use one
+  of the options below.
+
+- **Homebrew service** (`brew services start ollama`): add the variable to the
+  service's launch agent, then restart it with `launchctl`. `brew services
+  restart` would rewrite the file from the formula and drop the variable.
+
+  ```
+  P=~/Library/LaunchAgents/homebrew.mxcl.ollama.plist
+  /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" $P 2>/dev/null
+  /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OLLAMA_ORIGINS string chrome-extension://*" $P
+  launchctl bootout gui/$(id -u)/homebrew.mxcl.ollama
+  launchctl bootstrap gui/$(id -u) $P
+  ```
+
+  Run it again after `brew upgrade ollama` or `brew services restart ollama`.
+
+- **Your own launch agent** (a plist in `~/Library/LaunchAgents` running
+  `ollama serve`): add `OLLAMA_ORIGINS` under `EnvironmentVariables`, then
+  reload it. If `bootstrap` reports an input/output error, the old job was
+  still stopping: run it again.
+
+  ```
+  launchctl bootout gui/$(id -u)/<label>
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist
+  ```
+
+- **In a terminal**: `OLLAMA_ORIGINS="chrome-extension://*" ollama serve`.
+
+On Linux (systemd), run `sudo systemctl edit ollama`, add
+`Environment="OLLAMA_ORIGINS=chrome-extension://*"` under `[Service]`, then
+`sudo systemctl restart ollama`. On Windows, set it as a user environment
+variable and restart Ollama.
+
+Check it worked. This should print `200`, not `403`:
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" -H "Origin: chrome-extension://x" localhost:11434/v1/models
+```
+
+**LM Studio**: in the Developer tab, open the server settings and turn on
+**Enable CORS**.
 
 ## Provider fine print (already handled, documented so you don't undo it)
 
@@ -225,10 +309,10 @@ Pass your legacy names so nothing is lost:
 
 ```ts
 registerAiHandlers({
-  prefix: 'wassup',              // keep existing message names
+  prefix: 'myext',               // keep existing message names
   storageKey: 'ai',              // keep stored connections
-  cryptoDbName: 'wassup-crypto', // keep decrypting existing ciphertext
-  debugFlagKey: 'wassupDebug',
+  cryptoDbName: 'myext-crypto',  // keep decrypting existing ciphertext
+  debugFlagKey: 'myextDebug',
 });
 ```
 
@@ -244,6 +328,24 @@ encrypted automatically on first load.
 - IndexedDB `<cryptoDbName>`: the non-extractable AES key, and one
   non-extractable Ed25519 key pair per Ollama Cloud connection
   (`ed25519:<connection id>`)
+
+## Versioning
+
+[Semantic versioning](https://semver.org). The public API is what the four
+entry points export; it is recorded in `api/*.api.md` and CI fails on any
+change to it that was not committed on purpose — so an additive change is a
+minor release and a breaking one a major (while on 0.x: a minor). The
+messages between `createAiClient` and the worker carry `PROTOCOL_VERSION`; a
+worker meeting a newer one than its own refuses the message with an error
+asking to reload the extension, instead of misreading it. Changes are listed
+in [CHANGELOG.md](CHANGELOG.md).
+
+## Releasing (maintainers)
+
+Bump `version` in package.json and add the release to CHANGELOG.md, merge,
+then tag: `git tag v0.1.1 && git push --tags`. The release workflow checks the
+tag against the version, runs the tests and the API check, and publishes to
+npm with provenance through trusted publishing (no token stored anywhere).
 
 ## License
 

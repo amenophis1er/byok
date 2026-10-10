@@ -201,9 +201,9 @@ export type AIOllamaPoll =
   | { status: 'pending' }
   | { status: 'created'; id: string };
 
-/* ── Chat with tools (v0.2.0) ─────────────────────────────────────── */
+/* ── Chat with tools ─────────────────────────────────────── */
 
-/** Message content: text, images for vision-capable providers, and PDF documents (v0.3.0). */
+/** Message content: text, images for vision-capable providers, and PDF documents. */
 export type AIContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; mediaType: 'image/png' | 'image/jpeg'; data: string /* base64 */ }
@@ -284,3 +284,13 @@ export interface AIResult<T> {
 }
 
 export type ModelInfo = { id: string; name: string };
+
+/**
+ * The version of the messages between `createAiClient` (UI) and the worker's
+ * handlers. Every client message carries it as `v`. A worker meeting a newer
+ * version than its own refuses the message with a clear error rather than
+ * misreading it (a UI page left open across an extension update); a message
+ * without `v` is version 1. Raised only when the messages change
+ * incompatibly — which is a major release of this package.
+ */
+export const PROTOCOL_VERSION = 1;

@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>byok demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">b</span>
+      <div>
+        <h1>byok</h1>
+        <p class="tagline">Bring-your-own-key AI for Chrome extensions</p>
+      </div>
+    </div>
+    <nav class="links">
+      <a href="https://www.npmjs.com/package/@amenophis1er/byok" target="_blank" rel="noopener">npm</a>
+      <a href="https://github.com/amenophis1er/byok" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="card">
+        <div class="card-head">
+          <h2>Connections</h2>
+          <span class="count" id="conn-count"></span>
+        </div>
+        <ul id="connections" class="conn-list" aria-live="polite"></ul>
+        <p id="conn-empty" class="empty" hidden>No connections yet. Add one below: it is stored encrypted in this browser and never leaves the extension's worker.</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Add a connection</h2></div>
+        <div class="tabs" role="tablist" aria-label="Provider">
+          <button role="tab" class="tab" data-tab="claude" aria-selected="true">Claude</button>
+          <button role="tab" class="tab" data-tab="chatgpt" aria-selected="false">ChatGPT</button>
+          <button role="tab" class="tab" data-tab="ollama" aria-selected="false">Ollama</button>
+          <button role="tab" class="tab" data-tab="compatible" aria-selected="false" title="Any OpenAI-compatible server">Others</button>
+        </div>
+
+        <!-- Claude -->
+        <div class="pane" data-pane="claude">
+          <div class="seg" role="radiogroup" aria-label="How to connect Claude">
+            <label><input type="radio" name="claude-mode" value="subscription" checked> Pro/Max sign-in</label>
+            <label><input type="radio" name="claude-mode" value="key"> API key</label>
+            <label><input type="radio" name="claude-mode" value="token"> Setup token</label>
+          </div>
+
+          <div data-claude="subscription">
+            <p class="hint">Uses your Claude subscription. Approve in the tab that opens, then paste the code it shows.</p>
+            <button class="btn primary" id="claude-start">Sign in with Claude</button>
+            <div id="claude-paste" class="stack" hidden>
+              <label class="field">Code from claude.com
+                <input id="claude-code" placeholder="code#state" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="row">
+                <button class="btn primary" id="claude-finish">Connect</button>
+                <button class="btn" id="claude-cancel">Cancel</button>
+              </div>
+              <p class="hint">No tab? <a id="claude-link" target="_blank" rel="noopener">Open the consent page</a>.</p>
+            </div>
+          </div>
+
+          <div data-claude="key" hidden>
+            <label class="field">Anthropic API key
+              <input id="claude-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+            </label>
+            <button class="btn primary" id="claude-key-save">Connect</button>
+          </div>
+
+          <div data-claude="token" hidden>
+            <p class="hint">A long-lived token from <code>claude setup-token</code> in Claude Code.</p>
+            <label class="field">Setup token
+              <input id="claude-token" type="password" placeholder="sk-ant-oat…" autocomplete="off" spellcheck="false">
+            </label>
+            <button class="btn primary" id="claude-token-save">Connect</button>
+          </div>
+        </div>
+
+        <!-- ChatGPT -->
+        <div class="pane" data-pane="chatgpt" hidden>
+          <p class="hint">Uses your ChatGPT plan through the Codex backend. First turn on <em>device code authorization for Codex</em> in ChatGPT's security settings.</p>
+          <button class="btn primary" id="chatgpt-start">Sign in with ChatGPT</button>
+          <div id="chatgpt-box" class="device" hidden>
+            <p>Enter this code on the page that opened:</p>
+            <div class="code-row">
+              <code id="chatgpt-code" class="user-code"></code>
+              <button class="btn small" id="chatgpt-copy">Copy</button>
+            </div>
+            <p class="hint">No tab? <a id="chatgpt-link" target="_blank" rel="noopener">Open the sign-in page</a>.</p>
+            <div class="row">
+              <span class="waiting"><span class="spinner" aria-hidden="true"></span>Waiting for approval…</span>
+              <button class="btn" id="chatgpt-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ollama Cloud -->
+        <div class="pane" data-pane="ollama" hidden>
+          <p class="hint">Pairs this browser with your ollama.com account. No key to copy: the extension holds a device key.</p>
+          <label class="field">Device name, shown on ollama.com
+            <input id="ollama-device" value="byok demo (Chrome)">
+          </label>
+          <button class="btn primary" id="ollama-start">Connect Ollama Cloud</button>
+          <div id="ollama-box" class="device" hidden>
+            <p class="hint">Click <strong>Connect</strong> on the ollama.com page that opened. <a id="ollama-link" target="_blank" rel="noopener">Open it again</a>.</p>
+            <div class="row">
+              <span class="waiting"><span class="spinner" aria-hidden="true"></span>Waiting for ollama.com…</span>
+              <button class="btn" id="ollama-cancel">Cancel</button>
+            </div>
+          </div>
+          <p class="hint" style="margin-top:12px">For a local Ollama, use <strong>Others</strong>.</p>
+        </div>
+
+        <!-- OpenAI-compatible -->
+        <div class="pane" data-pane="compatible" hidden>
+          <p class="hint">OpenAI, OpenRouter, a local Ollama or LM Studio, or any server that speaks the OpenAI API.</p>
+          <label class="field">Server
+            <select id="compat-preset"></select>
+          </label>
+          <label class="field">Base URL
+            <input id="compat-url" placeholder="https://api.example.com" spellcheck="false">
+          </label>
+          <label class="field"><span>API key <span id="compat-optional" class="muted" hidden>(optional)</span></span>
+            <input id="compat-key" type="password" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="row">
+            <button class="btn" id="compat-models">Load models</button>
+            <select id="compat-model" class="grow" disabled><option>Load models first</option></select>
+          </div>
+          <button class="btn primary" id="compat-save" disabled>Connect</button>
+          <p id="compat-local" class="hint" style="margin-top:12px" hidden>Ollama refuses requests from extensions (HTTP 403) unless it is started with <code>OLLAMA_ORIGINS=chrome-extension://*</code>. <a href="https://github.com/amenophis1er/byok#local-servers-ollama-lm-studio" target="_blank" rel="noopener">How to set it</a>.</p>
+        </div>
+
+        <p id="add-status" class="status" role="status"></p>
+      </section>
+    </aside>
+
+    <section class="card chat">
+      <div class="chat-head">
+        <div>
+          <h2>Playground</h2>
+          <p id="active-line" class="muted">No active connection.</p>
+        </div>
+        <div class="chat-controls">
+          <select id="model" aria-label="Model" disabled></select>
+          <label class="toggle"><input type="checkbox" id="tools" checked> Tools</label>
+          <button class="btn" id="clear">Clear</button>
+        </div>
+      </div>
+
+      <div id="log" class="log" aria-live="polite">
+        <div class="welcome" id="welcome">
+          <h3>Talk to your own model</h3>
+          <p>Every request goes from this page to the extension's worker, and from there straight to your provider. With <strong>Tools</strong> on, the model can call two demo tools that run here in the page:</p>
+          <ul>
+            <li><code>get_time</code> tells the local date, time and time zone.</li>
+            <li><code>calculate</code> evaluates arithmetic exactly.</li>
+          </ul>
+          <div class="chips">
+            <button class="chip">What time is it here, and how many minutes until midnight?</button>
+            <button class="chip">What is 17.5% of 2,340, times 12?</button>
+            <button class="chip">Write a haiku about API keys.</button>
+          </div>
+        </div>
+      </div>
+
+      <form id="composer" class="composer">
+        <textarea id="input" rows="1" placeholder="Message your model…" aria-label="Message"></textarea>
+        <button class="btn primary" id="send" type="submit">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <script type="module" src="page.js"></script>
+</body>
+</html>

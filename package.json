@@ -1,8 +1,38 @@
 {
-  "name": "@amenophis1er/extension-ai-connect",
-  "version": "0.4.1",
-  "description": "BYO-key AI provider connections for Chrome extensions: encrypted key storage, Anthropic/OpenAI-compatible/ChatGPT-subscription providers, OAuth flows, one message-passing API.",
+  "name": "@amenophis1er/byok",
+  "version": "0.1.0",
+  "description": "Bring-your-own-key AI for Chrome extensions (MV3): encrypted key storage, sign-in with Claude, ChatGPT and Ollama accounts, Anthropic and OpenAI-compatible providers, tool calling, one message API between the UI and the worker.",
+  "keywords": [
+    "byok",
+    "ai",
+    "llm",
+    "chrome-extension",
+    "manifest-v3",
+    "anthropic",
+    "claude",
+    "openai",
+    "chatgpt",
+    "ollama",
+    "openrouter",
+    "tool-calling",
+    "api-keys",
+    "oauth"
+  ],
+  "license": "Apache-2.0",
+  "author": "Amen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amenophis1er/byok.git"
+  },
+  "homepage": "https://github.com/amenophis1er/byok#readme",
+  "bugs": {
+    "url": "https://github.com/amenophis1er/byok/issues"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -27,28 +57,32 @@
   "files": [
     "dist",
     "manifest",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "compile": "tsc --noEmit",
-    "prepare": "npm run build",
-    "example": "npm run build && rm -rf example/test-host/lib && cp -R dist example/test-host/lib",
+    "example": "npm run build && rm -rf example/demo/lib && cp -R dist example/demo/lib && cp manifest/dnr-rules.json example/demo/rules.json",
     "test": "vitest run",
     "smoke": "npm run build && node scripts/smoke.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "api": "npm run build && node scripts/api-report.mjs",
+    "api:update": "npm run build && node scripts/api-report.mjs --update",
+    "check": "npm run typecheck && npm test && npm run api",
+    "prepublishOnly": "npm run check"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/amenophis1er/extension-ai-connect.git"
-  },
-  "author": "Amen",
-  "license": "Apache-2.0",
-  "private": false,
   "devDependencies": {
+    "@microsoft/api-extractor": "^7.59.4",
     "@types/chrome": "^0.0.280",
     "@types/node": "^22.20.4",
     "typescript": "^5.6.0",
     "vitest": "^4.1.11"
-  }
+  },
+  "private": false
 }

@@ -1,6 +1,6 @@
 /**
- * Anthropic Claude subscription OAuth (Claude Pro/Max), ported from the
- * proven ekip/vonzio implementation to WebCrypto for the MV3 worker.
+ * Anthropic Claude subscription OAuth (Claude Pro/Max): the PKCE flow on
+ * WebCrypto, for the MV3 worker.
  *
  * Authorization-code + PKCE, public client, OUT-OF-BAND display mode
  * (`code=true` + the platform callback): after consent the page SHOWS a

@@ -1,6 +1,7 @@
 import {
   normalizeBaseUrl,
   defaultLabel,
+  PROTOCOL_VERSION,
   type AIAnthropicLoginCompleteRequest,
   type AIAnthropicLoginStart,
   type AIAnthropicPasteTokenRequest,
@@ -73,7 +74,7 @@ import {
  *
  * Wire it up in the service worker:
  *
- *   import { registerAiHandlers } from '@amenophis1er/extension-ai-connect/background';
+ *   import { registerAiHandlers } from '@amenophis1er/byok/background';
  *   registerAiHandlers({ prefix: 'myext' });
  *
  * or compose with an existing onMessage listener via createAiMessageHandler.
@@ -1005,6 +1006,12 @@ export function createAiMessageHandler(
   configureCryptoDb(opts.cryptoDbName);
   const p = opts.prefix;
   return (message, sendResponse) => {
+    // A UI built against a newer protocol than this worker: refuse, and say how to fix it.
+    const version = (message as { v?: unknown } | undefined)?.v;
+    if (typeof message?.type === 'string' && message.type.startsWith(`${p}:ai-`) && typeof version === 'number' && version > PROTOCOL_VERSION) {
+      sendResponse({ ok: false, error: `This page speaks a newer version of the AI messages (${version}) than the extension's background (${PROTOCOL_VERSION}). Reload the extension.` });
+      return false;
+    }
     switch (message?.type) {
       case `${p}:ai-get`:
         void getView().then(sendResponse);
