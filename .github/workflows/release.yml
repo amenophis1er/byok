@@ -26,6 +26,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@latest
       - run: npm ci
       - name: The tag matches package.json
         run: |
@@ -33,7 +35,8 @@ jobs:
           PKG_VERSION="$(node -p "require('./package.json').version")"
           [ "$TAG_VERSION" = "$PKG_VERSION" ] || { echo "::error::Tag $TAG_VERSION != package.json $PKG_VERSION"; exit 1; }
       # prepublishOnly runs the full check (typecheck, tests, build, API report).
-      - run: npm publish
+      # Provenance is signed here, in CI; a publish from a laptop cannot sign it.
+      - run: npm publish --provenance
       - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
