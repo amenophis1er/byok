@@ -104,7 +104,7 @@ const done = await ai.ollamaLoginPoll(''); // '' = label "Ollama Cloud (<account
 
 `example/demo` is a complete host extension: every provider and sign-in flow,
 connection management, a model picker, and a chat playground where the model
-calls two tools that run in the page. About 400 lines of plain JavaScript on
+calls two tools that run in the page. About 500 lines of plain JavaScript on
 the client API, with no bundler.
 
 ```
