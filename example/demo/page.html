@@ -129,9 +129,11 @@
           </label>
           <div class="row">
             <button class="btn" id="compat-models">Load models</button>
-            <input id="compat-model" class="grow" list="compat-model-list" placeholder="Load models, or type a model id" spellcheck="false">
-            <datalist id="compat-model-list"></datalist>
+            <select id="compat-model" class="grow" disabled><option>Load models first</option></select>
           </div>
+          <label class="field" id="compat-model-typed-field" hidden>Model id
+            <input id="compat-model-typed" placeholder="e.g. @cf/meta/llama-3.3-70b-instruct-fp8-fast" spellcheck="false">
+          </label>
           <button class="btn primary" id="compat-save" disabled>Connect</button>
           <p id="compat-local" class="hint" style="margin-top:12px" hidden>Ollama refuses requests from extensions (HTTP 403) unless it is started with <code>OLLAMA_ORIGINS=chrome-extension://*</code>. <a href="https://github.com/amenophis1er/byok#local-servers-ollama-lm-studio" target="_blank" rel="noopener">How to set it</a>.</p>
         </div>

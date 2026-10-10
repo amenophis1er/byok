@@ -640,12 +640,15 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
     }
     const apiKey = req.apiKey || (stored ? await freshToken(stored.id) : '');
     if (req.kind === 'anthropic' && !apiKey) throw new Error('Enter an API key first.');
+    const base = req.kind === 'openai-compatible' ? apiRoot(req.baseUrl) : '';
     const models =
       req.kind === 'anthropic'
         ? await anthropicModels(apiKey, subscription)
-        : await openaiModels(
+        : isGemini(base)
+          ? await geminiModels(apiKey, new URL(base).origin)
+          : await openaiModels(
             stored && !req.apiKey ? await authorizerFor(stored, apiKey) : bearerAuth(apiKey),
-            apiRoot(req.baseUrl),
+            base,
           );
     return { ok: true, data: models };
   } catch (error) {
@@ -910,15 +913,47 @@ async function anthropicModels(token: string, subscription: boolean): Promise<Mo
   return (json.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id }));
 }
 
+const isGemini = (base: string): boolean => {
+  try { return new URL(base).hostname === 'generativelanguage.googleapis.com'; } catch { return false; }
+};
+
+/**
+ * Gemini's OpenAI-compatible /models lists every model on the account,
+ * embedding, image and agent models included, which 404 on chat. Its own
+ * API says what each supports: keep the generateContent ones.
+ */
+async function geminiModels(apiKey: string, origin: string): Promise<ModelInfo[]> {
+  if (!apiKey) throw new Error('Enter an API key first.');
+  const models: ModelInfo[] = [];
+  let pageToken = '';
+  do {
+    const url = new URL(`${origin}/v1beta/models`);
+    url.searchParams.set('pageSize', '1000');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const res = await fetch(url, { headers: { 'x-goog-api-key': apiKey } });
+    if (!res.ok) throw new Error(await describeHttp(res));
+    const json = (await res.json()) as {
+      models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
+      nextPageToken?: string;
+    };
+    for (const m of json.models ?? []) {
+      if (!m.supportedGenerationMethods?.includes('generateContent')) continue;
+      const id = m.name.replace(/^models\//, '');
+      models.push({ id, name: m.displayName || id });
+    }
+    pageToken = json.nextPageToken ?? '';
+  } while (pageToken);
+  return models.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 async function openaiModels(authorize: Authorizer, base: string): Promise<ModelInfo[]> {
   const url = new URL(`${base}/models`);
   const res = await fetch(url, { headers: await authorize('GET', url) });
   if (!res.ok) throw new Error(await describeHttp(res));
-  // `{ data: [...] }`, or a bare array (Together); Gemini prefixes ids with `models/`.
+  // `{ data: [...] }`, or a bare array (Together).
   const json = (await res.json()) as { data?: { id: string }[] } | { id: string }[];
   return (Array.isArray(json) ? json : (json.data ?? []))
-    .map((m) => m.id.replace(/^models\//, ''))
-    .map((id) => ({ id, name: id }))
+    .map((m) => ({ id: m.id, name: m.id }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 

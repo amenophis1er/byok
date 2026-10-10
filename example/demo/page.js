@@ -282,17 +282,22 @@ function applyPreset() {
   resetCompatModels();
 }
 function resetCompatModels() {
-  $('compat-model-list').textContent = '';
-  compatModelInput();
+  $('compat-model').innerHTML = '<option>Load models first</option>';
+  $('compat-model').disabled = true;
+  $('compat-model-typed-field').hidden = true;
+  $('compat-model-typed').value = '';
+  $('compat-save').disabled = true;
 }
-/** Some servers list no models (or have no /models); a typed id works too. */
-function compatModelInput() {
-  $('compat-save').disabled = !$('compat-model').value.trim();
+/** Servers that list no models (or have no /models) take a typed model id instead. */
+function typeCompatModel() {
+  $('compat-model-typed-field').hidden = false;
+  $('compat-save').disabled = !$('compat-model-typed').value.trim();
 }
+const compatModel = () => ($('compat-model-typed-field').hidden ? $('compat-model').value : $('compat-model-typed').value.trim());
 $('compat-preset').onchange = applyPreset;
 $('compat-url').oninput = resetCompatModels;
 $('compat-key').oninput = resetCompatModels;
-$('compat-model').oninput = compatModelInput;
+$('compat-model-typed').oninput = typeCompatModel;
 applyPreset();
 
 /** Servers outside the manifest's host permissions need a grant, asked on the click. */
@@ -308,13 +313,22 @@ $('compat-models').onclick = () => busy($('compat-models'), 'Loading…', async 
     const baseUrl = normalizeBaseUrl($('compat-url').value);
     await ensureOrigin(baseUrl);
     const res = await ai.listModels({ kind: 'openai-compatible', baseUrl, apiKey: $('compat-key').value.trim() });
-    if (!res.ok) return status(res.error, 'error');
-    const list = $('compat-model-list');
-    list.textContent = '';
-    for (const m of res.data) list.append(new Option(m.name, m.id));
-    if (res.data.length && !res.data.some((m) => m.id === $('compat-model').value)) $('compat-model').value = res.data[0].id;
-    compatModelInput();
-    status(res.data.length ? `${res.data.length} models.` : 'The server listed no models.', res.data.length ? '' : 'error');
+    if (!res.ok) {
+      typeCompatModel();
+      return status(`${res.error} You can type a model id instead.`, 'error');
+    }
+    const select = $('compat-model');
+    select.textContent = '';
+    for (const m of res.data) select.append(new Option(m.name, m.id));
+    select.disabled = res.data.length === 0;
+    if (res.data.length) {
+      $('compat-model-typed-field').hidden = true;
+      $('compat-save').disabled = false;
+      status(`${res.data.length} models.`);
+    } else {
+      typeCompatModel();
+      status('The server listed no models. Type a model id instead.', 'error');
+    }
   } catch (error) {
     status(error.message, 'error');
   }
@@ -327,7 +341,7 @@ $('compat-save').onclick = () => busy($('compat-save'), 'Connecting…', async (
   const apiKey = $('compat-key').value.trim();
   const preset = presets[Number($('compat-preset').value)];
   const label = preset.label === 'Custom' ? '' : preset.label;
-  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: $('compat-model').value.trim(),
+  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: compatModel(),
     apiKeyMode: apiKey ? 'set' : 'clear', apiKey, makeActive: true });
   if (!res.ok) return status(res.error, 'error');
   $('compat-key').value = '';

@@ -125,9 +125,27 @@ describe('listModels', () => {
     expect(init.headers).toMatchObject({ Authorization: 'Bearer k' });
   });
 
-  it("drops Gemini's models/ prefix", async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'models/gemini-2.5-flash' }] })));
-    expect(await list('https://generativelanguage.googleapis.com/v1beta/openai')).toEqual({ ok: true, data: [{ id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' }] });
+  it('lists only the Gemini models that chat, from its own API, across pages', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({
+        models: [
+          { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+          { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] },
+          { name: 'models/imagen-4.0-generate-001', supportedGenerationMethods: ['predict'] },
+          { name: 'models/antigravity-preview', supportedGenerationMethods: [] },
+        ],
+        nextPageToken: 'p2',
+      }))
+      .mockResolvedValueOnce(json({ models: [{ name: 'models/gemini-2.5-pro', supportedGenerationMethods: ['generateContent'] }] }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await list('https://generativelanguage.googleapis.com/v1beta/openai')).toEqual({ ok: true, data: [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+      { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro' },
+    ] });
+    const [first, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(`${first.origin}${first.pathname}`).toBe('https://generativelanguage.googleapis.com/v1beta/models');
+    expect(init.headers).toEqual({ 'x-goog-api-key': 'k' });
+    expect((fetch.mock.calls[1] as unknown as [URL])[0].searchParams.get('pageToken')).toBe('p2');
   });
 
   it("reads Together's bare array", async () => {

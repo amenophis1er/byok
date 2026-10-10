@@ -17,10 +17,11 @@ while on 0.x, a breaking change bumps the minor version.
   stripped base URL you pass to `listModels` or `saveConnection` yourself
   must get its `/v1` back.
 - A base URL with an unfilled `{placeholder}` is refused.
-- Model lists: Gemini's `models/` prefix is dropped, and a bare array (Together)
-  is read.
-- Demo: placeholder URLs are editable, and a model id can be typed when the
-  server lists none.
+- Model lists: Gemini's come from its own API, keeping only the models that
+  support `generateContent` (its OpenAI-compatible list includes embedding,
+  image and agent models that 404 on chat); a bare array (Together) is read.
+- Demo: placeholder URLs are editable, a model id can be typed when the server
+  lists none, and Connect is disabled again after connecting.
 
 ## 0.1.1
 
