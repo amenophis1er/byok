@@ -3,6 +3,12 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.1
+
+- Published from the release workflow through npm trusted publishing, with a
+  provenance attestation linking the package to its source commit. No code
+  changes.
+
 ## 0.1.0
 
 First release.
