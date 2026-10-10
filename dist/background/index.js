@@ -6,7 +6,7 @@ import { CODEX_RESPONSES_URL, codexBody, codexHttpError, codexResult } from './c
 import { readSse } from './sse.js';
 import { CONNECT_POLL_MS, CONNECT_TIMEOUT_MS, OLLAMA_BASE, connectUrl, disconnect as ollamaDisconnect, publicKeyLine, signRequest, whoami, } from './ollama-device.js';
 import { exchangeCode, isSetupToken, refreshTokens, startLogin, withClaudeCodeSystem, } from './anthropic-oauth.js';
-import { CODEX_MODELS, codexComplete, exchangeDeviceCode, nextPollDelayMs, pollDevice, refreshOpenAiTokens, startDeviceLogin, } from './openai-oauth.js';
+import { CODEX_MODELS, codexComplete, codexModels, exchangeDeviceCode, nextPollDelayMs, pollDevice, refreshOpenAiTokens, startDeviceLogin, } from './openai-oauth.js';
 let opts = resolve({});
 function resolve(o) {
     return {
@@ -319,13 +319,15 @@ async function chatgptLoginPoll(label) {
             codeVerifier: poll.codeVerifier,
         });
         await chrome.storage.session.remove(CHATGPT_PENDING);
+        // The catalog's first model is the one the backend puts forward for this account.
+        const catalog = await codexModels({ accessToken: tokens.accessToken, accountId: tokens.accountId }).catch(() => []);
         const conn = {
             id: crypto.randomUUID(),
             kind: 'chatgpt',
             auth: 'oauth',
             label: label || 'ChatGPT (subscription)',
             baseUrl: '',
-            model: CODEX_MODELS[0] ?? '',
+            model: catalog[0]?.id ?? CODEX_MODELS[0] ?? '',
             apiKeyEnc: await encryptString(tokens.accessToken),
             refreshTokenEnc: tokens.refreshToken ? await encryptString(tokens.refreshToken) : null,
             expiresAt: tokens.expiresAt,
@@ -451,9 +453,9 @@ async function listModels(req) {
         if (req.kind === 'chrome-builtin') {
             return { ok: true, data: [{ id: 'gemini-nano', name: 'Chrome on-device model' }] };
         }
-        // The Codex backend has no model-enumeration endpoint — use the list.
+        // The Codex catalog, for the signed-in account; the curated list when it cannot be fetched.
         if (req.kind === 'chatgpt') {
-            return { ok: true, data: CODEX_MODELS.map((id) => ({ id, name: id })) };
+            return { ok: true, data: stored ? await codexModelsFor(stored) : fallbackCodexModels() };
         }
         const apiKey = req.apiKey || (stored ? await freshToken(stored.id) : '');
         if (req.kind === 'anthropic' && !apiKey)
@@ -700,6 +702,19 @@ function anthropicHeaders(token, subscription) {
             'anthropic-dangerous-direct-browser-access': 'true',
         };
 }
+function fallbackCodexModels() {
+    return CODEX_MODELS.map((id) => ({ id, name: id }));
+}
+/** The Codex catalog for a ChatGPT connection, or the curated list when the request fails (the picker never comes up empty). */
+async function codexModelsFor(conn) {
+    try {
+        return await codexModels({ accessToken: await freshToken(conn.id), accountId: conn.accountId });
+    }
+    catch (error) {
+        console.warn('Codex model catalog unavailable, using the built-in list:', errMessage(error));
+        return fallbackCodexModels();
+    }
+}
 async function anthropicModels(token, subscription) {
     const res = await fetch(`${ANTHROPIC_BASE}/v1/models?limit=100`, {
         headers: anthropicHeaders(token, subscription),
@@ -880,4 +895,4 @@ export function registerAiHandlers(options = {}) {
     const handle = createAiMessageHandler(options);
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => handle(message, sendResponse));
 }
-export { CODEX_MODELS } from './openai-oauth.js';
+export { CODEX_MODELS, CODEX_CLIENT_VERSION } from './openai-oauth.js';
