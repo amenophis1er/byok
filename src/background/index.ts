@@ -33,7 +33,7 @@ import {
   type EncBlob,
 } from './crypto.js';
 import { anthropicBody, anthropicResult } from './chat-anthropic.js';
-import { openaiBody, openaiResult, rejectsParallel } from './chat-openai.js';
+import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
 import { CODEX_RESPONSES_URL, codexBody, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import {
@@ -811,9 +811,10 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
 
     const base = apiRoot(conn.baseUrl);
     const authorize = await authorizerFor(conn, token);
-    const send = async (omitParallel: boolean) => {
+    const omit = new Set<OptionalField>();
+    const send = async () => {
       const url = new URL(`${base}/chat/completions`);
-      const body = openaiBody(req, model, base, omitParallel);
+      const body = openaiBody(req, model, base, omit);
       if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
       return fetch(url, {
         method: 'POST', signal,
@@ -821,12 +822,14 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
         body: JSON.stringify(body),
       });
     };
-    let res = await send(false);
-    if (!res.ok) {
+    // A server that rejects an optional field gets the request again without it, once per field.
+    let res = await send();
+    while (!res.ok) {
       const text = await res.text();
-      if (!rejectsParallel(res.status, text)) throw new Error(describeHttpText(res.status, text));
-      res = await send(true);
-      if (!res.ok) throw new Error(await describeHttp(res));
+      const field = rejectedField(res.status, text);
+      if (!field || omit.has(field)) throw new Error(describeHttpText(res.status, text));
+      omit.add(field);
+      res = await send();
     }
     if (!res.body) throw new Error('The provider sent no response body.');
     const result = await openaiResult(readSse(res.body));

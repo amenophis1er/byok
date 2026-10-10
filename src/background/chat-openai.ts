@@ -4,9 +4,10 @@
  * and anything else speaking `/v1/chat/completions`.
  *
  * Request: `tools: [{type: "function", function: {name, description,
- * parameters}}]` and `parallel_tool_calls: false` unless asked otherwise (the
- * caller retries without it when a server rejects the field). OpenAI's own API
- * takes `max_completion_tokens`; everyone else takes `max_tokens`.
+ * parameters}}]`, `parallel_tool_calls: false` unless asked otherwise, and
+ * `stream_options: {include_usage: true}` for token counts (the caller retries
+ * without either field when a server rejects it). OpenAI's own API takes
+ * `max_completion_tokens`; everyone else takes `max_tokens`.
  *
  * Response: SSE of `chat.completion.chunk`s. Tool calls arrive as fragments
  * keyed by `index` — some servers send the whole call in one chunk, OpenAI
@@ -94,8 +95,11 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
   return out;
 }
 
-/** The request body. `omitParallel` drops `parallel_tool_calls` for servers that reject it. */
-export function openaiBody(req: AIChatRequest, model: string, base: string, omitParallel = false): Record<string, unknown> {
+/** Optional request fields a server has rejected, to leave out of the retry. */
+export type OptionalField = 'parallel_tool_calls' | 'stream_options';
+
+/** The request body, without the `omit`ted fields. */
+export function openaiBody(req: AIChatRequest, model: string, base: string, omit: ReadonlySet<OptionalField> = new Set()): Record<string, unknown> {
   const tools = (req.tools ?? []).map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }));
   const openai = /(^|\.)openai\.com$/i.test(safeHost(base));
   return {
@@ -104,7 +108,8 @@ export function openaiBody(req: AIChatRequest, model: string, base: string, omit
     [openai ? 'max_completion_tokens' : 'max_tokens']: req.maxTokens ?? OPENAI_DEFAULT_MAX_TOKENS,
     messages: openaiMessages(req.system, req.messages),
     ...(tools.length > 0 ? { tools } : {}),
-    ...(tools.length > 0 && !omitParallel ? { parallel_tool_calls: req.parallelToolCalls === true } : {}),
+    ...(tools.length > 0 && !omit.has('parallel_tool_calls') ? { parallel_tool_calls: req.parallelToolCalls === true } : {}),
+    ...(!omit.has('stream_options') ? { stream_options: { include_usage: true } } : {}),
   };
 }
 
@@ -112,9 +117,12 @@ function safeHost(base: string): string {
   try { return new URL(base).hostname; } catch { return ''; }
 }
 
-/** A 400 that complains about `parallel_tool_calls`: retry without the field. */
-export function rejectsParallel(status: number, body: string): boolean {
-  return status === 400 && /parallel_tool_calls/i.test(body);
+/** The optional field a 400 complains about, to retry without; undefined for any other error. */
+export function rejectedField(status: number, body: string): OptionalField | undefined {
+  if (status !== 400) return undefined;
+  if (/parallel_tool_calls/i.test(body)) return 'parallel_tool_calls';
+  if (/stream_options|include_usage/i.test(body)) return 'stream_options';
+  return undefined;
 }
 
 const STOP: Record<string, AIStopReason> = {

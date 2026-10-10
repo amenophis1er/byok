@@ -1,6 +1,6 @@
 /**
  * chat() end to end against a fake chrome.storage and a mocked fetch: pinned
- * connections, the parallel_tool_calls retry, Stop, the ai-chat message op —
+ * connections, the retries without rejected optional fields, Stop, the ai-chat message op —
  * and the one-writer queue under interleaved storage calls.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -85,6 +85,31 @@ describe('chat()', () => {
     expect(result.ok).toBe(true);
     expect(bodies[0]).toHaveProperty('parallel_tool_calls', false);
     expect(bodies[1]).not.toHaveProperty('parallel_tool_calls');
+  });
+
+  it('retries without each rejected optional field in turn, and gives up on a repeat', async () => {
+    seed([conn('a')], 'a');
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      if (bodies.length === 1) return new Response('{"error":"unknown field stream_options"}', { status: 400 });
+      if (bodies.length === 2) return new Response('{"error":"unknown field parallel_tool_calls"}', { status: 400 });
+      return sseResponse(toolCallStream);
+    }));
+    const tools = [{ name: 'browser', description: 'd', inputSchema: { type: 'object' } }];
+    expect((await chat({ system: '', messages: [{ role: 'user', content: 'go' }], tools })).ok).toBe(true);
+    expect(bodies[1]).not.toHaveProperty('stream_options');
+    expect(bodies[1]).toHaveProperty('parallel_tool_calls');
+    expect(bodies[2]).not.toHaveProperty('stream_options');
+    expect(bodies[2]).not.toHaveProperty('parallel_tool_calls');
+
+    bodies.length = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response('{"error":"unknown field stream_options"}', { status: 400 });
+    }));
+    expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: false });
+    expect(bodies).toHaveLength(2);
   });
 
   it('says Stopped when the caller aborts, and names a timeout as one', async () => {

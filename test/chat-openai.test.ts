@@ -5,7 +5,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { openaiBody, openaiMessages, openaiResult, rejectsParallel } from '../src/background/chat-openai.js';
+import { openaiBody, openaiMessages, openaiResult, rejectedField } from '../src/background/chat-openai.js';
 import { readSse } from '../src/background/sse.js';
 import type { AIChatRequest, AIMessage } from '../src/types.js';
 import { openaiSse, streamOf } from './helpers.js';
@@ -24,16 +24,32 @@ describe('request body', () => {
       messages: [{ role: 'system', content: 'You drive a browser.' }, { role: 'user', content: 'go' }],
       tools: [{ type: 'function', function: { name: 'browser', description: 'Control a page.', parameters: TOOL.inputSchema } }],
       parallel_tool_calls: false,
+      stream_options: { include_usage: true },
     });
   });
 
-  it('uses max_completion_tokens for OpenAI itself, and can drop parallel_tool_calls', () => {
-    const body = openaiBody(req, 'gpt-5.5', 'https://api.openai.com', true);
+  it('uses max_completion_tokens for OpenAI itself, and can drop the optional fields', () => {
+    const body = openaiBody(req, 'gpt-5.5', 'https://api.openai.com', new Set(['parallel_tool_calls', 'stream_options']));
     expect(body).toHaveProperty('max_completion_tokens', 16000);
     expect(body).not.toHaveProperty('max_tokens');
     expect(body).not.toHaveProperty('parallel_tool_calls');
-    expect(rejectsParallel(400, '{"error":{"message":"Unrecognized request argument supplied: parallel_tool_calls"}}')).toBe(true);
-    expect(rejectsParallel(400, '{"error":"bad model"}')).toBe(false);
+    expect(body).not.toHaveProperty('stream_options');
+  });
+
+  it('names the optional field a 400 rejects, and nothing else', () => {
+    expect(rejectedField(400, '{"error":{"message":"Unrecognized request argument supplied: parallel_tool_calls"}}')).toBe('parallel_tool_calls');
+    expect(rejectedField(400, '{"error":"Unknown field: stream_options"}')).toBe('stream_options');
+    expect(rejectedField(400, '{"error":"include_usage is not supported"}')).toBe('stream_options');
+    expect(rejectedField(400, '{"error":"bad model"}')).toBeUndefined();
+    expect(rejectedField(500, 'stream_options')).toBeUndefined();
+  });
+
+  it('reads token counts from the trailing usage chunk', async () => {
+    const result = await parse(openaiSse([
+      chunk({ content: 'Hi.' }, 'stop'),
+      { object: 'chat.completion.chunk', choices: [], usage: { prompt_tokens: 12, completion_tokens: 3 } },
+    ]));
+    expect(result).toMatchObject({ ok: true, text: 'Hi.', usage: { inputTokens: 12, outputTokens: 3 } });
   });
 
   it('maps tool calls and results, echoes unparseable arguments as they came, and moves tool images to a user message', () => {

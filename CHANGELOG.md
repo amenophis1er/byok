@@ -17,6 +17,10 @@ while on 0.x, a breaking change bumps the minor version.
   stripped base URL you pass to `listModels` or `saveConnection` yourself
   must get its `/v1` back.
 - A base URL with an unfilled `{placeholder}` is refused.
+- Token counts from every OpenAI-compatible server that supports
+  `stream_options.include_usage` (xAI and Gemini sent none before). A server
+  that rejects the field, or `parallel_tool_calls`, gets the request again
+  without it.
 - Tool calling with Gemini: a tool call's `extra_content` (Gemini's
   `thought_signature`) is returned in `providerState` and sent back with the
   next turn, which Gemini requires.
