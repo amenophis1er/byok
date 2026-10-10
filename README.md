@@ -113,8 +113,8 @@ npm run example        # builds the library into example/demo
 
 Then open `chrome://extensions`, turn on Developer mode, choose **Load
 unpacked**, pick `example/demo`, and click the extension's toolbar button. For
-a local Ollama, start it with `OLLAMA_ORIGINS=chrome-extension://*`: it refuses
-requests from extensions otherwise.
+a local Ollama, allow extensions first: see
+[Local servers](#local-servers-ollama-lm-studio).
 
 ## Chat with tools (agents)
 
@@ -219,6 +219,68 @@ your ruleset (it is exported as
 and the Codex backend rejects browser-shaped ones, so these strip
 `Origin`/`Sec-Fetch-*` (and set the expected `user-agent`) on those hosts.
 Rule ids are 9001–9003; renumber on collision.
+
+## Local servers (Ollama, LM Studio)
+
+A server on your machine sees requests from an extension with an
+`Origin: chrome-extension://<id>` header, and may refuse them: the request then
+fails with **HTTP 403**. The extension also needs the host permission for
+`http://localhost/*` (asked on demand, see above).
+
+**Ollama** accepts only the origins listed in `OLLAMA_ORIGINS`. Allow one
+extension with `chrome-extension://<its id>` (shown in `chrome://extensions`),
+or all of them with `chrome-extension://*`. Then restart Ollama. On a Mac, how
+depends on how Ollama runs:
+
+- **The Ollama app** (menu bar icon):
+
+  ```
+  launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
+  ```
+
+  Quit Ollama from the menu bar and open it again. `launchctl setenv` lasts
+  until you log out; to keep it, add the same line to a login item or use one
+  of the options below.
+
+- **Homebrew service** (`brew services start ollama`): add the variable to the
+  service's launch agent, then restart it with `launchctl`. `brew services
+  restart` would rewrite the file from the formula and drop the variable.
+
+  ```
+  P=~/Library/LaunchAgents/homebrew.mxcl.ollama.plist
+  /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" $P 2>/dev/null
+  /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OLLAMA_ORIGINS string chrome-extension://*" $P
+  launchctl bootout gui/$(id -u)/homebrew.mxcl.ollama
+  launchctl bootstrap gui/$(id -u) $P
+  ```
+
+  Run it again after `brew upgrade ollama` or `brew services restart ollama`.
+
+- **Your own launch agent** (a plist in `~/Library/LaunchAgents` running
+  `ollama serve`): add `OLLAMA_ORIGINS` under `EnvironmentVariables`, then
+  reload it. If `bootstrap` reports an input/output error, the old job was
+  still stopping: run it again.
+
+  ```
+  launchctl bootout gui/$(id -u)/<label>
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist
+  ```
+
+- **In a terminal**: `OLLAMA_ORIGINS="chrome-extension://*" ollama serve`.
+
+On Linux (systemd), run `sudo systemctl edit ollama`, add
+`Environment="OLLAMA_ORIGINS=chrome-extension://*"` under `[Service]`, then
+`sudo systemctl restart ollama`. On Windows, set it as a user environment
+variable and restart Ollama.
+
+Check it worked. This should print `200`, not `403`:
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" -H "Origin: chrome-extension://x" localhost:11434/v1/models
+```
+
+**LM Studio**: in the Developer tab, open the server settings and turn on
+**Enable CORS**.
 
 ## Provider fine print (already handled, documented so you don't undo it)
 
