@@ -141,6 +141,8 @@ interface StoredConnection {
 interface StoredConfig {
   activeId: string | null;
   connections: StoredConnection[];
+  /** Base URLs are API roots (`…/v1`). Absent: stored before 0.1.2, as origins `/v1` was appended to. */
+  apiRoots?: true;
 }
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com';
@@ -171,7 +173,26 @@ function stripThinking(text: string): string {
 }
 
 function empty(): StoredConfig {
-  return { activeId: null, connections: [] };
+  return { activeId: null, connections: [], apiRoots: true };
+}
+
+/**
+ * A base URL saved before 0.1.2 as the API root: those had `/v1` stripped and
+ * every request added it back.
+ */
+function legacyApiRoot(baseUrl: string): string {
+  let base = baseUrl.trim();
+  if (!base) return 'https://api.openai.com/v1';
+  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
+  return `${base.replace(/\/+$/, '').replace(/\/v1$/, '')}/v1`;
+}
+
+/** The API root requests go to; refuses one with an unfilled `{placeholder}`. */
+function apiRoot(baseUrl: string): string {
+  const base = normalizeBaseUrl(baseUrl);
+  const placeholder = /\{[^}]*\}/.exec(base);
+  if (placeholder) throw new Error(`Replace ${placeholder[0]} in the base URL with your own value.`);
+  return base;
 }
 
 /**
@@ -187,11 +208,15 @@ async function load(): Promise<StoredConfig> {
     | undefined;
   if (!raw) return empty();
 
-  // v3 — already migrated.
+  // v3 — already migrated. Base URLs become API roots in memory; the next save persists them.
   if (Array.isArray(raw.connections)) {
+    const connections = raw.connections as StoredConnection[];
     return {
       activeId: (raw.activeId as string | null) ?? null,
-      connections: raw.connections as StoredConnection[],
+      connections: raw.apiRoots
+        ? connections
+        : connections.map((c) => (c.kind === 'openai-compatible' ? { ...c, baseUrl: legacyApiRoot(c.baseUrl) } : c)),
+      apiRoots: true,
     };
   }
 
@@ -203,7 +228,7 @@ async function load(): Promise<StoredConfig> {
       typeof c.apiKey === 'string' && c.apiKey
         ? await encryptString(c.apiKey) // v1/v2 plaintext
         : ((c.apiKeyEnc as EncBlob | undefined) ?? null);
-    const baseUrl = (c.baseUrl as string) ?? '';
+    const baseUrl = kind === 'openai-compatible' ? legacyApiRoot((c.baseUrl as string) ?? '') : '';
     const conn: StoredConnection = {
       id: crypto.randomUUID(),
       kind,
@@ -299,6 +324,14 @@ async function setActive(req: AISetActiveRequest): Promise<AIResult<null>> {
 }
 
 async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ id: string }>> {
+  let baseUrl = '';
+  if (req.kind === 'openai-compatible') {
+    try {
+      baseUrl = apiRoot(req.baseUrl);
+    } catch (error) {
+      return { ok: false, error: errMessage(error) };
+    }
+  }
   return withConfig(async (cfg) => {
     let conn = req.id ? cfg.connections.find((c) => c.id === req.id) : undefined;
     if (!conn) {
@@ -314,7 +347,7 @@ async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ 
     }
     conn.kind = req.kind;
     conn.label = req.label || defaultLabel(req.kind, req.baseUrl);
-    conn.baseUrl = req.kind === 'openai-compatible' ? req.baseUrl : '';
+    conn.baseUrl = baseUrl;
     // Chrome's on-device model has no model list or key.
     conn.model = req.kind === 'chrome-builtin' ? 'gemini-nano' : req.model;
     if (req.apiKeyMode === 'set') conn.apiKeyEnc = await encryptString(req.apiKey ?? '');
@@ -541,7 +574,7 @@ async function ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>> {
       kind: 'openai-compatible',
       auth: 'device-key',
       label: label || (account.name ? `Ollama Cloud (${account.name})` : 'Ollama Cloud'),
-      baseUrl: OLLAMA_BASE,
+      baseUrl: `${OLLAMA_BASE}/v1`,
       model: '',
       apiKeyEnc: null,
       account: account.name,
@@ -612,7 +645,7 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
         ? await anthropicModels(apiKey, subscription)
         : await openaiModels(
             stored && !req.apiKey ? await authorizerFor(stored, apiKey) : bearerAuth(apiKey),
-            normalizeBaseUrl(req.baseUrl),
+            apiRoot(req.baseUrl),
           );
     return { ok: true, data: models };
   } catch (error) {
@@ -666,7 +699,7 @@ async function complete(req: AICompleteRequest): Promise<AIResult<string>> {
               )
             : await openaiComplete(
                 await authorizerFor(conn, apiKey),
-                normalizeBaseUrl(conn.baseUrl),
+                apiRoot(conn.baseUrl),
                 conn.model,
                 req,
                 controller.signal,
@@ -771,10 +804,10 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
       return transient(result);
     }
 
-    const base = normalizeBaseUrl(conn.baseUrl);
+    const base = apiRoot(conn.baseUrl);
     const authorize = await authorizerFor(conn, token);
     const send = async (omitParallel: boolean) => {
-      const url = new URL(`${base}/v1/chat/completions`);
+      const url = new URL(`${base}/chat/completions`);
       const body = openaiBody(req, model, base, omitParallel);
       if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
       return fetch(url, {
@@ -878,12 +911,14 @@ async function anthropicModels(token: string, subscription: boolean): Promise<Mo
 }
 
 async function openaiModels(authorize: Authorizer, base: string): Promise<ModelInfo[]> {
-  const url = new URL(`${base}/v1/models`);
+  const url = new URL(`${base}/models`);
   const res = await fetch(url, { headers: await authorize('GET', url) });
   if (!res.ok) throw new Error(await describeHttp(res));
-  const json = (await res.json()) as { data?: { id: string }[] };
-  return (json.data ?? [])
-    .map((m) => ({ id: m.id, name: m.id }))
+  // `{ data: [...] }`, or a bare array (Together); Gemini prefixes ids with `models/`.
+  const json = (await res.json()) as { data?: { id: string }[] } | { id: string }[];
+  return (Array.isArray(json) ? json : (json.data ?? []))
+    .map((m) => m.id.replace(/^models\//, ''))
+    .map((id) => ({ id, name: id }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -931,7 +966,7 @@ async function openaiComplete(
   signal: AbortSignal,
   debug = false,
 ): Promise<string> {
-  const url = new URL(`${base}/v1/chat/completions`);
+  const url = new URL(`${base}/chat/completions`);
   const res = await fetch(url, {
     method: 'POST',
     signal,

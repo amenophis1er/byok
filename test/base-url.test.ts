@@ -1,0 +1,137 @@
+/**
+ * Base URLs as API roots: normalizing what users type, the presets, saved
+ * connections from before 0.1.2 (origins `/v1` was appended to), unfilled
+ * `{placeholders}`, and the model lists of providers that differ from OpenAI's.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAiMessageHandler } from '../src/background/index.js';
+import { OPENAI_COMPATIBLE_PRESETS, defaultLabel, normalizeBaseUrl, originPattern } from '../src/types.js';
+
+const STORAGE_KEY = 'aiConnections';
+let local: Map<string, unknown>;
+
+beforeEach(() => {
+  local = new Map();
+  const area = (map: Map<string, unknown>) => ({
+    async get(key: string | string[]) {
+      const keys = Array.isArray(key) ? key : [key];
+      return Object.fromEntries(keys.filter((k) => map.has(k)).map((k) => [k, structuredClone(map.get(k))]));
+    },
+    async set(items: Record<string, unknown>) { for (const [k, v] of Object.entries(items)) map.set(k, structuredClone(v)); },
+    async remove(key: string | string[]) { for (const k of Array.isArray(key) ? key : [key]) map.delete(k); },
+  });
+  vi.stubGlobal('chrome', { storage: { local: area(local), session: area(new Map()) } });
+});
+afterEach(() => vi.unstubAllGlobals());
+
+const handle = createAiMessageHandler({ prefix: 't' });
+const send = <T>(message: Record<string, unknown>) => new Promise<T>((resolve) => handle(message as never, resolve as never));
+type Result = { ok: boolean; data?: unknown; error?: string };
+
+const conn = (id: string, baseUrl: string) => ({
+  id, kind: 'openai-compatible', label: id, baseUrl, model: 'm', apiKeyEnc: null, revision: 1,
+});
+
+const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+const answer = () => json({ choices: [{ message: { content: 'hi' } }] });
+
+describe('normalizeBaseUrl', () => {
+  it.each([
+    ['', 'https://api.openai.com/v1'],
+    ['api.openai.com', 'https://api.openai.com/v1'],
+    ['https://api.openai.com/', 'https://api.openai.com/v1'],
+    ['http://localhost:11434', 'http://localhost:11434/v1'],
+    ['https://openrouter.ai/api/v1/', 'https://openrouter.ai/api/v1'],
+    ['https://api.groq.com/openai/v1/chat/completions', 'https://api.groq.com/openai/v1'],
+    ['https://generativelanguage.googleapis.com/v1beta/openai/', 'https://generativelanguage.googleapis.com/v1beta/openai'],
+    ['https://gateway.ai.cloudflare.com/v1/acct/gw/compat', 'https://gateway.ai.cloudflare.com/v1/acct/gw/compat'],
+  ])('%j → %s', (input, expected) => {
+    expect(normalizeBaseUrl(input)).toBe(expected);
+  });
+
+  it('leaves every preset unchanged, and labels connections by preset', () => {
+    for (const preset of OPENAI_COMPATIBLE_PRESETS) {
+      expect(normalizeBaseUrl(preset.baseUrl)).toBe(preset.baseUrl);
+      expect(originPattern(preset.baseUrl)).toMatch(/^https?:\/\/[^/]+\/\*$/);
+      expect(defaultLabel('openai-compatible', preset.baseUrl)).toBe(preset.label);
+    }
+  });
+});
+
+describe('saved connections', () => {
+  it('reads base URLs saved before 0.1.2 as roots ending in /v1', async () => {
+    local.set(STORAGE_KEY, {
+      activeId: 'r',
+      connections: [conn('r', 'https://openrouter.ai/api'), conn('l', 'http://localhost:11434'), conn('o', ''), conn('v', 'https://x.example/v1/')],
+    });
+    const view = await send<{ connections: Array<{ baseUrl: string }> }>({ type: 't:ai-get' });
+    expect(view.connections.map((c) => c.baseUrl)).toEqual([
+      'https://openrouter.ai/api/v1',
+      'http://localhost:11434/v1',
+      'https://api.openai.com/v1',
+      'https://x.example/v1',
+    ]);
+
+    const fetch = vi.fn(async () => answer());
+    vi.stubGlobal('fetch', fetch);
+    expect(await send<Result>({ type: 't:ai-complete', system: '', prompt: 'hello' })).toMatchObject({ ok: true });
+    expect(String(fetch.mock.calls[0]![0])).toBe('https://openrouter.ai/api/v1/chat/completions');
+  });
+
+  it('persists the roots on the next save, and does not append /v1 again', async () => {
+    local.set(STORAGE_KEY, { activeId: null, connections: [conn('r', 'https://openrouter.ai/api'), conn('g', 'https://gemini.example')] });
+    await send({ type: 't:ai-set-active', id: 'r' });
+    await send({ type: 't:ai-set-active', id: 'g' });
+    const stored = local.get(STORAGE_KEY) as { apiRoots: boolean; connections: Array<{ baseUrl: string }> };
+    expect(stored.apiRoots).toBe(true);
+    expect(stored.connections.map((c) => c.baseUrl)).toEqual(['https://openrouter.ai/api/v1', 'https://gemini.example/v1']);
+  });
+
+  it('saves roots without a version as typed', async () => {
+    const res = await send<Result>({
+      type: 't:ai-save-connection', kind: 'openai-compatible', label: '', model: 'gemini-2.5-flash', apiKeyMode: 'clear',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', makeActive: true,
+    });
+    expect(res.ok).toBe(true);
+    const fetch = vi.fn(async () => answer());
+    vi.stubGlobal('fetch', fetch);
+    await send({ type: 't:ai-complete', system: '', prompt: 'hello' });
+    expect(String(fetch.mock.calls[0]![0])).toBe('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+    expect((local.get(STORAGE_KEY) as { connections: Array<{ label: string }> }).connections[0]!.label).toBe('Google Gemini');
+  });
+
+  it('refuses a base URL with an unfilled placeholder', async () => {
+    const workersAi = OPENAI_COMPATIBLE_PRESETS.find((p) => p.label === 'Cloudflare Workers AI')!.baseUrl;
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const saved = await send<Result>({ type: 't:ai-save-connection', kind: 'openai-compatible', label: '', model: 'm', apiKeyMode: 'clear', baseUrl: workersAi });
+    expect(saved).toEqual({ ok: false, error: 'Replace {account_id} in the base URL with your own value.' });
+    const listed = await send<Result>({ type: 't:ai-list-models', kind: 'openai-compatible', baseUrl: workersAi, apiKey: 'k' });
+    expect(listed).toMatchObject({ ok: false, error: expect.stringContaining('{account_id}') });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(local.has(STORAGE_KEY)).toBe(false);
+  });
+});
+
+describe('listModels', () => {
+  const list = (baseUrl: string) => send<Result>({ type: 't:ai-list-models', kind: 'openai-compatible', baseUrl, apiKey: 'k' });
+
+  it('asks the root for /models with the key', async () => {
+    const fetch = vi.fn(async () => json({ data: [{ id: 'b' }, { id: 'a' }] }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await list('https://api.groq.com/openai/v1')).toEqual({ ok: true, data: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }] });
+    const [url, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(String(url)).toBe('https://api.groq.com/openai/v1/models');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer k' });
+  });
+
+  it("drops Gemini's models/ prefix", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'models/gemini-2.5-flash' }] })));
+    expect(await list('https://generativelanguage.googleapis.com/v1beta/openai')).toEqual({ ok: true, data: [{ id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' }] });
+  });
+
+  it("reads Together's bare array", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json([{ id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' }])));
+    expect(await list('https://api.together.xyz/v1')).toMatchObject({ ok: true, data: [{ id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' }] });
+  });
+});

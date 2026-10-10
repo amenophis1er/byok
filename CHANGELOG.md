@@ -3,6 +3,25 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.2
+
+- Presets for Google Gemini, Vercel AI Gateway, Cloudflare Workers AI and AI
+  Gateway, Groq, Mistral, xAI, DeepSeek, Together AI, Fireworks AI and
+  Cerebras, all on the OpenAI-compatible connection.
+- Base URLs are now the API root: requests go to `${baseUrl}/chat/completions`
+  and `/models`, with no `/v1` added except to a bare origin. This is what lets
+  Gemini (`…/v1beta/openai`) and the Cloudflare AI Gateway (`…/compat`) work.
+  Connections saved by earlier versions are read as `<old base>/v1` and keep
+  working. **Host extensions**: `normalizeBaseUrl` now keeps the `/v1`
+  (`https://openrouter.ai/api/v1`, not `https://openrouter.ai/api`), and a
+  stripped base URL you pass to `listModels` or `saveConnection` yourself
+  must get its `/v1` back.
+- A base URL with an unfilled `{placeholder}` is refused.
+- Model lists: Gemini's `models/` prefix is dropped, and a bare array (Together)
+  is read.
+- Demo: placeholder URLs are editable, and a model id can be typed when the
+  server lists none.
+
 ## 0.1.1
 
 - Published from the release workflow through npm trusted publishing, with a

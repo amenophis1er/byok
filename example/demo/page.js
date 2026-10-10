@@ -270,19 +270,29 @@ for (const [i, p] of presets.entries()) $('compat-preset').append(new Option(p.l
 function applyPreset() {
   const p = presets[Number($('compat-preset').value)];
   $('compat-url').value = p.baseUrl;
-  $('compat-url').readOnly = p.label !== 'Custom';
+  // A preset with an {account_id} is edited in place; the others are fixed.
+  const placeholder = p.baseUrl.indexOf('{');
+  $('compat-url').readOnly = p.label !== 'Custom' && placeholder < 0;
+  if (placeholder >= 0) {
+    $('compat-url').focus();
+    $('compat-url').setSelectionRange(placeholder, p.baseUrl.indexOf('}') + 1);
+  }
   $('compat-optional').hidden = !p.keyOptional;
   $('compat-local').hidden = !/localhost:11434/.test(p.baseUrl);
   resetCompatModels();
 }
 function resetCompatModels() {
-  $('compat-model').innerHTML = '<option>Load models first</option>';
-  $('compat-model').disabled = true;
-  $('compat-save').disabled = true;
+  $('compat-model-list').textContent = '';
+  compatModelInput();
+}
+/** Some servers list no models (or have no /models); a typed id works too. */
+function compatModelInput() {
+  $('compat-save').disabled = !$('compat-model').value.trim();
 }
 $('compat-preset').onchange = applyPreset;
 $('compat-url').oninput = resetCompatModels;
 $('compat-key').oninput = resetCompatModels;
+$('compat-model').oninput = compatModelInput;
 applyPreset();
 
 /** Servers outside the manifest's host permissions need a grant, asked on the click. */
@@ -299,11 +309,11 @@ $('compat-models').onclick = () => busy($('compat-models'), 'Loading…', async 
     await ensureOrigin(baseUrl);
     const res = await ai.listModels({ kind: 'openai-compatible', baseUrl, apiKey: $('compat-key').value.trim() });
     if (!res.ok) return status(res.error, 'error');
-    const select = $('compat-model');
-    select.textContent = '';
-    for (const m of res.data) select.append(new Option(m.name, m.id));
-    select.disabled = res.data.length === 0;
-    $('compat-save').disabled = res.data.length === 0;
+    const list = $('compat-model-list');
+    list.textContent = '';
+    for (const m of res.data) list.append(new Option(m.name, m.id));
+    if (res.data.length && !res.data.some((m) => m.id === $('compat-model').value)) $('compat-model').value = res.data[0].id;
+    compatModelInput();
     status(res.data.length ? `${res.data.length} models.` : 'The server listed no models.', res.data.length ? '' : 'error');
   } catch (error) {
     status(error.message, 'error');
@@ -312,10 +322,12 @@ $('compat-models').onclick = () => busy($('compat-models'), 'Loading…', async 
 
 $('compat-save').onclick = () => busy($('compat-save'), 'Connecting…', async () => {
   const baseUrl = normalizeBaseUrl($('compat-url').value);
+  // A typed model id skips Load models, which is where access is otherwise granted.
+  try { await ensureOrigin(baseUrl); } catch (error) { return status(error.message, 'error'); }
   const apiKey = $('compat-key').value.trim();
   const preset = presets[Number($('compat-preset').value)];
   const label = preset.label === 'Custom' ? '' : preset.label;
-  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: $('compat-model').value,
+  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: $('compat-model').value.trim(),
     apiKeyMode: apiKey ? 'set' : 'clear', apiKey, makeActive: true });
   if (!res.ok) return status(res.error, 'error');
   $('compat-key').value = '';
