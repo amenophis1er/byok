@@ -17,6 +17,9 @@ while on 0.x, a breaking change bumps the minor version.
   stripped base URL you pass to `listModels` or `saveConnection` yourself
   must get its `/v1` back.
 - A base URL with an unfilled `{placeholder}` is refused.
+- Tool calling with Gemini: a tool call's `extra_content` (Gemini's
+  `thought_signature`) is returned in `providerState` and sent back with the
+  next turn, which Gemini requires.
 - Model lists: Gemini's come from its own API, keeping only the models that
   support `generateContent` (its OpenAI-compatible list includes embedding,
   image and agent models that 404 on chat); a bare array (Together) is read.

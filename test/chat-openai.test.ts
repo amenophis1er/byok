@@ -96,6 +96,27 @@ describe('streamed response', () => {
     ]);
   });
 
+  it("carries Gemini's thought_signature from a tool call to the next turn", async () => {
+    const signature = { google: { thought_signature: 'c2lnbmF0dXJl' } };
+    const result = await parse(openaiSse([
+      chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'g1', type: 'function', function: { name: 'browser', arguments: '{"action":"observe"}' }, extra_content: signature }] }),
+      chunk({ tool_calls: [{ index: 1, id: 'g2', type: 'function', function: { name: 'browser', arguments: '{}' } }] }),
+      chunk({}, 'tool_calls'),
+    ]));
+    expect(result.providerState).toEqual({ extraContent: { g1: signature } });
+
+    const [assistant] = openaiMessages('', [{ role: 'assistant', toolCalls: result.toolCalls, providerState: result.providerState }]);
+    expect(assistant!['tool_calls']).toEqual([
+      { id: 'g1', type: 'function', function: { name: 'browser', arguments: '{"action":"observe"}' }, extra_content: signature },
+      { id: 'g2', type: 'function', function: { name: 'browser', arguments: '{}' } },
+    ]);
+  });
+
+  it('returns no providerState when no call has extra_content', async () => {
+    const result = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'browser', arguments: '{}' } }] }), chunk({}, 'tool_calls')]));
+    expect(result).not.toHaveProperty('providerState');
+  });
+
   it('returns text, strips inline think tags, and maps finish reasons', async () => {
     const result = await parse(openaiSse([chunk({ content: '<think>hmm</think>The mug ' }), chunk({ content: 'costs $12.' }, 'stop')]));
     expect(result).toMatchObject({ ok: true, text: 'The mug costs $12.', stopReason: 'end' });

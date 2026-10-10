@@ -14,10 +14,24 @@
  * finishes. The result counts only once a `finish_reason` has arrived; an
  * error chunk or a stream that ends before one is a failure. `[DONE]` closes
  * the stream but is not required: not every server sends it.
+ *
+ * A tool call's `extra_content` (Gemini puts its `thought_signature` there,
+ * and 400s on the next turn without it) is returned in `providerState` and
+ * sent back on that call.
  */
 
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
+
+/** What an assistant turn carries back: each tool call's `extra_content`, by call id. */
+interface OpenAiState {
+  extraContent: Record<string, unknown>;
+}
+
+function extraContentOf(state: unknown): Record<string, unknown> {
+  const extra = (state as Partial<OpenAiState> | null | undefined)?.extraContent;
+  return extra && typeof extra === 'object' ? extra : {};
+}
 
 export const OPENAI_DEFAULT_MAX_TOKENS = 16000;
 
@@ -65,12 +79,14 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
       continue;
     }
     const calls = message.toolCalls ?? [];
+    const extra = extraContentOf(message.providerState);
     out.push({
       role: 'assistant',
       content: message.content ?? (calls.length > 0 ? null : ''),
       ...(calls.length > 0 ? {
         tool_calls: calls.map((call) => ({ id: call.id, type: 'function',
-          function: { name: call.name, arguments: call.argsError ? call.argsError.raw : JSON.stringify(call.args ?? {}) } })),
+          function: { name: call.name, arguments: call.argsError ? call.argsError.raw : JSON.stringify(call.args ?? {}) },
+          ...(extra[call.id] !== undefined ? { extra_content: extra[call.id] } : {}) })),
       } : {}),
     });
   }
@@ -112,7 +128,7 @@ function stripThinking(text: string): string {
 
 export async function openaiResult(events: AsyncIterable<SseEvent>): Promise<AIChatResult> {
   let text = '';
-  const fragments = new Map<number, { id: string; name: string; args: string }>();
+  const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown }>();
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
 
@@ -137,14 +153,17 @@ export async function openaiResult(events: AsyncIterable<SseEvent>): Promise<AIC
       if (piece['id']) current.id = piece['id'];
       if (piece['function']?.['name']) current.name += piece['function']['name'];
       if (typeof piece['function']?.['arguments'] === 'string') current.args += piece['function']['arguments'];
+      if (piece['extra_content'] !== undefined) current.extra = piece['extra_content'];
       fragments.set(index, current);
     }
     if (choice['finish_reason']) finishReason = choice['finish_reason'];
   }
   if (!finishReason) return { ok: false, error: 'The response stream ended before it finished.' };
 
+  const extraContent: Record<string, unknown> = {};
   const toolCalls: AIToolCall[] = [...fragments.entries()].sort(([a], [b]) => a - b).map(([index, fragment]) => {
     const call: AIToolCall = { id: fragment.id || `call_${index}`, name: fragment.name };
+    if (fragment.extra !== undefined) extraContent[call.id] = fragment.extra;
     try {
       const parsed: unknown = fragment.args.trim() === '' ? {} : JSON.parse(fragment.args);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) call.args = parsed as Record<string, unknown>;
@@ -163,6 +182,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>): Promise<AIC
     ok: true,
     ...(cleaned ? { text: cleaned } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(runnable && Object.keys(extraContent).length > 0 ? { providerState: { extraContent } satisfies OpenAiState } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(usage ? { usage } : {}),
   };
