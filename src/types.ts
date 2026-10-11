@@ -49,25 +49,51 @@ export interface AIConfigView {
   connections: ConnectionView[];
 }
 
-/** Preset base URLs offered in the UI for openai-compatible connections. */
+/**
+ * Preset base URLs offered in the UI for openai-compatible connections. A
+ * base URL is the API root: requests go to `${baseUrl}/chat/completions` and
+ * `${baseUrl}/models`. A `{placeholder}` in it (an account id) is for the
+ * user to fill in.
+ */
 export const OPENAI_COMPATIBLE_PRESETS: {
   label: string;
   baseUrl: string;
   /** Local/self-hosted endpoints usually need no key. */
   keyOptional?: boolean;
 }[] = [
-  { label: 'OpenAI', baseUrl: 'https://api.openai.com' },
-  { label: 'Ollama (cloud)', baseUrl: 'https://ollama.com' },
-  { label: 'Ollama (local)', baseUrl: 'http://localhost:11434', keyOptional: true },
-  { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api' },
+  { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
+  { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
+  { label: 'Vercel AI Gateway', baseUrl: 'https://ai-gateway.vercel.sh/v1' },
+  { label: 'Cloudflare Workers AI', baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1' },
+  { label: 'Cloudflare AI Gateway', baseUrl: 'https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/compat' },
+  { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1' },
+  { label: 'Mistral', baseUrl: 'https://api.mistral.ai/v1' },
+  { label: 'xAI', baseUrl: 'https://api.x.ai/v1' },
+  { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1' },
+  { label: 'Together AI', baseUrl: 'https://api.together.xyz/v1' },
+  { label: 'Fireworks AI', baseUrl: 'https://api.fireworks.ai/inference/v1' },
+  { label: 'Cerebras', baseUrl: 'https://api.cerebras.ai/v1' },
+  { label: 'Ollama (cloud)', baseUrl: 'https://ollama.com/v1' },
+  { label: 'Ollama (local)', baseUrl: 'http://localhost:11434/v1', keyOptional: true },
 ];
 
-/** Normalize a user-typed base URL: add scheme, drop trailing slash and /v1. */
+/**
+ * Normalize a user-typed base URL to an API root: add a scheme, drop trailing
+ * slashes and a pasted `/chat/completions`. A bare origin gets `/v1`, the
+ * usual root; any other path is kept as typed.
+ */
 export function normalizeBaseUrl(url: string): string {
   let base = url.trim();
-  if (!base) return 'https://api.openai.com';
+  if (!base) return 'https://api.openai.com/v1';
   if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
-  return base.replace(/\/+$/, '').replace(/\/v1$/, '');
+  base = base.replace(/\/+$/, '').replace(/\/chat\/completions$/, '').replace(/\/+$/, '');
+  try {
+    if (new URL(base).pathname === '/') base += '/v1';
+  } catch {
+    /* not a URL; requests will say so */
+  }
+  return base;
 }
 
 /** Host-permission match pattern for a base URL's origin (port-agnostic). */

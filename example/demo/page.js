@@ -2,8 +2,10 @@
 // messages to the worker. This page never sees a key or a token.
 import { createAiClient } from './lib/client.js';
 import { OPENAI_COMPATIBLE_PRESETS, normalizeBaseUrl, originPattern } from './lib/types.js';
+import { watchForChanges } from './dev.js';
 
 const ai = createAiClient({ prefix: 'byokdemo' });
+void watchForChanges(); // `npm run dev` only
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -270,7 +272,13 @@ for (const [i, p] of presets.entries()) $('compat-preset').append(new Option(p.l
 function applyPreset() {
   const p = presets[Number($('compat-preset').value)];
   $('compat-url').value = p.baseUrl;
-  $('compat-url').readOnly = p.label !== 'Custom';
+  // A preset with an {account_id} is edited in place; the others are fixed.
+  const placeholder = p.baseUrl.indexOf('{');
+  $('compat-url').readOnly = p.label !== 'Custom' && placeholder < 0;
+  if (placeholder >= 0) {
+    $('compat-url').focus();
+    $('compat-url').setSelectionRange(placeholder, p.baseUrl.indexOf('}') + 1);
+  }
   $('compat-optional').hidden = !p.keyOptional;
   $('compat-local').hidden = !/localhost:11434/.test(p.baseUrl);
   resetCompatModels();
@@ -278,11 +286,20 @@ function applyPreset() {
 function resetCompatModels() {
   $('compat-model').innerHTML = '<option>Load models first</option>';
   $('compat-model').disabled = true;
+  $('compat-model-typed-field').hidden = true;
+  $('compat-model-typed').value = '';
   $('compat-save').disabled = true;
 }
+/** Servers that list no models (or have no /models) take a typed model id instead. */
+function typeCompatModel() {
+  $('compat-model-typed-field').hidden = false;
+  $('compat-save').disabled = !$('compat-model-typed').value.trim();
+}
+const compatModel = () => ($('compat-model-typed-field').hidden ? $('compat-model').value : $('compat-model-typed').value.trim());
 $('compat-preset').onchange = applyPreset;
 $('compat-url').oninput = resetCompatModels;
 $('compat-key').oninput = resetCompatModels;
+$('compat-model-typed').oninput = typeCompatModel;
 applyPreset();
 
 /** Servers outside the manifest's host permissions need a grant, asked on the click. */
@@ -298,13 +315,22 @@ $('compat-models').onclick = () => busy($('compat-models'), 'Loading…', async 
     const baseUrl = normalizeBaseUrl($('compat-url').value);
     await ensureOrigin(baseUrl);
     const res = await ai.listModels({ kind: 'openai-compatible', baseUrl, apiKey: $('compat-key').value.trim() });
-    if (!res.ok) return status(res.error, 'error');
+    if (!res.ok) {
+      typeCompatModel();
+      return status(`${res.error} You can type a model id instead.`, 'error');
+    }
     const select = $('compat-model');
     select.textContent = '';
     for (const m of res.data) select.append(new Option(m.name, m.id));
     select.disabled = res.data.length === 0;
-    $('compat-save').disabled = res.data.length === 0;
-    status(res.data.length ? `${res.data.length} models.` : 'The server listed no models.', res.data.length ? '' : 'error');
+    if (res.data.length) {
+      $('compat-model-typed-field').hidden = true;
+      $('compat-save').disabled = false;
+      status(`${res.data.length} models.`);
+    } else {
+      typeCompatModel();
+      status('The server listed no models. Type a model id instead.', 'error');
+    }
   } catch (error) {
     status(error.message, 'error');
   }
@@ -312,10 +338,12 @@ $('compat-models').onclick = () => busy($('compat-models'), 'Loading…', async 
 
 $('compat-save').onclick = () => busy($('compat-save'), 'Connecting…', async () => {
   const baseUrl = normalizeBaseUrl($('compat-url').value);
+  // A typed model id skips Load models, which is where access is otherwise granted.
+  try { await ensureOrigin(baseUrl); } catch (error) { return status(error.message, 'error'); }
   const apiKey = $('compat-key').value.trim();
   const preset = presets[Number($('compat-preset').value)];
   const label = preset.label === 'Custom' ? '' : preset.label;
-  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: $('compat-model').value,
+  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: compatModel(),
     apiKeyMode: apiKey ? 'set' : 'clear', apiKey, makeActive: true });
   if (!res.ok) return status(res.error, 'error');
   $('compat-key').value = '';

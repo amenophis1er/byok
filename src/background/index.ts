@@ -33,7 +33,7 @@ import {
   type EncBlob,
 } from './crypto.js';
 import { anthropicBody, anthropicResult } from './chat-anthropic.js';
-import { openaiBody, openaiResult, rejectsParallel } from './chat-openai.js';
+import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
 import { CODEX_RESPONSES_URL, codexBody, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import {
@@ -141,6 +141,8 @@ interface StoredConnection {
 interface StoredConfig {
   activeId: string | null;
   connections: StoredConnection[];
+  /** Base URLs are API roots (`…/v1`). Absent: stored before 0.1.2, as origins `/v1` was appended to. */
+  apiRoots?: true;
 }
 
 const ANTHROPIC_BASE = 'https://api.anthropic.com';
@@ -171,7 +173,26 @@ function stripThinking(text: string): string {
 }
 
 function empty(): StoredConfig {
-  return { activeId: null, connections: [] };
+  return { activeId: null, connections: [], apiRoots: true };
+}
+
+/**
+ * A base URL saved before 0.1.2 as the API root: those had `/v1` stripped and
+ * every request added it back.
+ */
+function legacyApiRoot(baseUrl: string): string {
+  let base = baseUrl.trim();
+  if (!base) return 'https://api.openai.com/v1';
+  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
+  return `${base.replace(/\/+$/, '').replace(/\/v1$/, '')}/v1`;
+}
+
+/** The API root requests go to; refuses one with an unfilled `{placeholder}`. */
+function apiRoot(baseUrl: string): string {
+  const base = normalizeBaseUrl(baseUrl);
+  const placeholder = /\{[^}]*\}/.exec(base);
+  if (placeholder) throw new Error(`Replace ${placeholder[0]} in the base URL with your own value.`);
+  return base;
 }
 
 /**
@@ -187,11 +208,15 @@ async function load(): Promise<StoredConfig> {
     | undefined;
   if (!raw) return empty();
 
-  // v3 — already migrated.
+  // v3 — already migrated. Base URLs become API roots in memory; the next save persists them.
   if (Array.isArray(raw.connections)) {
+    const connections = raw.connections as StoredConnection[];
     return {
       activeId: (raw.activeId as string | null) ?? null,
-      connections: raw.connections as StoredConnection[],
+      connections: raw.apiRoots
+        ? connections
+        : connections.map((c) => (c.kind === 'openai-compatible' ? { ...c, baseUrl: legacyApiRoot(c.baseUrl) } : c)),
+      apiRoots: true,
     };
   }
 
@@ -203,7 +228,7 @@ async function load(): Promise<StoredConfig> {
       typeof c.apiKey === 'string' && c.apiKey
         ? await encryptString(c.apiKey) // v1/v2 plaintext
         : ((c.apiKeyEnc as EncBlob | undefined) ?? null);
-    const baseUrl = (c.baseUrl as string) ?? '';
+    const baseUrl = kind === 'openai-compatible' ? legacyApiRoot((c.baseUrl as string) ?? '') : '';
     const conn: StoredConnection = {
       id: crypto.randomUUID(),
       kind,
@@ -299,6 +324,14 @@ async function setActive(req: AISetActiveRequest): Promise<AIResult<null>> {
 }
 
 async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ id: string }>> {
+  let baseUrl = '';
+  if (req.kind === 'openai-compatible') {
+    try {
+      baseUrl = apiRoot(req.baseUrl);
+    } catch (error) {
+      return { ok: false, error: errMessage(error) };
+    }
+  }
   return withConfig(async (cfg) => {
     let conn = req.id ? cfg.connections.find((c) => c.id === req.id) : undefined;
     if (!conn) {
@@ -314,7 +347,7 @@ async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ 
     }
     conn.kind = req.kind;
     conn.label = req.label || defaultLabel(req.kind, req.baseUrl);
-    conn.baseUrl = req.kind === 'openai-compatible' ? req.baseUrl : '';
+    conn.baseUrl = baseUrl;
     // Chrome's on-device model has no model list or key.
     conn.model = req.kind === 'chrome-builtin' ? 'gemini-nano' : req.model;
     if (req.apiKeyMode === 'set') conn.apiKeyEnc = await encryptString(req.apiKey ?? '');
@@ -541,7 +574,7 @@ async function ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>> {
       kind: 'openai-compatible',
       auth: 'device-key',
       label: label || (account.name ? `Ollama Cloud (${account.name})` : 'Ollama Cloud'),
-      baseUrl: OLLAMA_BASE,
+      baseUrl: `${OLLAMA_BASE}/v1`,
       model: '',
       apiKeyEnc: null,
       account: account.name,
@@ -607,13 +640,18 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
     }
     const apiKey = req.apiKey || (stored ? await freshToken(stored.id) : '');
     if (req.kind === 'anthropic' && !apiKey) throw new Error('Enter an API key first.');
+    const base = req.kind === 'openai-compatible' ? apiRoot(req.baseUrl) : '';
     const models =
       req.kind === 'anthropic'
         ? await anthropicModels(apiKey, subscription)
-        : await openaiModels(
-            stored && !req.apiKey ? await authorizerFor(stored, apiKey) : bearerAuth(apiKey),
-            normalizeBaseUrl(req.baseUrl),
-          );
+        : isGemini(base)
+          ? await geminiModels(apiKey, new URL(base).origin)
+          : workersAiAccount(base)
+            ? await workersAiModels(apiKey, workersAiAccount(base)!)
+            : await openaiModels(
+              stored && !req.apiKey ? await authorizerFor(stored, apiKey) : bearerAuth(apiKey),
+              base,
+            );
     return { ok: true, data: models };
   } catch (error) {
     return { ok: false, error: errMessage(error) };
@@ -666,7 +704,7 @@ async function complete(req: AICompleteRequest): Promise<AIResult<string>> {
               )
             : await openaiComplete(
                 await authorizerFor(conn, apiKey),
-                normalizeBaseUrl(conn.baseUrl),
+                apiRoot(conn.baseUrl),
                 conn.model,
                 req,
                 controller.signal,
@@ -771,11 +809,12 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
       return transient(result);
     }
 
-    const base = normalizeBaseUrl(conn.baseUrl);
+    const base = apiRoot(conn.baseUrl);
     const authorize = await authorizerFor(conn, token);
-    const send = async (omitParallel: boolean) => {
-      const url = new URL(`${base}/v1/chat/completions`);
-      const body = openaiBody(req, model, base, omitParallel);
+    const omit = new Set<OptionalField>();
+    const send = async () => {
+      const url = new URL(`${base}/chat/completions`);
+      const body = openaiBody(req, model, base, omit);
       if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
       return fetch(url, {
         method: 'POST', signal,
@@ -783,12 +822,14 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
         body: JSON.stringify(body),
       });
     };
-    let res = await send(false);
-    if (!res.ok) {
+    // A server that rejects an optional field gets the request again without it, once per field.
+    let res = await send();
+    while (!res.ok) {
       const text = await res.text();
-      if (!rejectsParallel(res.status, text)) throw new Error(describeHttpText(res.status, text));
-      res = await send(true);
-      if (!res.ok) throw new Error(await describeHttp(res));
+      const field = rejectedField(res.status, text);
+      if (!field || omit.has(field)) throw new Error(describeHttpText(res.status, text));
+      omit.add(field);
+      res = await send();
     }
     if (!res.body) throw new Error('The provider sent no response body.');
     const result = await openaiResult(readSse(res.body));
@@ -877,12 +918,86 @@ async function anthropicModels(token: string, subscription: boolean): Promise<Mo
   return (json.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id }));
 }
 
+const isGemini = (base: string): boolean => {
+  try { return new URL(base).hostname === 'generativelanguage.googleapis.com'; } catch { return false; }
+};
+
+/**
+ * Gemini's OpenAI-compatible /models lists every model on the account,
+ * embedding, image and agent models included, which 404 on chat. Its own
+ * API says what each supports: keep the generateContent ones.
+ */
+async function geminiModels(apiKey: string, origin: string): Promise<ModelInfo[]> {
+  if (!apiKey) throw new Error('Enter an API key first.');
+  const models: ModelInfo[] = [];
+  let pageToken = '';
+  do {
+    const url = new URL(`${origin}/v1beta/models`);
+    url.searchParams.set('pageSize', '1000');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const res = await fetch(url, { headers: { 'x-goog-api-key': apiKey } });
+    if (!res.ok) throw new Error(await describeHttp(res));
+    const json = (await res.json()) as {
+      models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
+      nextPageToken?: string;
+    };
+    for (const m of json.models ?? []) {
+      if (!m.supportedGenerationMethods?.includes('generateContent')) continue;
+      const id = m.name.replace(/^models\//, '');
+      models.push({ id, name: m.displayName || id });
+    }
+    pageToken = json.nextPageToken ?? '';
+  } while (pageToken);
+  return models.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** The account in a Workers AI root (`api.cloudflare.com/client/v4/accounts/<id>/ai/v1`), else undefined. */
+function workersAiAccount(base: string): string | undefined {
+  try {
+    const url = new URL(base);
+    if (url.hostname !== 'api.cloudflare.com') return undefined;
+    return /^\/client\/v4\/accounts\/([^/]+)\/ai\/v1$/.exec(url.pathname)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Workers AI has no OpenAI-style /models (405): its own model search lists
+ * the account's catalog. Keep the Text Generation models, across pages.
+ */
+async function workersAiModels(apiKey: string, account: string): Promise<ModelInfo[]> {
+  if (!apiKey) throw new Error('Enter an API token first.');
+  const models: ModelInfo[] = [];
+  const perPage = 100;
+  for (let page = 1; ; page++) {
+    const url = new URL(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/models/search`);
+    url.searchParams.set('task', 'Text Generation');
+    url.searchParams.set('per_page', String(perPage));
+    url.searchParams.set('page', String(page));
+    const res = await fetch(url, { headers: bearer(apiKey) });
+    if (!res.ok) throw new Error(await describeHttp(res));
+    const json = (await res.json()) as {
+      result?: { name?: string; task?: { name?: string } }[];
+      result_info?: { total_count?: number };
+    };
+    const result = json.result ?? [];
+    for (const m of result) {
+      if (m.name && (!m.task?.name || m.task.name === 'Text Generation')) models.push({ id: m.name, name: m.name });
+    }
+    const total = json.result_info?.total_count;
+    if (result.length < perPage || (total !== undefined && page * perPage >= total)) break;
+  }
+  return models.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 async function openaiModels(authorize: Authorizer, base: string): Promise<ModelInfo[]> {
-  const url = new URL(`${base}/v1/models`);
+  const url = new URL(`${base}/models`);
   const res = await fetch(url, { headers: await authorize('GET', url) });
   if (!res.ok) throw new Error(await describeHttp(res));
-  const json = (await res.json()) as { data?: { id: string }[] };
-  return (json.data ?? [])
+  // `{ data: [...] }`, or a bare array (Together).
+  const json = (await res.json()) as { data?: { id: string }[] } | { id: string }[];
+  return (Array.isArray(json) ? json : (json.data ?? []))
     .map((m) => ({ id: m.id, name: m.id }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -931,7 +1046,7 @@ async function openaiComplete(
   signal: AbortSignal,
   debug = false,
 ): Promise<string> {
-  const url = new URL(`${base}/v1/chat/completions`);
+  const url = new URL(`${base}/chat/completions`);
   const res = await fetch(url, {
     method: 'POST',
     signal,

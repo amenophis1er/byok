@@ -13,8 +13,10 @@ worker, and `chat()` with native tool calling for agents:
 
 - **Anthropic** — API key, Claude Pro/Max subscription OAuth (PKCE +
   paste-code, no redirect registration), or a pasted `claude setup-token`.
-- **OpenAI-compatible** — OpenAI, OpenRouter, Ollama (local or cloud), any
-  `/v1/chat/completions` server.
+- **OpenAI-compatible** — presets for OpenAI, Google Gemini, OpenRouter,
+  Vercel AI Gateway, Cloudflare Workers AI and AI Gateway, Groq, Mistral, xAI,
+  DeepSeek, Together AI, Fireworks AI, Cerebras and Ollama (local or cloud),
+  plus any other server that speaks `/chat/completions`.
 - **ChatGPT subscription** — the Codex device flow + Responses-API backend.
 - **Ollama Cloud, connected device** — the `ollama signin` flow: a
   non-extractable Ed25519 key paired on ollama.com, every request signed. No
@@ -88,7 +90,7 @@ import { createAiClient } from '@amenophis1er/byok/client';
 const ai = createAiClient({ prefix: 'myext' });
 
 const view = await ai.get();                       // redacted connections
-await ai.saveConnection({ kind: 'openai-compatible', label: '', baseUrl: 'https://api.openai.com',
+await ai.saveConnection({ kind: 'openai-compatible', label: '', baseUrl: 'https://api.openai.com/v1',
                           model: 'gpt-5.5', apiKeyMode: 'set', apiKey: 'sk-…', makeActive: true });
 const res = await ai.complete({ system: 'Be terse.', prompt: 'Hello' });
 if (res.ok) console.log(res.data);
@@ -125,7 +127,12 @@ npm run example        # builds the library into example/demo
 ```
 
 Then open `chrome://extensions`, turn on Developer mode, choose **Load
-unpacked**, pick `example/demo`, and click the extension's toolbar button. For
+unpacked**, pick `example/demo`, and click the extension's toolbar button.
+
+While working on the library, run `npm run dev` instead: it rebuilds into
+`example/demo` on every save, and the loaded demo reloads itself (the page for
+a page change, the whole extension for a library or worker change, reopening
+the page). For
 a local Ollama, allow extensions first: see
 [Local servers](#local-servers-ollama-lm-studio).
 
@@ -222,9 +229,19 @@ only), and `tabs.create` works without a permission.
 "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
 ```
 
-Custom base URLs (self-hosted, LM Studio, local Ollama) need an on-demand
-grant — `originPattern(baseUrl)` from `/types` gives you the match pattern
-for `chrome.permissions.request`.
+Other presets and custom base URLs (self-hosted, LM Studio, local Ollama)
+need an on-demand grant — `originPattern(baseUrl)` from `/types` gives you the
+match pattern for `chrome.permissions.request`.
+
+**Base URLs** for OpenAI-compatible connections are the API root: requests go
+to `${baseUrl}/chat/completions` and `${baseUrl}/models`, so the root is
+whatever comes before `/chat/completions` in the provider's docs (Gemini:
+`…/v1beta/openai`, Groq: `…/openai/v1`). `normalizeBaseUrl` adds `/v1` to a
+bare origin like `api.openai.com` or `localhost:11434` and keeps any other path
+as typed. `OPENAI_COMPATIBLE_PRESETS` lists the known roots; the Cloudflare
+ones contain `{account_id}` (and `{gateway_id}`) for the user to fill in, and a
+connection whose URL still has one is refused. Some servers (Cloudflare among
+them) may list no models, so let users type a model id too, as the demo does.
 
 **DNR rules** (subscription auth only): merge `manifest/dnr-rules.json` into
 your ruleset (it is exported as

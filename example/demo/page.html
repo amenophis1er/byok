@@ -117,12 +117,12 @@
 
         <!-- OpenAI-compatible -->
         <div class="pane" data-pane="compatible" hidden>
-          <p class="hint">OpenAI, OpenRouter, a local Ollama or LM Studio, or any server that speaks the OpenAI API.</p>
+          <p class="hint">OpenAI, Gemini, OpenRouter, Cloudflare, Groq, Mistral and more, a local Ollama or LM Studio, or any server that speaks the OpenAI API.</p>
           <label class="field">Server
             <select id="compat-preset"></select>
           </label>
           <label class="field">Base URL
-            <input id="compat-url" placeholder="https://api.example.com" spellcheck="false">
+            <input id="compat-url" placeholder="https://api.example.com/v1" spellcheck="false">
           </label>
           <label class="field"><span>API key <span id="compat-optional" class="muted" hidden>(optional)</span></span>
             <input id="compat-key" type="password" autocomplete="off" spellcheck="false">
@@ -131,6 +131,9 @@
             <button class="btn" id="compat-models">Load models</button>
             <select id="compat-model" class="grow" disabled><option>Load models first</option></select>
           </div>
+          <label class="field" id="compat-model-typed-field" hidden>Model id
+            <input id="compat-model-typed" placeholder="e.g. @cf/meta/llama-3.3-70b-instruct-fp8-fast" spellcheck="false">
+          </label>
           <button class="btn primary" id="compat-save" disabled>Connect</button>
           <p id="compat-local" class="hint" style="margin-top:12px" hidden>Ollama refuses requests from extensions (HTTP 403) unless it is started with <code>OLLAMA_ORIGINS=chrome-extension://*</code>. <a href="https://github.com/amenophis1er/byok#local-servers-ollama-lm-studio" target="_blank" rel="noopener">How to set it</a>.</p>
         </div>
