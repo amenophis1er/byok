@@ -26,12 +26,13 @@ export type ProviderKind = 'anthropic' | 'openai-compatible' | 'chatgpt' | 'chro
  * The wire format a connection's requests are written in, separate from who
  * they go to: `anthropic` = the Messages API (`/messages`), `responses` = the
  * OpenAI Responses API (`/responses`), `chat-completions` = Chat Completions
- * (`/chat/completions`). An 'anthropic' connection speaks `anthropic`, a
- * 'chatgpt' one `responses`; an 'openai-compatible' one speaks
+ * (`/chat/completions`), `gemini` = the Gemini API
+ * (`/models/{model}:streamGenerateContent`). An 'anthropic' connection speaks
+ * `anthropic`, a 'chatgpt' one `responses`; an 'openai-compatible' one speaks
  * `chat-completions` unless saved with another, and an OpenCode sign-in
  * speaks whichever each model is served on.
  */
-export type Protocol = 'anthropic' | 'responses' | 'chat-completions';
+export type Protocol = 'anthropic' | 'responses' | 'chat-completions' | 'gemini';
 
 /** How a connection authenticates. 'key' = API key; 'oauth'/'setup-token'
  *  = a Claude Pro/Max, ChatGPT or OpenCode Console token (Bearer, refreshable / long-lived);
@@ -73,9 +74,11 @@ export const OPENAI_COMPATIBLE_PRESETS: {
   baseUrl: string;
   /** Local/self-hosted endpoints usually need no key. */
   keyOptional?: boolean;
+  /** The server's own protocol, when it is better served than Chat Completions; pass it on save. */
+  protocol?: Protocol;
 }[] = [
   { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
-  { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'gemini' },
   { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
   { label: 'Vercel AI Gateway', baseUrl: 'https://ai-gateway.vercel.sh/v1' },
   { label: 'Cloudflare Workers AI', baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1' },
@@ -148,7 +151,8 @@ export interface AISaveConnectionRequest {
   id?: string;
   kind: ProviderKind;
   /** openai-compatible only: the protocol the server speaks at `baseUrl`. Default 'chat-completions';
-   *  'responses' for OpenAI's own Responses API (`${baseUrl}/responses`). */
+   *  'responses' for OpenAI's own Responses API (`${baseUrl}/responses`); 'gemini' for the Gemini API
+   *  (a base URL ending in `/openai`, Gemini's OpenAI-compatible root, is read as the root above it). */
   protocol?: Protocol;
   label: string;
   baseUrl: string;

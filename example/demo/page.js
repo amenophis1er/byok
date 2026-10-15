@@ -61,7 +61,7 @@ function connectionRow(c) {
   name.textContent = c.label;
   const meta = document.createElement('div');
   meta.className = 'conn-meta';
-  meta.textContent = [authLabel(c), c.protocol === 'responses' ? 'Responses API' : '', c.model || 'no model yet', c.keyHint].filter(Boolean).join(' · ');
+  meta.textContent = [authLabel(c), { responses: 'Responses API', gemini: 'Gemini API' }[c.protocol] ?? '', c.model || 'no model yet', c.keyHint].filter(Boolean).join(' · ');
   text.append(name, meta);
 
   const actions = document.createElement('div');
@@ -358,7 +358,7 @@ $('compat-save').onclick = () => busy($('compat-save'), 'Connecting…', async (
   const apiKey = $('compat-key').value.trim();
   const preset = presets[Number($('compat-preset').value)];
   const label = preset.label === 'Custom' ? '' : preset.label;
-  const protocol = !$('compat-responses-field').hidden && $('compat-responses').checked ? 'responses' : 'chat-completions';
+  const protocol = !$('compat-responses-field').hidden && $('compat-responses').checked ? 'responses' : (preset.protocol ?? 'chat-completions');
   const res = await ai.saveConnection({ kind: 'openai-compatible', protocol, label, baseUrl, model: compatModel(),
     apiKeyMode: apiKey ? 'set' : 'clear', apiKey, makeActive: true });
   if (!res.ok) return status(res.error, 'error');
