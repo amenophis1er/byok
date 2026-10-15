@@ -20,7 +20,9 @@ while on 0.x, a breaking change bumps the minor version.
   protocol" to any other. A turn now starts on the likely one (by name) and
   moves to the next on that answer, remembering what worked for the worker's
   lifetime. Gemini models, served on Google's own protocol, which the library
-  has no client for yet, fail with a clear error.
+  has no client for yet, fail with a clear error. An OpenAI connection does the
+  same for its models that take function tools on Responses only ("use
+  /v1/responses"): the turn moves over, and stays there.
 - The OpenCode inference root is `https://opencode.ai/inference/v1` (the
   earlier `…/inference/openai/v1` did not exist), and the demo asks for
   `https://opencode.ai/*`.

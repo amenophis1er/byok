@@ -820,13 +820,13 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     const debug = await debugOn();
     const signal = controller.signal;
 
-    // OpenCode serves each model on its own protocol: the wrong guess is answered with a mismatch, and the next one is tried.
+    // A server that serves the model on another protocol says so: the next candidate is tried.
     const candidates = protocolCandidates(conn, model);
     let mismatch: ProtocolMismatch | undefined;
     for (const protocol of candidates) {
       try {
         const result = await turn(protocol, conn, token, model, req, signal, debug);
-        if (conn.issuer === 'opencode') learnedProtocols.set(model, protocol);
+        if (candidates.length > 1) learnedProtocols.set(`${conn.id}:${model}`, protocol);
         if (debug) dlog('chat result', result);
         return transient(result);
       } catch (error) {
@@ -834,7 +834,7 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
         mismatch = error;
       }
     }
-    throw new Error(candidates.length > 1
+    throw new Error(conn.issuer === 'opencode'
       ? `OpenCode serves ${model} on a protocol this library does not speak (${mismatch?.message}).`
       : mismatch?.message);
   } catch (error) {
@@ -860,20 +860,33 @@ function protocolOf(conn: StoredConnection): Protocol {
 }
 
 /**
- * OpenCode serves each model on that model's own protocol — Claude on
- * Messages, GPT on Responses, most others on Chat Completions — and answers
- * HTTP 400 "Model does not support this protocol" to any other. The name is
- * the first guess; what each model answered to is kept for the worker's
- * lifetime.
+ * Some servers serve a model on another protocol than the connection's and
+ * say so with HTTP 400. OpenCode serves each model on its origin's — Claude
+ * on Messages, GPT on Responses, most others on Chat Completions — and
+ * answers "Model does not support this protocol" to any other; OpenAI's newer
+ * models take function tools on Responses only ("use /v1/responses"). The
+ * candidates are tried in order, and what a model answered to is kept for the
+ * worker's lifetime.
  */
 const learnedProtocols = new Map<string, Protocol>();
 const PROTOCOLS: readonly Protocol[] = ['chat-completions', 'anthropic', 'responses'];
 
+const isOpenAi = (baseUrl: string): boolean => {
+  try { return new URL(baseUrl).hostname === 'api.openai.com'; } catch { return false; }
+};
+
 function protocolCandidates(conn: StoredConnection, model: string): Protocol[] {
-  if (conn.issuer !== 'opencode') return [protocolOf(conn)];
-  const first = learnedProtocols.get(model)
-    ?? (/^claude-/.test(model) ? 'anthropic' : /^(gpt-|grok-|muse-)/.test(model) ? 'responses' : 'chat-completions');
-  return [first, ...PROTOCOLS.filter((p) => p !== first)];
+  const learned = learnedProtocols.get(`${conn.id}:${model}`);
+  if (conn.issuer === 'opencode') {
+    const first = learned
+      ?? (/^claude-/.test(model) ? 'anthropic' : /^(gpt-|grok-|muse-)/.test(model) ? 'responses' : 'chat-completions');
+    return [first, ...PROTOCOLS.filter((p) => p !== first)];
+  }
+  const saved = protocolOf(conn);
+  if (conn.kind === 'openai-compatible' && saved === 'chat-completions' && isOpenAi(conn.baseUrl)) {
+    return learned === 'responses' ? ['responses'] : ['chat-completions', 'responses'];
+  }
+  return [saved];
 }
 
 /** The server's answer to a request in a protocol it does not serve that model on. */
@@ -882,7 +895,8 @@ class ProtocolMismatch extends Error {}
 /** An HTTP failure as an error: a protocol mismatch when the server says so, else the text in words. */
 function httpError(status: number, text: string): Error {
   const message = describeHttpText(status, text);
-  return status === 400 && /does not support this protocol/i.test(text) ? new ProtocolMismatch(message) : new Error(message);
+  const mismatch = status === 400 && (/does not support this protocol/i.test(text) || /use \/v1\/responses/i.test(text));
+  return mismatch ? new ProtocolMismatch(message) : new Error(message);
 }
 
 /** A failure event in a Responses stream from a server other than ChatGPT, in its own words. */

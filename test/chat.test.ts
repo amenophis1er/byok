@@ -272,6 +272,21 @@ describe('chat()', () => {
       expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'HTTP 404: Unknown model.' });
     });
 
+    it('moves an OpenAI model that takes tools on Responses only over to it, and stays there', async () => {
+      seed([conn('oa', { baseUrl: 'https://api.openai.com/v1', model: 'gpt-6.1-sol', apiKeyEnc: { plain: 'sk-1' } })], 'oa');
+      const refusal = () => new Response(JSON.stringify({ error: { message: 'Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to \'none\'.' } }), { status: 400 });
+      const fetched = vi.fn().mockResolvedValueOnce(refusal()).mockResolvedValueOnce(responsesAnswer()).mockResolvedValueOnce(responsesAnswer());
+      vi.stubGlobal('fetch', fetched);
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }], tools: [{ name: 'browser', description: 'd', inputSchema: {} }] })).toMatchObject({ ok: true, text: 'hi' });
+      expect(calls(fetched)).toEqual(['https://api.openai.com/v1/chat/completions', 'https://api.openai.com/v1/responses']);
+      await chat({ system: '', messages: [{ role: 'user', content: 'again' }] });
+      expect(calls(fetched)[2]).toBe('https://api.openai.com/v1/responses');
+      // Any other 400 is the answer, not a mismatch.
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"bad"}}', { status: 400 })));
+      seed([conn('ob', { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5', apiKeyEnc: { plain: 'sk-1' } })], 'ob');
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'HTTP 400: bad' });
+    });
+
     it('reports a non-ChatGPT Responses failure event in the provider\'s words', async () => {
       seed([conn('r', { baseUrl: 'https://api.openai.com/v1', protocol: 'responses', apiKeyEnc: { plain: 'sk-1' } })], 'r');
       vi.stubGlobal('fetch', vi.fn(async () => sseResponse(`data: ${JSON.stringify({ type: 'error', error: { message: 'Quota exceeded.' } })}\n\n`)));
