@@ -3,7 +3,7 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
-## 0.2.0
+## 0.1.3
 
 - **Protocols are separate from connections.** A connection says who requests
   go to and how they authenticate; its `protocol` — `anthropic` (the Messages
@@ -12,9 +12,8 @@ while on 0.x, a breaking change bumps the minor version.
   openai-compatible connection can be saved with `protocol: 'responses'` to
   speak OpenAI's own Responses API at `${baseUrl}/responses`. Existing
   connections keep theirs: 'anthropic' speaks `anthropic`, 'chatgpt'
-  `responses`, 'openai-compatible' `chat-completions`. Minor bump: the view
-  gained a field, and `complete()` is now a `chat()` turn (streamed, same
-  answer).
+  `responses`, 'openai-compatible' `chat-completions`. `complete()` is now a
+  `chat()` turn: streamed, same answer.
 - **OpenCode models on their own protocol.** OpenCode serves each model on
   the protocol of its origin — Claude on Messages, GPT on Responses, most
   others on Chat Completions — and answers 400 "Model does not support this

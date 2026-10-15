@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "byok demo",
-  "version": "0.2.0",
+  "version": "0.1.3",
   "description": "Demo of @amenophis1er/byok: connect Claude, ChatGPT, Ollama or any OpenAI-compatible server, then chat with tools.",
   "minimum_chrome_version": "137",
   "permissions": ["storage", "declarativeNetRequest"],
