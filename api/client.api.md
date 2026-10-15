@@ -46,6 +46,9 @@ export interface AiClient {
     ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>>;
     ollamaLoginStart(deviceName?: string): Promise<AIResult<AIOllamaLoginStart>>;
     // (undocumented)
+    opencodeLoginPoll(label: string): Promise<AIResult<AIOpencodePoll>>;
+    opencodeLoginStart(): Promise<AIResult<AIOpencodeLoginStart>>;
+    // (undocumented)
     saveConnection(input: Omit<AISaveConnectionRequest, 'type'>): Promise<AIResult<{
         id: string;
     }>>;

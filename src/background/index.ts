@@ -15,12 +15,15 @@ import {
   type AIListModelsRequest,
   type AIOllamaLoginStart,
   type AIOllamaPoll,
+  type AIOpencodeLoginStart,
+  type AIOpencodePoll,
   type AIResult,
   type AISaveConnectionRequest,
   type AISetActiveRequest,
   type AuthMode,
   type ConnectionView,
   type ModelInfo,
+  type Protocol,
   type ProviderKind,
 } from '../types.js';
 import {
@@ -34,7 +37,7 @@ import {
 } from './crypto.js';
 import { anthropicBody, anthropicResult } from './chat-anthropic.js';
 import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
-import { CODEX_RESPONSES_URL, codexBody, codexHttpError, codexResult } from './chat-codex.js';
+import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import {
   CONNECT_POLL_MS,
@@ -47,6 +50,16 @@ import {
   whoami,
 } from './ollama-device.js';
 import {
+  OPENCODE_BASE,
+  type OpencodeDeviceStart,
+  opencodeAccount,
+  opencodeHeaders,
+  opencodePollDelayMs,
+  pollOpencode,
+  refreshOpencodeTokens,
+  startOpencodeLogin,
+} from './opencode-oauth.js';
+import {
   exchangeCode,
   isSetupToken,
   refreshTokens,
@@ -55,7 +68,6 @@ import {
 } from './anthropic-oauth.js';
 import {
   CODEX_MODELS,
-  codexComplete,
   codexModels,
   exchangeDeviceCode,
   nextPollDelayMs,
@@ -93,6 +105,8 @@ export interface AiHandlerOptions {
   settingsHint?: string;
   /** Open the OAuth consent page in a new tab on login-start (needs nothing beyond tabs.create). Default true. */
   openConsentTab?: boolean;
+  /** The client id the OpenCode Console sign-in sends: your extension's name, shown on its approval page. Default 'byok'. */
+  opencodeClientId?: string;
 }
 
 interface Resolved {
@@ -102,6 +116,7 @@ interface Resolved {
   debugFlagKey: string;
   settingsHint: string;
   openConsentTab: boolean;
+  opencodeClientId: string;
 }
 
 let opts: Resolved = resolve({});
@@ -114,6 +129,7 @@ function resolve(o: AiHandlerOptions): Resolved {
     debugFlagKey: o.debugFlagKey ?? 'aiConnectDebug',
     settingsHint: o.settingsHint ?? 'Add one in the extension settings.',
     openConsentTab: o.openConsentTab ?? true,
+    opencodeClientId: o.opencodeClientId ?? 'byok',
   };
 }
 
@@ -122,6 +138,8 @@ interface StoredConnection {
   kind: ProviderKind;
   /** 'key' (default) | 'oauth' (Claude Pro/Max, refreshable) | 'setup-token'. */
   auth?: AuthMode;
+  /** openai-compatible only: the protocol the server speaks; absent = chat-completions. */
+  protocol?: Protocol;
   label: string;
   baseUrl: string;
   model: string;
@@ -132,6 +150,11 @@ interface StoredConnection {
   expiresAt?: number;
   /** chatgpt only: account id from the JWT, sent as chatgpt-account-id. */
   accountId?: string;
+  /** oauth only: who issued the token when it is not the provider itself. 'opencode' = the OpenCode Console
+   *  (an openai-compatible connection whose token is refreshed there and that names its organization). */
+  issuer?: 'opencode';
+  /** opencode only: the organization the token was issued for, sent as x-opencode-org-id. */
+  orgId?: string;
   /** device-key only: the Ollama account the device key is paired with. The
    *  key pair itself lives in IndexedDB under the connection id. */
   account?: string;
@@ -285,6 +308,7 @@ async function toView(c: StoredConnection): Promise<ConnectionView> {
       id: c.id,
       kind: c.kind,
       auth: c.auth,
+      protocol: protocolOf(c),
       label: c.label,
       baseUrl: c.baseUrl,
       model: c.model,
@@ -298,11 +322,13 @@ async function toView(c: StoredConnection): Promise<ConnectionView> {
     id: c.id,
     kind: c.kind,
     auth: c.auth ?? 'key',
+    protocol: protocolOf(c),
     label: c.label,
     baseUrl: c.baseUrl,
     model: c.model,
     hasKey: key.length > 0,
-    keyHint: key ? `····${key.slice(-4)}` : '',
+    // A sign-in shows who signed in when it knows; a key its last characters.
+    keyHint: c.account ?? (key ? `····${key.slice(-4)}` : ''),
     revision: c.revision ?? 0,
   };
 }
@@ -348,6 +374,8 @@ async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ 
     conn.kind = req.kind;
     conn.label = req.label || defaultLabel(req.kind, req.baseUrl);
     conn.baseUrl = baseUrl;
+    if (req.kind === 'openai-compatible' && req.protocol && req.protocol !== 'chat-completions') conn.protocol = req.protocol;
+    else delete conn.protocol;
     // Chrome's on-device model has no model list or key.
     conn.model = req.kind === 'chrome-builtin' ? 'gemini-nano' : req.model;
     if (req.apiKeyMode === 'set') conn.apiKeyEnc = await encryptString(req.apiKey ?? '');
@@ -585,6 +613,67 @@ async function ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>> {
   }
 }
 
+/* ── OpenCode Console (device flow) ───────────────────────────────── */
+
+const OPENCODE_PENDING = 'aiConnectOpencodeDevice';
+
+/** Start the device grant and stash it in session storage; the UI shows the code and polls. */
+async function opencodeLoginStart(): Promise<AIResult<AIOpencodeLoginStart>> {
+  try {
+    const start = await startOpencodeLogin(opts.opencodeClientId);
+    await chrome.storage.session.set({ [OPENCODE_PENDING]: { ...start, slowDowns: 0 } });
+    if (opts.openConsentTab) void chrome.tabs.create({ url: start.verifyUrl }).catch(() => {});
+    return { ok: true, data: { userCode: start.userCode, verifyUrl: start.verifyUrl, pollMs: opencodePollDelayMs(start.intervalSec, 0) } };
+  } catch (error) {
+    return { ok: false, error: errMessage(error) };
+  }
+}
+
+/** One poll, driven by the UI so the worker may die between polls; the grant lives in session storage. */
+async function opencodeLoginPoll(label: string): Promise<AIResult<AIOpencodePoll>> {
+  try {
+    const pending = (await chrome.storage.session.get(OPENCODE_PENDING))[OPENCODE_PENDING] as
+      | (OpencodeDeviceStart & { slowDowns: number })
+      | undefined;
+    if (!pending) throw new Error('Sign-in expired — start again.');
+    if (Date.now() > pending.expiresAt) {
+      await chrome.storage.session.remove(OPENCODE_PENDING);
+      throw new Error('The code expired — start the sign-in again.');
+    }
+    const poll = await pollOpencode(pending.deviceCode, opts.opencodeClientId);
+    if (poll.status === 'pending') return { ok: true, data: { status: 'pending', pollMs: opencodePollDelayMs(pending.intervalSec, pending.slowDowns) } };
+    if (poll.status === 'slow_down') {
+      const slowDowns = pending.slowDowns + 1;
+      await chrome.storage.session.set({ [OPENCODE_PENDING]: { ...pending, slowDowns } });
+      return { ok: true, data: { status: 'pending', pollMs: opencodePollDelayMs(pending.intervalSec, slowDowns) } };
+    }
+    if (poll.status === 'denied') {
+      await chrome.storage.session.remove(OPENCODE_PENDING);
+      throw new Error(poll.error);
+    }
+    await chrome.storage.session.remove(OPENCODE_PENDING);
+    const account = await opencodeAccount(poll.tokens);
+    const conn: StoredConnection = {
+      id: crypto.randomUUID(),
+      kind: 'openai-compatible',
+      auth: 'oauth',
+      issuer: 'opencode',
+      label: label || 'OpenCode',
+      baseUrl: OPENCODE_BASE,
+      model: '',
+      apiKeyEnc: await encryptString(poll.tokens.accessToken),
+      refreshTokenEnc: poll.tokens.refreshToken ? await encryptString(poll.tokens.refreshToken) : null,
+      expiresAt: poll.tokens.expiresAt,
+      ...(poll.tokens.orgId ? { orgId: poll.tokens.orgId } : {}),
+      ...(account ? { account } : {}),
+    };
+    await addConnection(conn);
+    return { ok: true, data: { status: 'created', id: conn.id } };
+  } catch (error) {
+    return { ok: false, error: errMessage(error) };
+  }
+}
+
 /** Refresh an OAuth connection's token if it's near expiry, persisting the
  *  rotated pair through the one writer. Returns the usable access token. */
 async function freshToken(connId: string): Promise<string> {
@@ -598,7 +687,8 @@ async function freshToken(connId: string): Promise<string> {
     const refresh = await decryptBlob(conn.refreshTokenEnc);
     if (!refresh) return access; // can't refresh; try the current token
     const tokens =
-      conn.kind === 'chatgpt' ? await refreshOpenAiTokens(refresh) : await refreshTokens(refresh);
+      conn.issuer === 'opencode' ? await refreshOpencodeTokens(refresh, opts.opencodeClientId)
+        : conn.kind === 'chatgpt' ? await refreshOpenAiTokens(refresh) : await refreshTokens(refresh);
     conn.apiKeyEnc = await encryptString(tokens.accessToken);
     conn.refreshTokenEnc = await encryptString(tokens.refreshToken);
     conn.expiresAt = tokens.expiresAt;
@@ -659,75 +749,34 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
 }
 
 async function complete(req: AICompleteRequest): Promise<AIResult<string>> {
-  try {
-    const cfg = await load();
-    const conn = cfg.connections.find((c) => c.id === cfg.activeId);
-    if (!conn) throw new Error(`No AI connection selected. ${opts.settingsHint}`);
-    const subscription = conn.auth === 'oauth' || conn.auth === 'setup-token';
-    const apiKey = await freshToken(conn.id);
-    if (conn.kind === 'chrome-builtin') {
-      // Runs in a page context (needs the page + user gesture); the worker
-      // should never be asked to do it.
-      throw new Error('The on-device model runs in the page, not the worker.');
-    }
-    if (!conn.model || (conn.kind === 'anthropic' && !apiKey)) {
-      throw new Error(`The active AI connection is incomplete. ${opts.settingsHint}`);
-    }
-    const debug = await debugOn();
-    if (debug) {
-      dlog('request', {
-        connection: conn.label,
-        kind: conn.kind,
-        model: conn.model,
-        baseUrl: conn.baseUrl || ANTHROPIC_BASE,
-        system: req.system,
-        prompt: req.prompt,
-        maxTokens: req.maxTokens ?? 1024,
-      });
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), COMPLETE_TIMEOUT_MS);
-    try {
-      const raw =
-        conn.kind === 'anthropic'
-          ? await anthropicComplete(apiKey, conn.model, req, controller.signal, debug, subscription)
-          : conn.kind === 'chatgpt'
-            ? await codexComplete(
-                {
-                  accessToken: apiKey,
-                  accountId: conn.accountId,
-                  model: conn.model,
-                  system: req.system,
-                  prompt: req.prompt,
-                },
-                controller.signal,
-              )
-            : await openaiComplete(
-                await authorizerFor(conn, apiKey),
-                apiRoot(conn.baseUrl),
-                conn.model,
-                req,
-                controller.signal,
-                debug,
-              );
-      const text = stripThinking(raw);
-      if (debug) dlog('result', { raw, afterStripThinking: text });
-      return { ok: true, data: text };
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return { ok: false, error: 'Timed out — the model took too long (a large local model can hang your machine; pick a smaller one).' };
-    }
-    return { ok: false, error: errMessage(error) };
+  const cfg = await load();
+  const conn = cfg.connections.find((c) => c.id === cfg.activeId);
+  // The on-device model runs in a page context (needs the page + user gesture); the worker should never be asked to do it.
+  if (conn?.kind === 'chrome-builtin') return { ok: false, error: 'The on-device model runs in the page, not the worker.' };
+  const result = await chat({
+    system: req.system,
+    messages: [{ role: 'user', content: req.prompt }],
+    maxTokens: req.maxTokens ?? 1024,
+    timeoutMs: COMPLETE_TIMEOUT_MS,
+  });
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.error === TIMED_OUT
+        ? 'Timed out — the model took too long (a large local model can hang your machine; pick a smaller one).'
+        : (result.error ?? 'The model gave no answer.'),
+    };
   }
+  const text = stripThinking(result.text ?? '');
+  if (await debugOn()) dlog('result', { raw: result.text, afterStripThinking: text });
+  return { ok: true, data: text };
 }
 
 /* ── chat with tools ─────────────────────────────────────────────── */
 
 /** Whole-request default for chat(); the stream itself keeps the worker's fetch alive. */
 const CHAT_TIMEOUT_MS = 120_000;
+const TIMED_OUT = 'Timed out waiting for the model.';
 
 /** Request bodies for the debug log, with image bytes replaced (they are never logged). */
 function redactImages(body: unknown): unknown {
@@ -771,73 +820,26 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     const debug = await debugOn();
     const signal = controller.signal;
 
-    if (conn.kind === 'anthropic') {
-      const subscription = conn.auth === 'oauth' || conn.auth === 'setup-token';
-      if (!token) throw new Error(`The AI connection has no key. ${opts.settingsHint}`);
-      const system = subscription ? withClaudeCodeSystem(req.system).system : req.system ? [{ type: 'text' as const, text: req.system }] : [];
-      const body = anthropicBody(req, model, system);
-      if (debug) dlog('chat request', { connection: conn.label, body: redactImages(body) });
-      const res = await fetch(`${ANTHROPIC_BASE}/v1/messages`, {
-        method: 'POST', signal,
-        headers: { ...anthropicHeaders(token, subscription), 'content-type': 'application/json', accept: 'text/event-stream' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok || !res.body) throw new Error(await describeHttp(res));
-      const result = await anthropicResult(readSse(res.body));
-      if (debug) dlog('chat result', result);
-      return transient(result);
+    // A server that serves the model on another protocol says so: the next candidate is tried.
+    const candidates = protocolCandidates(conn, model);
+    let mismatch: ProtocolMismatch | undefined;
+    for (const protocol of candidates) {
+      try {
+        const result = await turn(protocol, conn, token, model, req, signal, debug);
+        if (candidates.length > 1) learnedProtocols.set(`${conn.id}:${model}`, protocol);
+        if (debug) dlog('chat result', result);
+        return transient(result);
+      } catch (error) {
+        if (!(error instanceof ProtocolMismatch)) throw error;
+        mismatch = error;
+      }
     }
-
-    if (conn.kind === 'chatgpt') {
-      if (!token) throw new Error(`The ChatGPT sign-in is missing. ${opts.settingsHint}`);
-      const body = codexBody(req, model);
-      if (debug) dlog('chat request', { connection: conn.label, body: redactImages(body) });
-      const res = await fetch(CODEX_RESPONSES_URL, {
-        method: 'POST', signal,
-        headers: {
-          authorization: `Bearer ${token}`,
-          ...(conn.accountId ? { 'chatgpt-account-id': conn.accountId } : {}),
-          originator: 'codex_cli_rs', 'openai-beta': 'responses=experimental',
-          'content-type': 'application/json', accept: 'text/event-stream',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(codexHttpError(res.status, await res.text()));
-      if (!res.body) throw new Error('The provider sent no response body.');
-      const result = await codexResult(readSse(res.body));
-      if (debug) dlog('chat result', result);
-      return transient(result);
-    }
-
-    const base = apiRoot(conn.baseUrl);
-    const authorize = await authorizerFor(conn, token);
-    const omit = new Set<OptionalField>();
-    const send = async () => {
-      const url = new URL(`${base}/chat/completions`);
-      const body = openaiBody(req, model, base, omit);
-      if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
-      return fetch(url, {
-        method: 'POST', signal,
-        headers: { ...(await authorize('POST', url)), 'content-type': 'application/json', accept: 'text/event-stream' },
-        body: JSON.stringify(body),
-      });
-    };
-    // A server that rejects an optional field gets the request again without it, once per field.
-    let res = await send();
-    while (!res.ok) {
-      const text = await res.text();
-      const field = rejectedField(res.status, text);
-      if (!field || omit.has(field)) throw new Error(describeHttpText(res.status, text));
-      omit.add(field);
-      res = await send();
-    }
-    if (!res.body) throw new Error('The provider sent no response body.');
-    const result = await openaiResult(readSse(res.body));
-    if (debug) dlog('chat result', result);
-    return transient(result);
+    throw new Error(conn.issuer === 'opencode'
+      ? `OpenCode serves ${model} on a protocol this library does not speak (${mismatch?.message}).`
+      : mismatch?.message);
   } catch (error) {
     if (options.signal?.aborted) return { ok: false, error: 'Stopped.' };
-    if (controller.signal.aborted) return { ok: false, error: 'Timed out waiting for the model.' };
+    if (controller.signal.aborted) return { ok: false, error: TIMED_OUT };
     // A dropped connection or a server-side failure: nothing was acted on, so the caller may send the same request again.
     if (error instanceof TypeError) return { ok: false, error: chatNetworkError(used), retryable: true };
     const message = errMessage(error);
@@ -846,6 +848,144 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onAbort);
   }
+}
+
+/* ── protocols ───────────────────────────────────────────────────── */
+
+/** The protocol a connection's requests are written in: by its kind, or as saved for an openai-compatible one. */
+function protocolOf(conn: StoredConnection): Protocol {
+  if (conn.kind === 'anthropic') return 'anthropic';
+  if (conn.kind === 'chatgpt') return 'responses';
+  return conn.protocol ?? 'chat-completions';
+}
+
+/**
+ * Some servers serve a model on another protocol than the connection's and
+ * say so with HTTP 400. OpenCode serves each model on its origin's — Claude
+ * on Messages, GPT on Responses, most others on Chat Completions — and
+ * answers "Model does not support this protocol" to any other; OpenAI's newer
+ * models take function tools on Responses only ("use /v1/responses"). The
+ * candidates are tried in order, and what a model answered to is kept for the
+ * worker's lifetime.
+ */
+const learnedProtocols = new Map<string, Protocol>();
+const PROTOCOLS: readonly Protocol[] = ['chat-completions', 'anthropic', 'responses'];
+
+const isOpenAi = (baseUrl: string): boolean => {
+  try { return new URL(baseUrl).hostname === 'api.openai.com'; } catch { return false; }
+};
+
+function protocolCandidates(conn: StoredConnection, model: string): Protocol[] {
+  const learned = learnedProtocols.get(`${conn.id}:${model}`);
+  if (conn.issuer === 'opencode') {
+    const first = learned
+      ?? (/^claude-/.test(model) ? 'anthropic' : /^(gpt-|grok-|muse-)/.test(model) ? 'responses' : 'chat-completions');
+    return [first, ...PROTOCOLS.filter((p) => p !== first)];
+  }
+  const saved = protocolOf(conn);
+  if (conn.kind === 'openai-compatible' && saved === 'chat-completions' && isOpenAi(conn.baseUrl)) {
+    return learned === 'responses' ? ['responses'] : ['chat-completions', 'responses'];
+  }
+  return [saved];
+}
+
+/** The server's answer to a request in a protocol it does not serve that model on. */
+class ProtocolMismatch extends Error {}
+
+/** An HTTP failure as an error: a protocol mismatch when the server says so, else the text in words. */
+function httpError(status: number, text: string): Error {
+  const message = describeHttpText(status, text);
+  const mismatch = status === 400 && (/does not support this protocol/i.test(text) || /use \/v1\/responses/i.test(text));
+  return mismatch ? new ProtocolMismatch(message) : new Error(message);
+}
+
+/** A failure event in a Responses stream from a server other than ChatGPT, in its own words. */
+const providerFailure = (body: string): string => describeHttpText(0, body).replace(/^HTTP 0:? ?/, '') || 'The provider reported an error.';
+
+/** One model turn in `protocol`, against the connection's server with its credentials. */
+async function turn(
+  protocol: Protocol, conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean,
+): Promise<AIChatResult> {
+  if (protocol === 'anthropic') return anthropicTurn(conn, token, model, req, signal, debug);
+  if (protocol === 'responses') return responsesTurn(conn, token, model, req, signal, debug);
+  return chatCompletionsTurn(conn, token, model, req, signal, debug);
+}
+
+/** Messages API: Anthropic itself (key or subscription), or another server serving it, such as OpenCode. */
+async function anthropicTurn(conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean): Promise<AIChatResult> {
+  const native = conn.kind === 'anthropic';
+  const subscription = native && (conn.auth === 'oauth' || conn.auth === 'setup-token');
+  if (native && !token) throw new Error(`The AI connection has no key. ${opts.settingsHint}`);
+  const system = subscription ? withClaudeCodeSystem(req.system).system : req.system ? [{ type: 'text' as const, text: req.system }] : [];
+  const body = anthropicBody(req, model, system);
+  const url = new URL(native ? `${ANTHROPIC_BASE}/v1/messages` : `${apiRoot(conn.baseUrl)}/messages`);
+  const headers = native
+    ? anthropicHeaders(token, subscription)
+    : { ...(await (await authorizerFor(conn, token))('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
+  if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+  const res = await fetch(url, {
+    method: 'POST', signal,
+    headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw httpError(res.status, await res.text());
+  if (!res.body) throw new Error('The provider sent no response body.');
+  return anthropicResult(readSse(res.body));
+}
+
+/** Responses API: the Codex backend for a ChatGPT sign-in, else `${baseUrl}/responses`. */
+async function responsesTurn(conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean): Promise<AIChatResult> {
+  const codex = conn.kind === 'chatgpt';
+  if (codex && !token) throw new Error(`The ChatGPT sign-in is missing. ${opts.settingsHint}`);
+  const body = codexBody(req, model, { maxOutputTokens: !codex });
+  const url = new URL(codex ? CODEX_RESPONSES_URL : `${apiRoot(conn.baseUrl)}/responses`);
+  const headers = codex
+    ? {
+        authorization: `Bearer ${token}`,
+        ...(conn.accountId ? { 'chatgpt-account-id': conn.accountId } : {}),
+        originator: 'codex_cli_rs', 'openai-beta': 'responses=experimental',
+      }
+    : await (await authorizerFor(conn, token))('POST', url);
+  if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+  const res = await fetch(url, {
+    method: 'POST', signal,
+    headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw codex ? new Error(codexHttpError(res.status, text)) : httpError(res.status, text);
+  }
+  if (!res.body) throw new Error('The provider sent no response body.');
+  return codexResult(readSse(res.body), codex ? codexFailure : providerFailure);
+}
+
+/** Chat Completions at `${baseUrl}/chat/completions`. */
+async function chatCompletionsTurn(conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean): Promise<AIChatResult> {
+  const base = apiRoot(conn.baseUrl);
+  const authorize = await authorizerFor(conn, token);
+  const omit = new Set<OptionalField>();
+  const send = async () => {
+    const url = new URL(`${base}/chat/completions`);
+    const body = openaiBody(req, model, base, omit);
+    if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+    return fetch(url, {
+      method: 'POST', signal,
+      headers: { ...(await authorize('POST', url)), 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+    });
+  };
+  // A server that rejects an optional field gets the request again without it, once per field.
+  let res = await send();
+  while (!res.ok) {
+    const text = await res.text();
+    const field = rejectedField(res.status, text);
+    if (!field || omit.has(field)) throw httpError(res.status, text);
+    omit.add(field);
+    res = await send();
+  }
+  if (!res.body) throw new Error('The provider sent no response body.');
+  return openaiResult(readSse(res.body));
 }
 
 /* ── provider HTTP ───────────────────────────────────────────────── */
@@ -863,6 +1003,7 @@ function bearerAuth(apiKey: string): Authorizer {
 }
 
 async function authorizerFor(conn: StoredConnection, apiKey: string): Promise<Authorizer> {
+  if (conn.issuer === 'opencode') return async () => opencodeHeaders(apiKey, conn.orgId);
   if (conn.auth !== 'device-key') return bearerAuth(apiKey);
   const pair = await getSigningKey(conn.id);
   if (!pair) throw new Error('This Ollama device key is gone — remove the connection and sign in again.');
@@ -1002,74 +1143,6 @@ async function openaiModels(authorize: Authorizer, base: string): Promise<ModelI
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-async function anthropicComplete(
-  token: string,
-  model: string,
-  req: AICompleteRequest,
-  signal: AbortSignal,
-  debug = false,
-  subscription = false,
-): Promise<string> {
-  const body = {
-    model,
-    max_tokens: req.maxTokens ?? 1024,
-    // Subscription tokens are gated on Claude-Code-shaped traffic: the system
-    // prompt must lead with the sentinel or the call 429s.
-    ...(subscription ? withClaudeCodeSystem(req.system) : { system: req.system }),
-    messages: [{ role: 'user', content: req.prompt }],
-  };
-  const res = await fetch(`${ANTHROPIC_BASE}/v1/messages`, {
-    method: 'POST',
-    signal,
-    headers: {
-      ...anthropicHeaders(token, subscription),
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const rawText = await res.text();
-  if (debug) dlog('http response', { url: `${ANTHROPIC_BASE}/v1/messages`, status: res.status, body: rawText });
-  if (!res.ok) throw new Error(describeHttpText(res.status, rawText));
-  const json = JSON.parse(rawText) as { content?: { type: string; text?: string }[] };
-  return (json.content ?? [])
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text ?? '')
-    .join('')
-    .trim();
-}
-
-async function openaiComplete(
-  authorize: Authorizer,
-  base: string,
-  model: string,
-  req: AICompleteRequest,
-  signal: AbortSignal,
-  debug = false,
-): Promise<string> {
-  const url = new URL(`${base}/chat/completions`);
-  const res = await fetch(url, {
-    method: 'POST',
-    signal,
-    headers: { ...(await authorize('POST', url)), 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      max_tokens: req.maxTokens ?? 1024,
-      messages: [
-        { role: 'system', content: req.system },
-        { role: 'user', content: req.prompt },
-      ],
-      // Note: we deliberately don't send reasoning_effort/enable_thinking —
-      // strict servers (OpenAI) 400 on unknown fields. Thinking is
-      // discouraged via the system prompt and stripped from the response.
-    }),
-  });
-  const rawText = await res.text();
-  if (debug) dlog('http response', { url: url.href, status: res.status, body: rawText });
-  if (!res.ok) throw new Error(describeHttpText(res.status, rawText));
-  const json = JSON.parse(rawText) as { choices?: { message?: { content?: string } }[] };
-  return (json.choices?.[0]?.message?.content ?? '').trim();
-}
-
 async function describeHttp(res: Response): Promise<string> {
   return describeHttpText(res.status, await res.text());
 }
@@ -1105,7 +1178,7 @@ function chatNetworkError(conn: { kind: string; baseUrl: string } | undefined): 
 
 function errMessage(error: unknown): string {
   if (error instanceof TypeError)
-    return 'Network error (check the base URL / that the server is reachable). Local endpoints may also need CORS opened for the extension, e.g. OLLAMA_ORIGINS.';
+    return 'Network error: the server could not be reached, or the extension has no host permission for it.';
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -1172,6 +1245,12 @@ export function createAiMessageHandler(
       case `${p}:ai-ollama-login-poll`:
         void ollamaLoginPoll((message as { label?: string }).label ?? '').then(sendResponse);
         return true;
+      case `${p}:ai-opencode-login-start`:
+        void opencodeLoginStart().then(sendResponse);
+        return true;
+      case `${p}:ai-opencode-login-poll`:
+        void opencodeLoginPoll((message as { label?: string }).label ?? '').then(sendResponse);
+        return true;
       default:
         return false;
     }
@@ -1187,3 +1266,4 @@ export function registerAiHandlers(options: AiHandlerOptions = {}): void {
 }
 
 export { CODEX_MODELS, CODEX_CLIENT_VERSION } from './openai-oauth.js';
+export { OPENCODE_BASE } from './opencode-oauth.js';

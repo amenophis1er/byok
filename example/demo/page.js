@@ -29,7 +29,8 @@ async function busy(button, label, work) {
 let view = { connections: [], activeId: null };
 
 const isOllamaCloud = (c) => c.auth === 'device-key' || /ollama\.com/.test(c.baseUrl);
-const provider = (c) => (isOllamaCloud(c) ? 'ollama' : c.kind);
+const isOpencode = (c) => /opencode\.ai/.test(c.baseUrl);
+const provider = (c) => (isOllamaCloud(c) ? 'ollama' : isOpencode(c) ? 'opencode' : c.kind);
 const AUTH = { key: 'API key', oauth: 'Subscription', 'setup-token': 'Setup token', 'device-key': 'Device key' };
 const active = () => view.connections.find((c) => c.id === view.activeId);
 const authLabel = (c) => (c.auth === 'key' || !c.auth ? (c.hasKey ? 'API key' : 'No key') : AUTH[c.auth] ?? c.auth);
@@ -51,7 +52,7 @@ function connectionRow(c) {
   const avatar = document.createElement('span');
   const kind = provider(c);
   avatar.className = `avatar ${kind}`;
-  avatar.textContent = { anthropic: 'C', chatgpt: 'G', ollama: 'O' }[kind] ?? (c.label[0] ?? '?').toUpperCase();
+  avatar.textContent = { anthropic: 'C', chatgpt: 'G', ollama: 'O', opencode: 'oc' }[kind] ?? (c.label[0] ?? '?').toUpperCase();
 
   const text = document.createElement('div');
   text.style.minWidth = '0';
@@ -60,7 +61,7 @@ function connectionRow(c) {
   name.textContent = c.label;
   const meta = document.createElement('div');
   meta.className = 'conn-meta';
-  meta.textContent = [authLabel(c), c.model || 'no model yet', c.keyHint].filter(Boolean).join(' · ');
+  meta.textContent = [authLabel(c), c.protocol === 'responses' ? 'Responses API' : '', c.model || 'no model yet', c.keyHint].filter(Boolean).join(' · ');
   text.append(name, meta);
 
   const actions = document.createElement('div');
@@ -145,7 +146,7 @@ async function showActive() {
 async function setModel(model) {
   const conn = active();
   if (!conn) return;
-  await ai.saveConnection({ id: conn.id, kind: conn.kind, label: conn.label, baseUrl: conn.baseUrl, model, apiKeyMode: 'keep', makeActive: true });
+  await ai.saveConnection({ id: conn.id, kind: conn.kind, protocol: conn.protocol, label: conn.label, baseUrl: conn.baseUrl, model, apiKeyMode: 'keep', makeActive: true });
   view = await ai.get();
   modelsFor = `${conn.id}:${active()?.revision}`;
   const list = $('connections');
@@ -264,6 +265,17 @@ $('ollama-start').onclick = () => busy($('ollama-start'), 'Opening ollama.com…
 });
 $('ollama-cancel').onclick = () => { stopFlow($('ollama-box')); status(''); };
 
+$('opencode-start').onclick = () => busy($('opencode-start'), 'Opening opencode.ai…', async () => {
+  const res = await ai.opencodeLoginStart();
+  if (!res.ok) return status(res.error, 'error');
+  $('opencode-code').textContent = res.data.userCode;
+  $('opencode-link').href = res.data.verifyUrl;
+  startFlow($('opencode-box'));
+  status('');
+  void poll(() => ai.opencodeLoginPoll(''), res.data.pollMs, $('opencode-box'));
+});
+$('opencode-cancel').onclick = () => { stopFlow($('opencode-box')); status(''); };
+
 /* ── OpenAI-compatible ────────────────────────────────────────────── */
 
 const presets = [...OPENAI_COMPATIBLE_PRESETS.filter((p) => !/ollama\.com/.test(p.baseUrl)), { label: 'Custom', baseUrl: '', keyOptional: true }];
@@ -281,6 +293,9 @@ function applyPreset() {
   }
   $('compat-optional').hidden = !p.keyOptional;
   $('compat-local').hidden = !/localhost:11434/.test(p.baseUrl);
+  // OpenAI serves both protocols; the others speak Chat Completions.
+  $('compat-responses-field').hidden = !/api\.openai\.com/.test(p.baseUrl);
+  $('compat-responses').checked = false;
   resetCompatModels();
 }
 function resetCompatModels() {
@@ -343,7 +358,8 @@ $('compat-save').onclick = () => busy($('compat-save'), 'Connecting…', async (
   const apiKey = $('compat-key').value.trim();
   const preset = presets[Number($('compat-preset').value)];
   const label = preset.label === 'Custom' ? '' : preset.label;
-  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: compatModel(),
+  const protocol = !$('compat-responses-field').hidden && $('compat-responses').checked ? 'responses' : 'chat-completions';
+  const res = await ai.saveConnection({ kind: 'openai-compatible', protocol, label, baseUrl, model: compatModel(),
     apiKeyMode: apiKey ? 'set' : 'clear', apiKey, makeActive: true });
   if (!res.ok) return status(res.error, 'error');
   $('compat-key').value = '';

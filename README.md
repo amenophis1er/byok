@@ -5,7 +5,7 @@
 
 **Bring-your-own-key AI for Chrome extensions (Manifest V3).** Your users
 connect the model they already pay for — an API key, or a sign-in with their
-Claude, ChatGPT or Ollama account — and your extension talks to it through one
+Claude, ChatGPT, OpenCode or Ollama account — and your extension talks to it through one
 API, with keys encrypted at rest and never leaving the background worker.
 
 Three provider families, one message-passing API between your UI and your
@@ -21,6 +21,10 @@ worker, and `chat()` with native tool calling for agents:
 - **Ollama Cloud, connected device** — the `ollama signin` flow: a
   non-extractable Ed25519 key paired on ollama.com, every request signed. No
   API key to copy.
+- **OpenCode Console** — the `opencode auth login` device code, approved on
+  opencode.ai under your extension's own client id; inference at
+  `opencode.ai/inference/v1`, each model on its own protocol (their paid
+  models; the free tier is OpenCode's own client only).
 - **Chrome built-in** (`gemini-nano`) is modeled as a connection kind, but
   inference runs in a page context; the host extension wires that side.
 
@@ -113,6 +117,11 @@ const poll = await ai.chatgptLoginPoll('ChatGPT');
 const o = await ai.ollamaLoginStart('My Extension (Chrome)'); // name shown on the connect page
 // poll every o.data.pollMs
 const done = await ai.ollamaLoginPoll(''); // '' = label "Ollama Cloud (<account>)"
+
+// OpenCode Console: start → user clicks Authorize in the opened tab (the code is filled in) → poll until 'created'
+const oc = await ai.opencodeLoginStart(); // the page names the client id from AiHandlerOptions.opencodeClientId
+// poll every pollMs the start and each 'pending' answer give
+const made = await ai.opencodeLoginPoll(''); // '' = label "OpenCode"
 ```
 
 ## Demo extension
@@ -178,6 +187,14 @@ What it guarantees:
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
   calls.
+- **Three protocols, any server.** A connection's `protocol` is how its
+  requests are written: `anthropic` (the Messages API), `responses` (the OpenAI
+  Responses API) or `chat-completions`. The kind picks it — Anthropic, ChatGPT,
+  OpenAI-compatible — and an openai-compatible connection saved with
+  `protocol: 'responses'` speaks OpenAI's own Responses API at
+  `${baseUrl}/responses`. An OpenCode sign-in speaks whichever each model is
+  served on: Claude on Messages, GPT on Responses, most others on Chat
+  Completions; the wrong guess is answered with a 400 and the next is tried.
 - **ChatGPT subscription too.** A ChatGPT Plus/Pro connection (signed
   in with the device code) talks to OpenAI's Codex backend — the Responses API
   — with the same tools: calls and results become `function_call` /
@@ -224,7 +241,8 @@ only), and `tabs.create` works without a permission.
   "https://claude.com/*",          // Claude subscription consent
   "https://platform.claude.com/*", // Claude subscription token endpoint
   "https://auth.openai.com/*",     // ChatGPT device flow
-  "https://chatgpt.com/*"          // Codex inference backend
+  "https://chatgpt.com/*",         // Codex inference backend
+  "https://opencode.ai/*"          // OpenCode sign-in and inference
 ],
 "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
 ```

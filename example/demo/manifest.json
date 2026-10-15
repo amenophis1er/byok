@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "byok demo",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Demo of @amenophis1er/byok: connect Claude, ChatGPT, Ollama or any OpenAI-compatible server, then chat with tools.",
   "minimum_chrome_version": "137",
   "permissions": ["storage", "declarativeNetRequest"],
@@ -13,7 +13,8 @@
     "https://claude.com/*",
     "https://platform.claude.com/*",
     "https://auth.openai.com/*",
-    "https://chatgpt.com/*"
+    "https://chatgpt.com/*",
+    "https://opencode.ai/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "declarative_net_request": {

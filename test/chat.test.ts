@@ -5,13 +5,17 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chat, createAiMessageHandler } from '../src/background/index.js';
-import { openaiSse, streamOf } from './helpers.js';
+import { anthropicSse, openaiSse, streamOf } from './helpers.js';
 
 // Stored secrets are sealed with a key kept in IndexedDB, which this test environment lacks:
 // a blob of the form { plain } stands for a sealed secret here.
 vi.mock('../src/background/crypto.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../src/background/crypto.js')>();
-  return { ...original, decryptBlob: async (blob: unknown) => (blob && typeof blob === 'object' && 'plain' in blob ? String((blob as { plain: string }).plain) : original.decryptBlob(blob as never)) };
+  return {
+    ...original,
+    encryptString: async (plain: string) => ({ plain }),
+    decryptBlob: async (blob: unknown) => (blob && typeof blob === 'object' && 'plain' in blob ? String((blob as { plain: string }).plain) : original.decryptBlob(blob as never)),
+  };
 });
 
 const STORAGE_KEY = 'aiConnections';
@@ -163,9 +167,31 @@ describe('chat()', () => {
     const result = await chat({ system: 'Drive.', messages: [{ role: 'user', content: 'go' }], tools: [{ name: 'browser', description: 'd', inputSchema: {} }] });
     expect(result).toMatchObject({ ok: true, toolCalls: [{ id: 'call_1', name: 'browser', args: { action: 'observe' } }], stopReason: 'tool_use' });
     const [url, init] = fetched.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
+    expect(String(url)).toBe('https://chatgpt.com/backend-api/codex/responses');
     expect(init.headers).toMatchObject({ authorization: 'Bearer access-token', 'chatgpt-account-id': 'acct-1' });
     expect(JSON.parse(String(init.body))).toMatchObject({ model: 'gpt-5.5', instructions: 'Drive.', store: false });
+  });
+
+  it('sends an OpenCode Console turn with the organization header, refreshing the token at the Console first', async () => {
+    seed([conn('o', { auth: 'oauth', issuer: 'opencode', orgId: 'org_1', baseUrl: 'https://opencode.ai/inference/v1', model: 'glm-5.3-flash',
+      apiKeyEnc: { plain: 'old-access' }, refreshTokenEnc: { plain: 'old-refresh' }, expiresAt: Date.now() + 60_000 })], 'o');
+    const fetched = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 2592000, org_id: 'org_1' }), { status: 200 }))
+      .mockResolvedValueOnce(sseResponse(toolCallStream));
+    vi.stubGlobal('fetch', fetched);
+    createAiMessageHandler({ prefix: 't', opencodeClientId: 'valet' });
+    const result = await chat({ system: 'Drive.', messages: [{ role: 'user', content: 'go' }], tools: [{ name: 'browser', description: 'd', inputSchema: {} }] });
+    expect(result).toMatchObject({ ok: true, toolCalls: [{ id: 'c1', name: 'browser' }] });
+    const [refreshUrl, refreshInit] = fetched.mock.calls[0] as unknown as [string, RequestInit];
+    expect(refreshUrl).toBe('https://opencode.ai/console/auth/device/token');
+    expect(JSON.parse(String(refreshInit.body))).toEqual({ grant_type: 'refresh_token', refresh_token: 'old-refresh', client_id: 'valet' });
+    const [url, init] = fetched.mock.calls[1] as unknown as [URL, RequestInit];
+    expect(String(url)).toBe('https://opencode.ai/inference/v1/chat/completions');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer new-access', 'x-opencode-org-id': 'org_1' });
+    // The rotated pair is on disk before the turn is sent.
+    const stored = (local.get(STORAGE_KEY) as { connections: Array<Record<string, unknown>> }).connections[0]!;
+    expect(stored.apiKeyEnc).toEqual({ plain: 'new-access' });
+    expect(stored.refreshTokenEnc).toEqual({ plain: 'new-refresh' });
   });
 
   it('answers the ai-chat message op with the same result', async () => {
@@ -174,6 +200,109 @@ describe('chat()', () => {
     const handle = createAiMessageHandler({ prefix: 't' });
     const answer = await new Promise((resolve) => handle({ type: 't:ai-chat', system: '', messages: [{ role: 'user', content: 'go' }] } as never, resolve));
     expect(answer).toMatchObject({ ok: true, toolCalls: [{ id: 'c1' }] });
+  });
+  describe('protocols', () => {
+    const opencode = (model: string) => conn('o', { auth: 'oauth', issuer: 'opencode', orgId: 'org_1', baseUrl: 'https://opencode.ai/inference/v1', model,
+      apiKeyEnc: { plain: 'access' }, expiresAt: Date.now() + 3_600_000 });
+    const mismatch = () => new Response('{"type":"error","error":{"type":"BadRequest","message":"Model does not support this protocol."}}', { status: 400 });
+    const anthropicAnswer = () => sseResponse(anthropicSse([
+      { type: 'message_start', message: { usage: { input_tokens: 3, output_tokens: 0 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+      { type: 'message_stop' },
+    ]));
+    const responsesAnswer = () => sseResponse([
+      { type: 'response.output_item.added', item: { type: 'message', id: 'm1' } },
+      { type: 'response.output_text.delta', item_id: 'm1', delta: 'hi' },
+      { type: 'response.completed', response: { usage: { input_tokens: 3, output_tokens: 1 } } },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''));
+    const calls = (fetched: ReturnType<typeof vi.fn>) => fetched.mock.calls.map((call) => String((call as unknown[])[0]));
+
+    it('sends an OpenCode Claude model straight to the Messages API, with the Console token', async () => {
+      seed([opencode('claude-sonnet-5-5')], 'o');
+      const fetched = vi.fn(async () => anthropicAnswer());
+      vi.stubGlobal('fetch', fetched);
+      expect(await chat({ system: 'Be brief.', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: true, text: 'hi', stopReason: 'end' });
+      expect(calls(fetched)).toEqual(['https://opencode.ai/inference/v1/messages']);
+      const init = (fetched.mock.calls[0] as unknown as [URL, RequestInit])[1];
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer access', 'x-opencode-org-id': 'org_1', 'anthropic-version': '2023-06-01' });
+      expect(JSON.parse(String(init.body))).toMatchObject({ model: 'claude-sonnet-5-5', system: [{ type: 'text', text: 'Be brief.' }], stream: true });
+    });
+
+    it('tries the other protocols when OpenCode answers a mismatch, and remembers the one that worked', async () => {
+      seed([opencode('kimi-k3')], 'o');
+      const fetched = vi.fn()
+        .mockResolvedValueOnce(mismatch()).mockResolvedValueOnce(mismatch()).mockResolvedValueOnce(responsesAnswer())
+        .mockResolvedValueOnce(responsesAnswer());
+      vi.stubGlobal('fetch', fetched);
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }], maxTokens: 500 })).toMatchObject({ ok: true, text: 'hi' });
+      expect(calls(fetched)).toEqual([
+        'https://opencode.ai/inference/v1/chat/completions',
+        'https://opencode.ai/inference/v1/messages',
+        'https://opencode.ai/inference/v1/responses',
+      ]);
+      const responsesInit = (fetched.mock.calls[2] as unknown as [URL, RequestInit])[1];
+      expect(JSON.parse(String(responsesInit.body))).toMatchObject({ model: 'kimi-k3', max_output_tokens: 500, store: false });
+      // The next turn goes where the first one ended up.
+      await chat({ system: '', messages: [{ role: 'user', content: 'again' }] });
+      expect(calls(fetched)[3]).toBe('https://opencode.ai/inference/v1/responses');
+    });
+
+    it('says so when OpenCode serves a model on a protocol it has no client for', async () => {
+      seed([opencode('gemini-4-argon')], 'o');
+      vi.stubGlobal('fetch', vi.fn(async () => mismatch()));
+      const result = await chat({ system: '', messages: [{ role: 'user', content: 'go' }] });
+      expect(result).toMatchObject({ ok: false, error: 'OpenCode serves gemini-4-argon on a protocol this library does not speak (HTTP 400: Model does not support this protocol.).' });
+      expect(result).not.toHaveProperty('retryable');
+    });
+
+    it('speaks the Responses API to an openai-compatible server saved with that protocol, in the server\'s own words on failure', async () => {
+      seed([conn('r', { baseUrl: 'https://api.openai.com/v1', protocol: 'responses', model: 'gpt-5.5', apiKeyEnc: { plain: 'sk-1' } })], 'r');
+      const fetched = vi.fn()
+        .mockResolvedValueOnce(responsesAnswer())
+        .mockResolvedValueOnce(new Response('{"error":{"message":"Unknown model."}}', { status: 404 }));
+      vi.stubGlobal('fetch', fetched);
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: true, text: 'hi', usage: { inputTokens: 3, outputTokens: 1 } });
+      const [url, init] = fetched.mock.calls[0] as unknown as [URL, RequestInit];
+      expect(String(url)).toBe('https://api.openai.com/v1/responses');
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-1' });
+      expect(init.headers).not.toHaveProperty('originator');
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'HTTP 404: Unknown model.' });
+    });
+
+    it('moves an OpenAI model that takes tools on Responses only over to it, and stays there', async () => {
+      seed([conn('oa', { baseUrl: 'https://api.openai.com/v1', model: 'gpt-6.1-sol', apiKeyEnc: { plain: 'sk-1' } })], 'oa');
+      const refusal = () => new Response(JSON.stringify({ error: { message: 'Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to \'none\'.' } }), { status: 400 });
+      const fetched = vi.fn().mockResolvedValueOnce(refusal()).mockResolvedValueOnce(responsesAnswer()).mockResolvedValueOnce(responsesAnswer());
+      vi.stubGlobal('fetch', fetched);
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }], tools: [{ name: 'browser', description: 'd', inputSchema: {} }] })).toMatchObject({ ok: true, text: 'hi' });
+      expect(calls(fetched)).toEqual(['https://api.openai.com/v1/chat/completions', 'https://api.openai.com/v1/responses']);
+      await chat({ system: '', messages: [{ role: 'user', content: 'again' }] });
+      expect(calls(fetched)[2]).toBe('https://api.openai.com/v1/responses');
+      // Any other 400 is the answer, not a mismatch.
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"bad"}}', { status: 400 })));
+      seed([conn('ob', { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5', apiKeyEnc: { plain: 'sk-1' } })], 'ob');
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'HTTP 400: bad' });
+    });
+
+    it('reports a non-ChatGPT Responses failure event in the provider\'s words', async () => {
+      seed([conn('r', { baseUrl: 'https://api.openai.com/v1', protocol: 'responses', apiKeyEnc: { plain: 'sk-1' } })], 'r');
+      vi.stubGlobal('fetch', vi.fn(async () => sseResponse(`data: ${JSON.stringify({ type: 'error', error: { message: 'Quota exceeded.' } })}\n\n`)));
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'Quota exceeded.' });
+    });
+
+    it('shows the protocol on each connection, and keeps a saved one', async () => {
+      seed([conn('a', { kind: 'anthropic' }), conn('g', { kind: 'chatgpt' }), conn('l'), opencode('glm-5.3')]);
+      const handle = createAiMessageHandler({ prefix: 't' });
+      const send = (message: Record<string, unknown>) => new Promise<any>((resolve) => handle(message as never, resolve));
+      await send({ type: 't:ai-save-connection', kind: 'openai-compatible', protocol: 'responses', label: 'r', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5', apiKeyMode: 'clear' });
+      const view = await send({ type: 't:ai-get' });
+      expect(view.connections.map((c: { protocol: string }) => c.protocol)).toEqual(['anthropic', 'responses', 'chat-completions', 'chat-completions', 'responses']);
+      await send({ type: 't:ai-save-connection', id: view.connections[4].id, kind: 'openai-compatible', label: 'r', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5', apiKeyMode: 'keep' });
+      expect((await send({ type: 't:ai-get' })).connections[4].protocol).toBe('chat-completions');
+    });
   });
 });
 

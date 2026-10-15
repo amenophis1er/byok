@@ -36,6 +36,15 @@ describe('ChatGPT request', () => {
   });
 });
 
+describe('Responses request elsewhere', () => {
+  it('sends the output cap a standard Responses endpoint takes, which the Codex backend refuses', () => {
+    const req = { system: '', messages: [{ role: 'user' as const, content: 'go' }], maxTokens: 800 };
+    expect(codexBody(req, 'gpt-5.5')).not.toHaveProperty('max_output_tokens');
+    expect(codexBody(req, 'gpt-5.5', { maxOutputTokens: true })).toMatchObject({ max_output_tokens: 800 });
+    expect(codexBody({ ...req, maxTokens: undefined }, 'gpt-5.5', { maxOutputTokens: true })).not.toHaveProperty('max_output_tokens');
+  });
+});
+
 describe('ChatGPT stream', () => {
   it('assembles text and a tool call whose arguments arrive in pieces', async () => {
     const result = await codexResult(events(

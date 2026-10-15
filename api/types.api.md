@@ -222,6 +222,39 @@ export type AIOllamaPoll = {
 };
 
 // @public (undocumented)
+export interface AIOpencodeLoginPollRequest {
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    type: string;
+}
+
+// @public
+export interface AIOpencodeLoginStart {
+    // (undocumented)
+    pollMs: number;
+    // (undocumented)
+    userCode: string;
+    // (undocumented)
+    verifyUrl: string;
+}
+
+// @public (undocumented)
+export interface AIOpencodeLoginStartRequest {
+    // (undocumented)
+    type: string;
+}
+
+// @public (undocumented)
+export type AIOpencodePoll = {
+    status: 'pending'; /** Wait this long before the next poll (the server may ask to slow down). */
+    pollMs: number;
+} | {
+    status: 'created';
+    id: string;
+};
+
+// @public (undocumented)
 export interface AIResult<T> {
     // (undocumented)
     data?: T;
@@ -246,6 +279,7 @@ export interface AISaveConnectionRequest {
     makeActive?: boolean;
     // (undocumented)
     model: string;
+    protocol?: Protocol;
     // (undocumented)
     type: string;
 }
@@ -306,6 +340,7 @@ export interface ConnectionView {
     label: string;
     // (undocumented)
     model: string;
+    protocol: Protocol;
     revision: number;
 }
 
@@ -330,6 +365,9 @@ export const OPENAI_COMPATIBLE_PRESETS: {
 
 // @public
 export function originPattern(baseUrl: string): string | null;
+
+// @public
+export type Protocol = 'anthropic' | 'responses' | 'chat-completions';
 
 // @public
 export const PROTOCOL_VERSION = 1;
