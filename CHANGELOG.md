@@ -3,8 +3,30 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
-## 0.1.3
+## 0.2.0
 
+- **Protocols are separate from connections.** A connection says who requests
+  go to and how they authenticate; its `protocol` — `anthropic` (the Messages
+  API), `responses` (the OpenAI Responses API) or `chat-completions` — says
+  how they are written. `ConnectionView.protocol` shows it, and an
+  openai-compatible connection can be saved with `protocol: 'responses'` to
+  speak OpenAI's own Responses API at `${baseUrl}/responses`. Existing
+  connections keep theirs: 'anthropic' speaks `anthropic`, 'chatgpt'
+  `responses`, 'openai-compatible' `chat-completions`. Minor bump: the view
+  gained a field, and `complete()` is now a `chat()` turn (streamed, same
+  answer).
+- **OpenCode models on their own protocol.** OpenCode serves each model on
+  the protocol of its origin — Claude on Messages, GPT on Responses, most
+  others on Chat Completions — and answers 400 "Model does not support this
+  protocol" to any other. A turn now starts on the likely one (by name) and
+  moves to the next on that answer, remembering what worked for the worker's
+  lifetime. Models served on a protocol the library has no client for (Gemini,
+  Mistral) fail with a clear error.
+- The OpenCode inference root is `https://opencode.ai/inference/v1` (the
+  earlier `…/inference/openai/v1` did not exist), and the demo asks for
+  `https://opencode.ai/*`.
+- A failed request that is not a network error no longer suggests
+  `OLLAMA_ORIGINS` unless the server is on this computer.
 - **Sign in with OpenCode**: the OpenCode Console device code
   (`opencodeLoginStart` / `opencodeLoginPoll`), as `opencode auth login` does
   it. The connection is OpenAI-compatible against

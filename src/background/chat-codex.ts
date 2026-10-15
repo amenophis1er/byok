@@ -65,11 +65,13 @@ export function codexInput(messages: AIMessage[]): Item[] {
   return items;
 }
 
-export function codexBody(req: AIChatRequest, model: string): Record<string, unknown> {
+/** The request body. The Codex backend refuses `max_output_tokens`; a standard Responses endpoint takes it. */
+export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens = false } = {}): Record<string, unknown> {
   return {
     model, store: false, stream: true,
     instructions: req.system || 'You are a helpful assistant.',
     input: codexInput(req.messages),
+    ...(maxOutputTokens && req.maxTokens ? { max_output_tokens: req.maxTokens } : {}),
     ...(req.tools?.length ? {
       tools: req.tools.map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
       tool_choice: 'auto',
@@ -100,12 +102,16 @@ export function codexHttpError(status: number, body: string): string {
   return `ChatGPT refused the request (HTTP ${status}${code ? `; ${code}` : ''}).`;
 }
 
+/** A failure event's body in words, the ChatGPT way: without the provider's text. */
+export const codexFailure = (body: string): string => codexHttpError(0, body).replace(' (HTTP 0)', '');
+
 /**
  * The Responses stream, assembled into one turn. The result counts only once
  * `response.completed` (or `response.incomplete`) has arrived; `error` and
- * `response.failed` are failures, and so is a stream that ends before either.
+ * `response.failed` are failures (worded by `failure`), and so is a stream
+ * that ends before either.
  */
-export async function codexResult(events: AsyncIterable<SseEvent>): Promise<AIChatResult> {
+export async function codexResult(events: AsyncIterable<SseEvent>, failure: (body: string) => string = codexFailure): Promise<AIChatResult> {
   const texts = new Map<string, string>();
   const calls = new Map<string, { callId: string; name: string; args: string; gotDelta: boolean }>();
   let completed = false;
@@ -157,9 +163,9 @@ export async function codexResult(events: AsyncIterable<SseEvent>): Promise<AICh
         break;
       }
       case 'response.failed':
-        return { ok: false, error: codexHttpError(0, JSON.stringify(event['response'] ?? {})).replace(' (HTTP 0)', '') };
+        return { ok: false, error: failure(JSON.stringify(event['response'] ?? {})) };
       case 'error':
-        return { ok: false, error: codexHttpError(0, JSON.stringify({ error: event['error'] ?? event })).replace(' (HTTP 0)', '') };
+        return { ok: false, error: failure(JSON.stringify({ error: event['error'] ?? event })) };
       default:
     }
   }

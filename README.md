@@ -22,9 +22,9 @@ worker, and `chat()` with native tool calling for agents:
   non-extractable Ed25519 key paired on ollama.com, every request signed. No
   API key to copy.
 - **OpenCode Console** — the `opencode auth login` device code, approved on
-  opencode.ai under your extension's own client id; inference through
-  OpenCode's OpenAI-compatible endpoint (their paid models; the free tier is
-  OpenCode's own client only).
+  opencode.ai under your extension's own client id; inference at
+  `opencode.ai/inference/v1`, each model on its own protocol (their paid
+  models; the free tier is OpenCode's own client only).
 - **Chrome built-in** (`gemini-nano`) is modeled as a connection kind, but
   inference runs in a page context; the host extension wires that side.
 
@@ -187,6 +187,14 @@ What it guarantees:
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
   calls.
+- **Three protocols, any server.** A connection's `protocol` is how its
+  requests are written: `anthropic` (the Messages API), `responses` (the OpenAI
+  Responses API) or `chat-completions`. The kind picks it — Anthropic, ChatGPT,
+  OpenAI-compatible — and an openai-compatible connection saved with
+  `protocol: 'responses'` speaks OpenAI's own Responses API at
+  `${baseUrl}/responses`. An OpenCode sign-in speaks whichever each model is
+  served on: Claude on Messages, GPT on Responses, most others on Chat
+  Completions; the wrong guess is answered with a 400 and the next is tried.
 - **ChatGPT subscription too.** A ChatGPT Plus/Pro connection (signed
   in with the device code) talks to OpenAI's Codex backend — the Responses API
   — with the same tools: calls and results become `function_call` /

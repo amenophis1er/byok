@@ -35,7 +35,7 @@ export function createAiMessageHandler(options?: AiHandlerOptions): (message: {
 }, sendResponse: (r: unknown) => void) => boolean;
 
 // @public
-export const OPENCODE_BASE = "https://opencode.ai/inference/openai/v1";
+export const OPENCODE_BASE = "https://opencode.ai/inference/v1";
 
 // @public
 export function registerAiHandlers(options?: AiHandlerOptions): void;

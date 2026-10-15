@@ -22,6 +22,17 @@
  */
 export type ProviderKind = 'anthropic' | 'openai-compatible' | 'chatgpt' | 'chrome-builtin';
 
+/**
+ * The wire format a connection's requests are written in, separate from who
+ * they go to: `anthropic` = the Messages API (`/messages`), `responses` = the
+ * OpenAI Responses API (`/responses`), `chat-completions` = Chat Completions
+ * (`/chat/completions`). An 'anthropic' connection speaks `anthropic`, a
+ * 'chatgpt' one `responses`; an 'openai-compatible' one speaks
+ * `chat-completions` unless saved with another, and an OpenCode sign-in
+ * speaks whichever each model is served on.
+ */
+export type Protocol = 'anthropic' | 'responses' | 'chat-completions';
+
 /** How a connection authenticates. 'key' = API key; 'oauth'/'setup-token'
  *  = a Claude Pro/Max, ChatGPT or OpenCode Console token (Bearer, refreshable / long-lived);
  *  'device-key' = an Ollama Cloud connected device (requests signed with a
@@ -33,6 +44,8 @@ export interface ConnectionView {
   id: string;
   kind: ProviderKind;
   auth: AuthMode;
+  /** The protocol its requests use; for an OpenCode sign-in, the one most models are on. */
+  protocol: Protocol;
   label: string;
   baseUrl: string;
   model: string;
@@ -134,6 +147,9 @@ export interface AISaveConnectionRequest {
   /** Omit to create; provide to update an existing connection. */
   id?: string;
   kind: ProviderKind;
+  /** openai-compatible only: the protocol the server speaks at `baseUrl`. Default 'chat-completions';
+   *  'responses' for OpenAI's own Responses API (`${baseUrl}/responses`). */
+  protocol?: Protocol;
   label: string;
   baseUrl: string;
   model: string;

@@ -23,6 +23,7 @@ import {
   type AuthMode,
   type ConnectionView,
   type ModelInfo,
+  type Protocol,
   type ProviderKind,
 } from '../types.js';
 import {
@@ -36,7 +37,7 @@ import {
 } from './crypto.js';
 import { anthropicBody, anthropicResult } from './chat-anthropic.js';
 import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
-import { CODEX_RESPONSES_URL, codexBody, codexHttpError, codexResult } from './chat-codex.js';
+import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import {
   CONNECT_POLL_MS,
@@ -67,7 +68,6 @@ import {
 } from './anthropic-oauth.js';
 import {
   CODEX_MODELS,
-  codexComplete,
   codexModels,
   exchangeDeviceCode,
   nextPollDelayMs,
@@ -138,6 +138,8 @@ interface StoredConnection {
   kind: ProviderKind;
   /** 'key' (default) | 'oauth' (Claude Pro/Max, refreshable) | 'setup-token'. */
   auth?: AuthMode;
+  /** openai-compatible only: the protocol the server speaks; absent = chat-completions. */
+  protocol?: Protocol;
   label: string;
   baseUrl: string;
   model: string;
@@ -306,6 +308,7 @@ async function toView(c: StoredConnection): Promise<ConnectionView> {
       id: c.id,
       kind: c.kind,
       auth: c.auth,
+      protocol: protocolOf(c),
       label: c.label,
       baseUrl: c.baseUrl,
       model: c.model,
@@ -319,6 +322,7 @@ async function toView(c: StoredConnection): Promise<ConnectionView> {
     id: c.id,
     kind: c.kind,
     auth: c.auth ?? 'key',
+    protocol: protocolOf(c),
     label: c.label,
     baseUrl: c.baseUrl,
     model: c.model,
@@ -370,6 +374,8 @@ async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ 
     conn.kind = req.kind;
     conn.label = req.label || defaultLabel(req.kind, req.baseUrl);
     conn.baseUrl = baseUrl;
+    if (req.kind === 'openai-compatible' && req.protocol && req.protocol !== 'chat-completions') conn.protocol = req.protocol;
+    else delete conn.protocol;
     // Chrome's on-device model has no model list or key.
     conn.model = req.kind === 'chrome-builtin' ? 'gemini-nano' : req.model;
     if (req.apiKeyMode === 'set') conn.apiKeyEnc = await encryptString(req.apiKey ?? '');
@@ -743,75 +749,34 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
 }
 
 async function complete(req: AICompleteRequest): Promise<AIResult<string>> {
-  try {
-    const cfg = await load();
-    const conn = cfg.connections.find((c) => c.id === cfg.activeId);
-    if (!conn) throw new Error(`No AI connection selected. ${opts.settingsHint}`);
-    const subscription = conn.auth === 'oauth' || conn.auth === 'setup-token';
-    const apiKey = await freshToken(conn.id);
-    if (conn.kind === 'chrome-builtin') {
-      // Runs in a page context (needs the page + user gesture); the worker
-      // should never be asked to do it.
-      throw new Error('The on-device model runs in the page, not the worker.');
-    }
-    if (!conn.model || (conn.kind === 'anthropic' && !apiKey)) {
-      throw new Error(`The active AI connection is incomplete. ${opts.settingsHint}`);
-    }
-    const debug = await debugOn();
-    if (debug) {
-      dlog('request', {
-        connection: conn.label,
-        kind: conn.kind,
-        model: conn.model,
-        baseUrl: conn.baseUrl || ANTHROPIC_BASE,
-        system: req.system,
-        prompt: req.prompt,
-        maxTokens: req.maxTokens ?? 1024,
-      });
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), COMPLETE_TIMEOUT_MS);
-    try {
-      const raw =
-        conn.kind === 'anthropic'
-          ? await anthropicComplete(apiKey, conn.model, req, controller.signal, debug, subscription)
-          : conn.kind === 'chatgpt'
-            ? await codexComplete(
-                {
-                  accessToken: apiKey,
-                  accountId: conn.accountId,
-                  model: conn.model,
-                  system: req.system,
-                  prompt: req.prompt,
-                },
-                controller.signal,
-              )
-            : await openaiComplete(
-                await authorizerFor(conn, apiKey),
-                apiRoot(conn.baseUrl),
-                conn.model,
-                req,
-                controller.signal,
-                debug,
-              );
-      const text = stripThinking(raw);
-      if (debug) dlog('result', { raw, afterStripThinking: text });
-      return { ok: true, data: text };
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return { ok: false, error: 'Timed out — the model took too long (a large local model can hang your machine; pick a smaller one).' };
-    }
-    return { ok: false, error: errMessage(error) };
+  const cfg = await load();
+  const conn = cfg.connections.find((c) => c.id === cfg.activeId);
+  // The on-device model runs in a page context (needs the page + user gesture); the worker should never be asked to do it.
+  if (conn?.kind === 'chrome-builtin') return { ok: false, error: 'The on-device model runs in the page, not the worker.' };
+  const result = await chat({
+    system: req.system,
+    messages: [{ role: 'user', content: req.prompt }],
+    maxTokens: req.maxTokens ?? 1024,
+    timeoutMs: COMPLETE_TIMEOUT_MS,
+  });
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.error === TIMED_OUT
+        ? 'Timed out — the model took too long (a large local model can hang your machine; pick a smaller one).'
+        : (result.error ?? 'The model gave no answer.'),
+    };
   }
+  const text = stripThinking(result.text ?? '');
+  if (await debugOn()) dlog('result', { raw: result.text, afterStripThinking: text });
+  return { ok: true, data: text };
 }
 
 /* ── chat with tools ─────────────────────────────────────────────── */
 
 /** Whole-request default for chat(); the stream itself keeps the worker's fetch alive. */
 const CHAT_TIMEOUT_MS = 120_000;
+const TIMED_OUT = 'Timed out waiting for the model.';
 
 /** Request bodies for the debug log, with image bytes replaced (they are never logged). */
 function redactImages(body: unknown): unknown {
@@ -855,73 +820,26 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     const debug = await debugOn();
     const signal = controller.signal;
 
-    if (conn.kind === 'anthropic') {
-      const subscription = conn.auth === 'oauth' || conn.auth === 'setup-token';
-      if (!token) throw new Error(`The AI connection has no key. ${opts.settingsHint}`);
-      const system = subscription ? withClaudeCodeSystem(req.system).system : req.system ? [{ type: 'text' as const, text: req.system }] : [];
-      const body = anthropicBody(req, model, system);
-      if (debug) dlog('chat request', { connection: conn.label, body: redactImages(body) });
-      const res = await fetch(`${ANTHROPIC_BASE}/v1/messages`, {
-        method: 'POST', signal,
-        headers: { ...anthropicHeaders(token, subscription), 'content-type': 'application/json', accept: 'text/event-stream' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok || !res.body) throw new Error(await describeHttp(res));
-      const result = await anthropicResult(readSse(res.body));
-      if (debug) dlog('chat result', result);
-      return transient(result);
+    // OpenCode serves each model on its own protocol: the wrong guess is answered with a mismatch, and the next one is tried.
+    const candidates = protocolCandidates(conn, model);
+    let mismatch: ProtocolMismatch | undefined;
+    for (const protocol of candidates) {
+      try {
+        const result = await turn(protocol, conn, token, model, req, signal, debug);
+        if (conn.issuer === 'opencode') learnedProtocols.set(model, protocol);
+        if (debug) dlog('chat result', result);
+        return transient(result);
+      } catch (error) {
+        if (!(error instanceof ProtocolMismatch)) throw error;
+        mismatch = error;
+      }
     }
-
-    if (conn.kind === 'chatgpt') {
-      if (!token) throw new Error(`The ChatGPT sign-in is missing. ${opts.settingsHint}`);
-      const body = codexBody(req, model);
-      if (debug) dlog('chat request', { connection: conn.label, body: redactImages(body) });
-      const res = await fetch(CODEX_RESPONSES_URL, {
-        method: 'POST', signal,
-        headers: {
-          authorization: `Bearer ${token}`,
-          ...(conn.accountId ? { 'chatgpt-account-id': conn.accountId } : {}),
-          originator: 'codex_cli_rs', 'openai-beta': 'responses=experimental',
-          'content-type': 'application/json', accept: 'text/event-stream',
-        },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(codexHttpError(res.status, await res.text()));
-      if (!res.body) throw new Error('The provider sent no response body.');
-      const result = await codexResult(readSse(res.body));
-      if (debug) dlog('chat result', result);
-      return transient(result);
-    }
-
-    const base = apiRoot(conn.baseUrl);
-    const authorize = await authorizerFor(conn, token);
-    const omit = new Set<OptionalField>();
-    const send = async () => {
-      const url = new URL(`${base}/chat/completions`);
-      const body = openaiBody(req, model, base, omit);
-      if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
-      return fetch(url, {
-        method: 'POST', signal,
-        headers: { ...(await authorize('POST', url)), 'content-type': 'application/json', accept: 'text/event-stream' },
-        body: JSON.stringify(body),
-      });
-    };
-    // A server that rejects an optional field gets the request again without it, once per field.
-    let res = await send();
-    while (!res.ok) {
-      const text = await res.text();
-      const field = rejectedField(res.status, text);
-      if (!field || omit.has(field)) throw new Error(describeHttpText(res.status, text));
-      omit.add(field);
-      res = await send();
-    }
-    if (!res.body) throw new Error('The provider sent no response body.');
-    const result = await openaiResult(readSse(res.body));
-    if (debug) dlog('chat result', result);
-    return transient(result);
+    throw new Error(candidates.length > 1
+      ? `OpenCode serves ${model} on a protocol this library does not speak (${mismatch?.message}).`
+      : mismatch?.message);
   } catch (error) {
     if (options.signal?.aborted) return { ok: false, error: 'Stopped.' };
-    if (controller.signal.aborted) return { ok: false, error: 'Timed out waiting for the model.' };
+    if (controller.signal.aborted) return { ok: false, error: TIMED_OUT };
     // A dropped connection or a server-side failure: nothing was acted on, so the caller may send the same request again.
     if (error instanceof TypeError) return { ok: false, error: chatNetworkError(used), retryable: true };
     const message = errMessage(error);
@@ -930,6 +848,130 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onAbort);
   }
+}
+
+/* ── protocols ───────────────────────────────────────────────────── */
+
+/** The protocol a connection's requests are written in: by its kind, or as saved for an openai-compatible one. */
+function protocolOf(conn: StoredConnection): Protocol {
+  if (conn.kind === 'anthropic') return 'anthropic';
+  if (conn.kind === 'chatgpt') return 'responses';
+  return conn.protocol ?? 'chat-completions';
+}
+
+/**
+ * OpenCode serves each model on that model's own protocol — Claude on
+ * Messages, GPT on Responses, most others on Chat Completions — and answers
+ * HTTP 400 "Model does not support this protocol" to any other. The name is
+ * the first guess; what each model answered to is kept for the worker's
+ * lifetime.
+ */
+const learnedProtocols = new Map<string, Protocol>();
+const PROTOCOLS: readonly Protocol[] = ['chat-completions', 'anthropic', 'responses'];
+
+function protocolCandidates(conn: StoredConnection, model: string): Protocol[] {
+  if (conn.issuer !== 'opencode') return [protocolOf(conn)];
+  const first = learnedProtocols.get(model)
+    ?? (/^claude-/.test(model) ? 'anthropic' : /^(gpt-|grok-|muse-)/.test(model) ? 'responses' : 'chat-completions');
+  return [first, ...PROTOCOLS.filter((p) => p !== first)];
+}
+
+/** The server's answer to a request in a protocol it does not serve that model on. */
+class ProtocolMismatch extends Error {}
+
+/** An HTTP failure as an error: a protocol mismatch when the server says so, else the text in words. */
+function httpError(status: number, text: string): Error {
+  const message = describeHttpText(status, text);
+  return status === 400 && /does not support this protocol/i.test(text) ? new ProtocolMismatch(message) : new Error(message);
+}
+
+/** A failure event in a Responses stream from a server other than ChatGPT, in its own words. */
+const providerFailure = (body: string): string => describeHttpText(0, body).replace(/^HTTP 0:? ?/, '') || 'The provider reported an error.';
+
+/** One model turn in `protocol`, against the connection's server with its credentials. */
+async function turn(
+  protocol: Protocol, conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean,
+): Promise<AIChatResult> {
+  if (protocol === 'anthropic') return anthropicTurn(conn, token, model, req, signal, debug);
+  if (protocol === 'responses') return responsesTurn(conn, token, model, req, signal, debug);
+  return chatCompletionsTurn(conn, token, model, req, signal, debug);
+}
+
+/** Messages API: Anthropic itself (key or subscription), or another server serving it, such as OpenCode. */
+async function anthropicTurn(conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean): Promise<AIChatResult> {
+  const native = conn.kind === 'anthropic';
+  const subscription = native && (conn.auth === 'oauth' || conn.auth === 'setup-token');
+  if (native && !token) throw new Error(`The AI connection has no key. ${opts.settingsHint}`);
+  const system = subscription ? withClaudeCodeSystem(req.system).system : req.system ? [{ type: 'text' as const, text: req.system }] : [];
+  const body = anthropicBody(req, model, system);
+  const url = new URL(native ? `${ANTHROPIC_BASE}/v1/messages` : `${apiRoot(conn.baseUrl)}/messages`);
+  const headers = native
+    ? anthropicHeaders(token, subscription)
+    : { ...(await (await authorizerFor(conn, token))('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
+  if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+  const res = await fetch(url, {
+    method: 'POST', signal,
+    headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw httpError(res.status, await res.text());
+  if (!res.body) throw new Error('The provider sent no response body.');
+  return anthropicResult(readSse(res.body));
+}
+
+/** Responses API: the Codex backend for a ChatGPT sign-in, else `${baseUrl}/responses`. */
+async function responsesTurn(conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean): Promise<AIChatResult> {
+  const codex = conn.kind === 'chatgpt';
+  if (codex && !token) throw new Error(`The ChatGPT sign-in is missing. ${opts.settingsHint}`);
+  const body = codexBody(req, model, { maxOutputTokens: !codex });
+  const url = new URL(codex ? CODEX_RESPONSES_URL : `${apiRoot(conn.baseUrl)}/responses`);
+  const headers = codex
+    ? {
+        authorization: `Bearer ${token}`,
+        ...(conn.accountId ? { 'chatgpt-account-id': conn.accountId } : {}),
+        originator: 'codex_cli_rs', 'openai-beta': 'responses=experimental',
+      }
+    : await (await authorizerFor(conn, token))('POST', url);
+  if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+  const res = await fetch(url, {
+    method: 'POST', signal,
+    headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw codex ? new Error(codexHttpError(res.status, text)) : httpError(res.status, text);
+  }
+  if (!res.body) throw new Error('The provider sent no response body.');
+  return codexResult(readSse(res.body), codex ? codexFailure : providerFailure);
+}
+
+/** Chat Completions at `${baseUrl}/chat/completions`. */
+async function chatCompletionsTurn(conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean): Promise<AIChatResult> {
+  const base = apiRoot(conn.baseUrl);
+  const authorize = await authorizerFor(conn, token);
+  const omit = new Set<OptionalField>();
+  const send = async () => {
+    const url = new URL(`${base}/chat/completions`);
+    const body = openaiBody(req, model, base, omit);
+    if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+    return fetch(url, {
+      method: 'POST', signal,
+      headers: { ...(await authorize('POST', url)), 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+    });
+  };
+  // A server that rejects an optional field gets the request again without it, once per field.
+  let res = await send();
+  while (!res.ok) {
+    const text = await res.text();
+    const field = rejectedField(res.status, text);
+    if (!field || omit.has(field)) throw httpError(res.status, text);
+    omit.add(field);
+    res = await send();
+  }
+  if (!res.body) throw new Error('The provider sent no response body.');
+  return openaiResult(readSse(res.body));
 }
 
 /* ── provider HTTP ───────────────────────────────────────────────── */
@@ -1085,74 +1127,6 @@ async function openaiModels(authorize: Authorizer, base: string): Promise<ModelI
   return (Array.isArray(json) ? json : (json.data ?? []))
     .map((m) => ({ id: m.id, name: m.id }))
     .sort((a, b) => a.id.localeCompare(b.id));
-}
-
-async function anthropicComplete(
-  token: string,
-  model: string,
-  req: AICompleteRequest,
-  signal: AbortSignal,
-  debug = false,
-  subscription = false,
-): Promise<string> {
-  const body = {
-    model,
-    max_tokens: req.maxTokens ?? 1024,
-    // Subscription tokens are gated on Claude-Code-shaped traffic: the system
-    // prompt must lead with the sentinel or the call 429s.
-    ...(subscription ? withClaudeCodeSystem(req.system) : { system: req.system }),
-    messages: [{ role: 'user', content: req.prompt }],
-  };
-  const res = await fetch(`${ANTHROPIC_BASE}/v1/messages`, {
-    method: 'POST',
-    signal,
-    headers: {
-      ...anthropicHeaders(token, subscription),
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const rawText = await res.text();
-  if (debug) dlog('http response', { url: `${ANTHROPIC_BASE}/v1/messages`, status: res.status, body: rawText });
-  if (!res.ok) throw new Error(describeHttpText(res.status, rawText));
-  const json = JSON.parse(rawText) as { content?: { type: string; text?: string }[] };
-  return (json.content ?? [])
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text ?? '')
-    .join('')
-    .trim();
-}
-
-async function openaiComplete(
-  authorize: Authorizer,
-  base: string,
-  model: string,
-  req: AICompleteRequest,
-  signal: AbortSignal,
-  debug = false,
-): Promise<string> {
-  const url = new URL(`${base}/chat/completions`);
-  const res = await fetch(url, {
-    method: 'POST',
-    signal,
-    headers: { ...(await authorize('POST', url)), 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      max_tokens: req.maxTokens ?? 1024,
-      messages: [
-        { role: 'system', content: req.system },
-        { role: 'user', content: req.prompt },
-      ],
-      // Note: we deliberately don't send reasoning_effort/enable_thinking —
-      // strict servers (OpenAI) 400 on unknown fields. Thinking is
-      // discouraged via the system prompt and stripped from the response.
-    }),
-  });
-  const rawText = await res.text();
-  if (debug) dlog('http response', { url: url.href, status: res.status, body: rawText });
-  if (!res.ok) throw new Error(describeHttpText(res.status, rawText));
-  const json = JSON.parse(rawText) as { choices?: { message?: { content?: string } }[] };
-  return (json.choices?.[0]?.message?.content ?? '').trim();
 }
 
 async function describeHttp(res: Response): Promise<string> {

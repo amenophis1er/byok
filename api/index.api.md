@@ -331,6 +331,7 @@ export interface AISaveConnectionRequest {
     makeActive?: boolean;
     // (undocumented)
     model: string;
+    protocol?: Protocol;
     // (undocumented)
     type: string;
 }
@@ -391,6 +392,7 @@ export interface ConnectionView {
     label: string;
     // (undocumented)
     model: string;
+    protocol: Protocol;
     revision: number;
 }
 
@@ -420,6 +422,9 @@ export const OPENAI_COMPATIBLE_PRESETS: {
 
 // @public
 export function originPattern(baseUrl: string): string | null;
+
+// @public
+export type Protocol = 'anthropic' | 'responses' | 'chat-completions';
 
 // @public
 export const PROTOCOL_VERSION = 1;

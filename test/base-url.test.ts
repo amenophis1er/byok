@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAiMessageHandler } from '../src/background/index.js';
 import { OPENAI_COMPATIBLE_PRESETS, defaultLabel, normalizeBaseUrl, originPattern } from '../src/types.js';
+import { openaiSse, streamOf } from './helpers.js';
 
 const STORAGE_KEY = 'aiConnections';
 let local: Map<string, unknown>;
@@ -33,7 +34,11 @@ const conn = (id: string, baseUrl: string) => ({
 });
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
-const answer = () => json({ choices: [{ message: { content: 'hi' } }] });
+// complete() is a chat() turn: the answer streams.
+const answer = () => new Response(
+  streamOf(openaiSse([{ choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }] }, { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }])),
+  { status: 200, headers: { 'content-type': 'text/event-stream' } },
+);
 
 describe('normalizeBaseUrl', () => {
   it.each([
