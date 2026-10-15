@@ -61,7 +61,7 @@ function connectionRow(c) {
   name.textContent = c.label;
   const meta = document.createElement('div');
   meta.className = 'conn-meta';
-  meta.textContent = [authLabel(c), c.model || 'no model yet', c.keyHint].filter(Boolean).join(' · ');
+  meta.textContent = [authLabel(c), c.protocol === 'responses' ? 'Responses API' : '', c.model || 'no model yet', c.keyHint].filter(Boolean).join(' · ');
   text.append(name, meta);
 
   const actions = document.createElement('div');
@@ -146,7 +146,7 @@ async function showActive() {
 async function setModel(model) {
   const conn = active();
   if (!conn) return;
-  await ai.saveConnection({ id: conn.id, kind: conn.kind, label: conn.label, baseUrl: conn.baseUrl, model, apiKeyMode: 'keep', makeActive: true });
+  await ai.saveConnection({ id: conn.id, kind: conn.kind, protocol: conn.protocol, label: conn.label, baseUrl: conn.baseUrl, model, apiKeyMode: 'keep', makeActive: true });
   view = await ai.get();
   modelsFor = `${conn.id}:${active()?.revision}`;
   const list = $('connections');
@@ -293,6 +293,9 @@ function applyPreset() {
   }
   $('compat-optional').hidden = !p.keyOptional;
   $('compat-local').hidden = !/localhost:11434/.test(p.baseUrl);
+  // OpenAI serves both protocols; the others speak Chat Completions.
+  $('compat-responses-field').hidden = !/api\.openai\.com/.test(p.baseUrl);
+  $('compat-responses').checked = false;
   resetCompatModels();
 }
 function resetCompatModels() {
@@ -355,7 +358,8 @@ $('compat-save').onclick = () => busy($('compat-save'), 'Connecting…', async (
   const apiKey = $('compat-key').value.trim();
   const preset = presets[Number($('compat-preset').value)];
   const label = preset.label === 'Custom' ? '' : preset.label;
-  const res = await ai.saveConnection({ kind: 'openai-compatible', label, baseUrl, model: compatModel(),
+  const protocol = !$('compat-responses-field').hidden && $('compat-responses').checked ? 'responses' : 'chat-completions';
+  const res = await ai.saveConnection({ kind: 'openai-compatible', protocol, label, baseUrl, model: compatModel(),
     apiKeyMode: apiKey ? 'set' : 'clear', apiKey, makeActive: true });
   if (!res.ok) return status(res.error, 'error');
   $('compat-key').value = '';

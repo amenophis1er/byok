@@ -15,6 +15,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { anthropicBody, anthropicResult } from '../dist/background/chat-anthropic.js';
 import { openaiBody, openaiResult } from '../dist/background/chat-openai.js';
+import { codexBody, codexResult } from '../dist/background/chat-codex.js';
 import { signRequest } from '../dist/background/ollama-device.js';
 import { readSse } from '../dist/background/sse.js';
 
@@ -49,6 +50,15 @@ async function openaiTurn(base, model, authorize, messages) {
   const res = await fetch(url, { method: 'POST', headers: { ...(await authorize('POST', url)), 'content-type': 'application/json' }, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return openaiResult(readSse(res.body));
+}
+
+/** The Responses API at a standard endpoint (not the Codex backend): the output cap is sent. */
+async function responsesTurn(base, model, authorize, messages) {
+  const url = new URL(`${base}/v1/responses`);
+  const body = codexBody({ system: SYSTEM, messages, tools: TOOLS, maxTokens: 2000 }, model, { maxOutputTokens: true });
+  const res = await fetch(url, { method: 'POST', headers: { ...(await authorize('POST', url)), 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return codexResult(readSse(res.body), (failure) => failure);
 }
 
 async function anthropicTurn(key, model, messages) {
@@ -90,6 +100,8 @@ await run('Anthropic', process.env.ANTHROPIC_API_KEY, () => roundTrip('Anthropic
   (m) => anthropicTurn(process.env.ANTHROPIC_API_KEY, process.env.SMOKE_ANTHROPIC_MODEL ?? 'claude-opus-5', m)));
 await run('OpenAI', process.env.OPENAI_API_KEY, () => roundTrip('OpenAI',
   (m) => openaiTurn('https://api.openai.com', process.env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }), m)));
+await run('OpenAI (Responses)', process.env.OPENAI_API_KEY, () => roundTrip('OpenAI (Responses)',
+  (m) => responsesTurn('https://api.openai.com', process.env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }), m)));
 await run('OpenRouter', process.env.OPENROUTER_API_KEY, () => roundTrip('OpenRouter',
   (m) => openaiTurn('https://openrouter.ai/api', process.env.SMOKE_OPENROUTER_MODEL ?? 'openai/gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` }), m)));
 
