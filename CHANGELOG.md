@@ -3,6 +3,20 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.3
+
+- **Sign in with OpenCode**: the OpenCode Console device code
+  (`opencodeLoginStart` / `opencodeLoginPoll`), as `opencode auth login` does
+  it. The connection is OpenAI-compatible against
+  `https://opencode.ai/inference/v1`, its token refreshed at the
+  Console and its organization sent as `x-opencode-org-id`. Set
+  `AiHandlerOptions.opencodeClientId` to your extension's name: the Console
+  registers no clients, and the approval page shows the id (an unknown one as
+  "Unknown client"). OpenCode's free models answer only its own client; the
+  token reaches the paid ones.
+- A sign-in connection's `keyHint` is the account it signed in as, when the
+  provider says (OpenCode: the email).
+
 ## 0.1.2
 
 - Presets for Google Gemini, Vercel AI Gateway, Cloudflare Workers AI and AI

@@ -11,7 +11,11 @@ import { openaiSse, streamOf } from './helpers.js';
 // a blob of the form { plain } stands for a sealed secret here.
 vi.mock('../src/background/crypto.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../src/background/crypto.js')>();
-  return { ...original, decryptBlob: async (blob: unknown) => (blob && typeof blob === 'object' && 'plain' in blob ? String((blob as { plain: string }).plain) : original.decryptBlob(blob as never)) };
+  return {
+    ...original,
+    encryptString: async (plain: string) => ({ plain }),
+    decryptBlob: async (blob: unknown) => (blob && typeof blob === 'object' && 'plain' in blob ? String((blob as { plain: string }).plain) : original.decryptBlob(blob as never)),
+  };
 });
 
 const STORAGE_KEY = 'aiConnections';
@@ -166,6 +170,28 @@ describe('chat()', () => {
     expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
     expect(init.headers).toMatchObject({ authorization: 'Bearer access-token', 'chatgpt-account-id': 'acct-1' });
     expect(JSON.parse(String(init.body))).toMatchObject({ model: 'gpt-5.5', instructions: 'Drive.', store: false });
+  });
+
+  it('sends an OpenCode Console turn with the organization header, refreshing the token at the Console first', async () => {
+    seed([conn('o', { auth: 'oauth', issuer: 'opencode', orgId: 'org_1', baseUrl: 'https://opencode.ai/inference/v1', model: 'glm-5.3-flash',
+      apiKeyEnc: { plain: 'old-access' }, refreshTokenEnc: { plain: 'old-refresh' }, expiresAt: Date.now() + 60_000 })], 'o');
+    const fetched = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 2592000, org_id: 'org_1' }), { status: 200 }))
+      .mockResolvedValueOnce(sseResponse(toolCallStream));
+    vi.stubGlobal('fetch', fetched);
+    createAiMessageHandler({ prefix: 't', opencodeClientId: 'valet' });
+    const result = await chat({ system: 'Drive.', messages: [{ role: 'user', content: 'go' }], tools: [{ name: 'browser', description: 'd', inputSchema: {} }] });
+    expect(result).toMatchObject({ ok: true, toolCalls: [{ id: 'c1', name: 'browser' }] });
+    const [refreshUrl, refreshInit] = fetched.mock.calls[0] as unknown as [string, RequestInit];
+    expect(refreshUrl).toBe('https://opencode.ai/console/auth/device/token');
+    expect(JSON.parse(String(refreshInit.body))).toEqual({ grant_type: 'refresh_token', refresh_token: 'old-refresh', client_id: 'valet' });
+    const [url, init] = fetched.mock.calls[1] as unknown as [URL, RequestInit];
+    expect(String(url)).toBe('https://opencode.ai/inference/v1/chat/completions');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer new-access', 'x-opencode-org-id': 'org_1' });
+    // The rotated pair is on disk before the turn is sent.
+    const stored = (local.get(STORAGE_KEY) as { connections: Array<Record<string, unknown>> }).connections[0]!;
+    expect(stored.apiKeyEnc).toEqual({ plain: 'new-access' });
+    expect(stored.refreshTokenEnc).toEqual({ plain: 'new-refresh' });
   });
 
   it('answers the ai-chat message op with the same result', async () => {

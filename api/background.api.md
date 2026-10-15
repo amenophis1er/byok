@@ -8,6 +8,7 @@
 export interface AiHandlerOptions {
     cryptoDbName?: string;
     debugFlagKey?: string;
+    opencodeClientId?: string;
     openConsentTab?: boolean;
     prefix?: string;
     settingsHint?: string;
@@ -32,6 +33,9 @@ export const CODEX_MODELS: string[];
 export function createAiMessageHandler(options?: AiHandlerOptions): (message: {
     type?: string;
 }, sendResponse: (r: unknown) => void) => boolean;
+
+// @public
+export const OPENCODE_BASE = "https://opencode.ai/inference/openai/v1";
 
 // @public
 export function registerAiHandlers(options?: AiHandlerOptions): void;

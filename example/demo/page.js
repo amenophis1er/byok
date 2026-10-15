@@ -29,7 +29,8 @@ async function busy(button, label, work) {
 let view = { connections: [], activeId: null };
 
 const isOllamaCloud = (c) => c.auth === 'device-key' || /ollama\.com/.test(c.baseUrl);
-const provider = (c) => (isOllamaCloud(c) ? 'ollama' : c.kind);
+const isOpencode = (c) => /opencode\.ai/.test(c.baseUrl);
+const provider = (c) => (isOllamaCloud(c) ? 'ollama' : isOpencode(c) ? 'opencode' : c.kind);
 const AUTH = { key: 'API key', oauth: 'Subscription', 'setup-token': 'Setup token', 'device-key': 'Device key' };
 const active = () => view.connections.find((c) => c.id === view.activeId);
 const authLabel = (c) => (c.auth === 'key' || !c.auth ? (c.hasKey ? 'API key' : 'No key') : AUTH[c.auth] ?? c.auth);
@@ -51,7 +52,7 @@ function connectionRow(c) {
   const avatar = document.createElement('span');
   const kind = provider(c);
   avatar.className = `avatar ${kind}`;
-  avatar.textContent = { anthropic: 'C', chatgpt: 'G', ollama: 'O' }[kind] ?? (c.label[0] ?? '?').toUpperCase();
+  avatar.textContent = { anthropic: 'C', chatgpt: 'G', ollama: 'O', opencode: 'oc' }[kind] ?? (c.label[0] ?? '?').toUpperCase();
 
   const text = document.createElement('div');
   text.style.minWidth = '0';
@@ -263,6 +264,17 @@ $('ollama-start').onclick = () => busy($('ollama-start'), 'Opening ollama.com…
   void poll(() => ai.ollamaLoginPoll(''), res.data.pollMs, $('ollama-box'));
 });
 $('ollama-cancel').onclick = () => { stopFlow($('ollama-box')); status(''); };
+
+$('opencode-start').onclick = () => busy($('opencode-start'), 'Opening opencode.ai…', async () => {
+  const res = await ai.opencodeLoginStart();
+  if (!res.ok) return status(res.error, 'error');
+  $('opencode-code').textContent = res.data.userCode;
+  $('opencode-link').href = res.data.verifyUrl;
+  startFlow($('opencode-box'));
+  status('');
+  void poll(() => ai.opencodeLoginPoll(''), res.data.pollMs, $('opencode-box'));
+});
+$('opencode-cancel').onclick = () => { stopFlow($('opencode-box')); status(''); };
 
 /* ── OpenAI-compatible ────────────────────────────────────────────── */
 

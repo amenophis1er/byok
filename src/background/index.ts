@@ -15,6 +15,8 @@ import {
   type AIListModelsRequest,
   type AIOllamaLoginStart,
   type AIOllamaPoll,
+  type AIOpencodeLoginStart,
+  type AIOpencodePoll,
   type AIResult,
   type AISaveConnectionRequest,
   type AISetActiveRequest,
@@ -46,6 +48,16 @@ import {
   signRequest,
   whoami,
 } from './ollama-device.js';
+import {
+  OPENCODE_BASE,
+  type OpencodeDeviceStart,
+  opencodeAccount,
+  opencodeHeaders,
+  opencodePollDelayMs,
+  pollOpencode,
+  refreshOpencodeTokens,
+  startOpencodeLogin,
+} from './opencode-oauth.js';
 import {
   exchangeCode,
   isSetupToken,
@@ -93,6 +105,8 @@ export interface AiHandlerOptions {
   settingsHint?: string;
   /** Open the OAuth consent page in a new tab on login-start (needs nothing beyond tabs.create). Default true. */
   openConsentTab?: boolean;
+  /** The client id the OpenCode Console sign-in sends: your extension's name, shown on its approval page. Default 'byok'. */
+  opencodeClientId?: string;
 }
 
 interface Resolved {
@@ -102,6 +116,7 @@ interface Resolved {
   debugFlagKey: string;
   settingsHint: string;
   openConsentTab: boolean;
+  opencodeClientId: string;
 }
 
 let opts: Resolved = resolve({});
@@ -114,6 +129,7 @@ function resolve(o: AiHandlerOptions): Resolved {
     debugFlagKey: o.debugFlagKey ?? 'aiConnectDebug',
     settingsHint: o.settingsHint ?? 'Add one in the extension settings.',
     openConsentTab: o.openConsentTab ?? true,
+    opencodeClientId: o.opencodeClientId ?? 'byok',
   };
 }
 
@@ -132,6 +148,11 @@ interface StoredConnection {
   expiresAt?: number;
   /** chatgpt only: account id from the JWT, sent as chatgpt-account-id. */
   accountId?: string;
+  /** oauth only: who issued the token when it is not the provider itself. 'opencode' = the OpenCode Console
+   *  (an openai-compatible connection whose token is refreshed there and that names its organization). */
+  issuer?: 'opencode';
+  /** opencode only: the organization the token was issued for, sent as x-opencode-org-id. */
+  orgId?: string;
   /** device-key only: the Ollama account the device key is paired with. The
    *  key pair itself lives in IndexedDB under the connection id. */
   account?: string;
@@ -302,7 +323,8 @@ async function toView(c: StoredConnection): Promise<ConnectionView> {
     baseUrl: c.baseUrl,
     model: c.model,
     hasKey: key.length > 0,
-    keyHint: key ? `····${key.slice(-4)}` : '',
+    // A sign-in shows who signed in when it knows; a key its last characters.
+    keyHint: c.account ?? (key ? `····${key.slice(-4)}` : ''),
     revision: c.revision ?? 0,
   };
 }
@@ -585,6 +607,67 @@ async function ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>> {
   }
 }
 
+/* ── OpenCode Console (device flow) ───────────────────────────────── */
+
+const OPENCODE_PENDING = 'aiConnectOpencodeDevice';
+
+/** Start the device grant and stash it in session storage; the UI shows the code and polls. */
+async function opencodeLoginStart(): Promise<AIResult<AIOpencodeLoginStart>> {
+  try {
+    const start = await startOpencodeLogin(opts.opencodeClientId);
+    await chrome.storage.session.set({ [OPENCODE_PENDING]: { ...start, slowDowns: 0 } });
+    if (opts.openConsentTab) void chrome.tabs.create({ url: start.verifyUrl }).catch(() => {});
+    return { ok: true, data: { userCode: start.userCode, verifyUrl: start.verifyUrl, pollMs: opencodePollDelayMs(start.intervalSec, 0) } };
+  } catch (error) {
+    return { ok: false, error: errMessage(error) };
+  }
+}
+
+/** One poll, driven by the UI so the worker may die between polls; the grant lives in session storage. */
+async function opencodeLoginPoll(label: string): Promise<AIResult<AIOpencodePoll>> {
+  try {
+    const pending = (await chrome.storage.session.get(OPENCODE_PENDING))[OPENCODE_PENDING] as
+      | (OpencodeDeviceStart & { slowDowns: number })
+      | undefined;
+    if (!pending) throw new Error('Sign-in expired — start again.');
+    if (Date.now() > pending.expiresAt) {
+      await chrome.storage.session.remove(OPENCODE_PENDING);
+      throw new Error('The code expired — start the sign-in again.');
+    }
+    const poll = await pollOpencode(pending.deviceCode, opts.opencodeClientId);
+    if (poll.status === 'pending') return { ok: true, data: { status: 'pending', pollMs: opencodePollDelayMs(pending.intervalSec, pending.slowDowns) } };
+    if (poll.status === 'slow_down') {
+      const slowDowns = pending.slowDowns + 1;
+      await chrome.storage.session.set({ [OPENCODE_PENDING]: { ...pending, slowDowns } });
+      return { ok: true, data: { status: 'pending', pollMs: opencodePollDelayMs(pending.intervalSec, slowDowns) } };
+    }
+    if (poll.status === 'denied') {
+      await chrome.storage.session.remove(OPENCODE_PENDING);
+      throw new Error(poll.error);
+    }
+    await chrome.storage.session.remove(OPENCODE_PENDING);
+    const account = await opencodeAccount(poll.tokens);
+    const conn: StoredConnection = {
+      id: crypto.randomUUID(),
+      kind: 'openai-compatible',
+      auth: 'oauth',
+      issuer: 'opencode',
+      label: label || 'OpenCode',
+      baseUrl: OPENCODE_BASE,
+      model: '',
+      apiKeyEnc: await encryptString(poll.tokens.accessToken),
+      refreshTokenEnc: poll.tokens.refreshToken ? await encryptString(poll.tokens.refreshToken) : null,
+      expiresAt: poll.tokens.expiresAt,
+      ...(poll.tokens.orgId ? { orgId: poll.tokens.orgId } : {}),
+      ...(account ? { account } : {}),
+    };
+    await addConnection(conn);
+    return { ok: true, data: { status: 'created', id: conn.id } };
+  } catch (error) {
+    return { ok: false, error: errMessage(error) };
+  }
+}
+
 /** Refresh an OAuth connection's token if it's near expiry, persisting the
  *  rotated pair through the one writer. Returns the usable access token. */
 async function freshToken(connId: string): Promise<string> {
@@ -598,7 +681,8 @@ async function freshToken(connId: string): Promise<string> {
     const refresh = await decryptBlob(conn.refreshTokenEnc);
     if (!refresh) return access; // can't refresh; try the current token
     const tokens =
-      conn.kind === 'chatgpt' ? await refreshOpenAiTokens(refresh) : await refreshTokens(refresh);
+      conn.issuer === 'opencode' ? await refreshOpencodeTokens(refresh, opts.opencodeClientId)
+        : conn.kind === 'chatgpt' ? await refreshOpenAiTokens(refresh) : await refreshTokens(refresh);
     conn.apiKeyEnc = await encryptString(tokens.accessToken);
     conn.refreshTokenEnc = await encryptString(tokens.refreshToken);
     conn.expiresAt = tokens.expiresAt;
@@ -863,6 +947,7 @@ function bearerAuth(apiKey: string): Authorizer {
 }
 
 async function authorizerFor(conn: StoredConnection, apiKey: string): Promise<Authorizer> {
+  if (conn.issuer === 'opencode') return async () => opencodeHeaders(apiKey, conn.orgId);
   if (conn.auth !== 'device-key') return bearerAuth(apiKey);
   const pair = await getSigningKey(conn.id);
   if (!pair) throw new Error('This Ollama device key is gone — remove the connection and sign in again.');
@@ -1105,7 +1190,7 @@ function chatNetworkError(conn: { kind: string; baseUrl: string } | undefined): 
 
 function errMessage(error: unknown): string {
   if (error instanceof TypeError)
-    return 'Network error (check the base URL / that the server is reachable). Local endpoints may also need CORS opened for the extension, e.g. OLLAMA_ORIGINS.';
+    return 'Network error: the server could not be reached, or the extension has no host permission for it.';
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -1172,6 +1257,12 @@ export function createAiMessageHandler(
       case `${p}:ai-ollama-login-poll`:
         void ollamaLoginPoll((message as { label?: string }).label ?? '').then(sendResponse);
         return true;
+      case `${p}:ai-opencode-login-start`:
+        void opencodeLoginStart().then(sendResponse);
+        return true;
+      case `${p}:ai-opencode-login-poll`:
+        void opencodeLoginPoll((message as { label?: string }).label ?? '').then(sendResponse);
+        return true;
       default:
         return false;
     }
@@ -1187,3 +1278,4 @@ export function registerAiHandlers(options: AiHandlerOptions = {}): void {
 }
 
 export { CODEX_MODELS, CODEX_CLIENT_VERSION } from './openai-oauth.js';
+export { OPENCODE_BASE } from './opencode-oauth.js';

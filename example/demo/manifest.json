@@ -13,7 +13,8 @@
     "https://claude.com/*",
     "https://platform.claude.com/*",
     "https://auth.openai.com/*",
-    "https://chatgpt.com/*"
+    "https://chatgpt.com/*",
+    "https://opencode.ai/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "declarative_net_request": {

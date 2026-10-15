@@ -38,6 +38,7 @@
           <button role="tab" class="tab" data-tab="claude" aria-selected="true">Claude</button>
           <button role="tab" class="tab" data-tab="chatgpt" aria-selected="false">ChatGPT</button>
           <button role="tab" class="tab" data-tab="ollama" aria-selected="false">Ollama</button>
+          <button role="tab" class="tab" data-tab="opencode" aria-selected="false">OpenCode</button>
           <button role="tab" class="tab" data-tab="compatible" aria-selected="false" title="Any OpenAI-compatible server">Others</button>
         </div>
 
@@ -113,6 +114,20 @@
             </div>
           </div>
           <p class="hint" style="margin-top:12px">For a local Ollama, use <strong>Others</strong>.</p>
+        </div>
+
+        <!-- OpenCode Console -->
+        <div class="pane" data-pane="opencode" hidden>
+          <p class="hint">Signs in to your OpenCode Console account with a device code, like <code>opencode auth login</code>. Paid models only: the free tier answers OpenCode's own app alone.</p>
+          <button class="btn primary" id="opencode-start">Sign in with OpenCode</button>
+          <div id="opencode-box" class="device" hidden>
+            <p class="hint">Check the code on the opencode.ai page that opened and click <strong>Authorize</strong>. <a id="opencode-link" target="_blank" rel="noopener">Open it again</a>.</p>
+            <div class="code-row"><code id="opencode-code" class="user-code"></code></div>
+            <div class="row">
+              <span class="waiting"><span class="spinner" aria-hidden="true"></span>Waiting for opencode.ai…</span>
+              <button class="btn" id="opencode-cancel">Cancel</button>
+            </div>
+          </div>
         </div>
 
         <!-- OpenAI-compatible -->

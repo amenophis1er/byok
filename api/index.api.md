@@ -153,6 +153,9 @@ export interface AiClient {
     ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>>;
     ollamaLoginStart(deviceName?: string): Promise<AIResult<AIOllamaLoginStart>>;
     // (undocumented)
+    opencodeLoginPoll(label: string): Promise<AIResult<AIOpencodePoll>>;
+    opencodeLoginStart(): Promise<AIResult<AIOpencodeLoginStart>>;
+    // (undocumented)
     saveConnection(input: Omit<AISaveConnectionRequest, 'type'>): Promise<AIResult<{
         id: string;
     }>>;
@@ -265,6 +268,39 @@ export interface AIOllamaLoginStartRequest {
 // @public (undocumented)
 export type AIOllamaPoll = {
     status: 'pending';
+} | {
+    status: 'created';
+    id: string;
+};
+
+// @public (undocumented)
+export interface AIOpencodeLoginPollRequest {
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    type: string;
+}
+
+// @public
+export interface AIOpencodeLoginStart {
+    // (undocumented)
+    pollMs: number;
+    // (undocumented)
+    userCode: string;
+    // (undocumented)
+    verifyUrl: string;
+}
+
+// @public (undocumented)
+export interface AIOpencodeLoginStartRequest {
+    // (undocumented)
+    type: string;
+}
+
+// @public (undocumented)
+export type AIOpencodePoll = {
+    status: 'pending'; /** Wait this long before the next poll (the server may ask to slow down). */
+    pollMs: number;
 } | {
     status: 'created';
     id: string;

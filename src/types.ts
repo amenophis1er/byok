@@ -23,7 +23,7 @@
 export type ProviderKind = 'anthropic' | 'openai-compatible' | 'chatgpt' | 'chrome-builtin';
 
 /** How a connection authenticates. 'key' = API key; 'oauth'/'setup-token'
- *  = a Claude Pro/Max subscription token (Bearer, refreshable / long-lived);
+ *  = a Claude Pro/Max, ChatGPT or OpenCode Console token (Bearer, refreshable / long-lived);
  *  'device-key' = an Ollama Cloud connected device (requests signed with a
  *  non-extractable Ed25519 key, no secret stored). */
 export type AuthMode = 'key' | 'oauth' | 'setup-token' | 'device-key';
@@ -225,6 +225,26 @@ export interface AIOllamaLoginPollRequest {
 }
 export type AIOllamaPoll =
   | { status: 'pending' }
+  | { status: 'created'; id: string };
+
+/* ── OpenCode Console (device flow) ───────────────────────────────── */
+
+export interface AIOpencodeLoginStartRequest {
+  type: string; // `${prefix}:ai-opencode-login-start`
+}
+/** Reply: the worker opened the approval page with the code filled in; show
+ *  the code (to compare), offer the URL, then poll every `pollMs`. */
+export interface AIOpencodeLoginStart {
+  userCode: string;
+  verifyUrl: string;
+  pollMs: number;
+}
+export interface AIOpencodeLoginPollRequest {
+  type: string; // `${prefix}:ai-opencode-login-poll`
+  label: string;
+}
+export type AIOpencodePoll =
+  | { status: 'pending'; /** Wait this long before the next poll (the server may ask to slow down). */ pollMs: number }
   | { status: 'created'; id: string };
 
 /* ── Chat with tools ─────────────────────────────────────── */

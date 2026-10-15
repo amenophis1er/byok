@@ -1,6 +1,6 @@
 {
   "name": "@amenophis1er/byok",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Bring-your-own-key AI for Chrome extensions (MV3): encrypted key storage, sign-in with Claude, ChatGPT and Ollama accounts, Anthropic and OpenAI-compatible providers, tool calling, one message API between the UI and the worker.",
   "keywords": [
     "byok",

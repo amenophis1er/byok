@@ -8,6 +8,8 @@ import {
   type AIConfigView,
   type AIOllamaLoginStart,
   type AIOllamaPoll,
+  type AIOpencodeLoginStart,
+  type AIOpencodePoll,
   type AIResult,
   type ModelInfo,
   type ProviderKind,
@@ -46,6 +48,9 @@ export interface AiClient {
   /** Ollama Cloud: open ollama.com/connect for a new device key. */
   ollamaLoginStart(deviceName?: string): Promise<AIResult<AIOllamaLoginStart>>;
   ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>>;
+  /** OpenCode Console: a device code, approved on opencode.ai (the worker opens the page). '' = label "OpenCode". */
+  opencodeLoginStart(): Promise<AIResult<AIOpencodeLoginStart>>;
+  opencodeLoginPoll(label: string): Promise<AIResult<AIOpencodePoll>>;
 }
 
 export function createAiClient(options: { prefix?: string } = {}): AiClient {
@@ -68,5 +73,7 @@ export function createAiClient(options: { prefix?: string } = {}): AiClient {
     chatgptLoginPoll: (label) => send('ai-chatgpt-login-poll', { label }),
     ollamaLoginStart: (deviceName) => send('ai-ollama-login-start', { deviceName }),
     ollamaLoginPoll: (label) => send('ai-ollama-login-poll', { label }),
+    opencodeLoginStart: () => send('ai-opencode-login-start'),
+    opencodeLoginPoll: (label) => send('ai-opencode-login-poll', { label }),
   };
 }
