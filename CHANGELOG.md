@@ -20,8 +20,8 @@ while on 0.x, a breaking change bumps the minor version.
   others on Chat Completions — and answers 400 "Model does not support this
   protocol" to any other. A turn now starts on the likely one (by name) and
   moves to the next on that answer, remembering what worked for the worker's
-  lifetime. Models served on a protocol the library has no client for (Gemini,
-  Mistral) fail with a clear error.
+  lifetime. Gemini models, served on Google's own protocol, which the library
+  has no client for yet, fail with a clear error.
 - The OpenCode inference root is `https://opencode.ai/inference/v1` (the
   earlier `…/inference/openai/v1` did not exist), and the demo asks for
   `https://opencode.ai/*`.
