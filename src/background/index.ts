@@ -37,6 +37,7 @@ import {
 } from './crypto.js';
 import { anthropicBody, anthropicResult } from './chat-anthropic.js';
 import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
+import { geminiBody, geminiResult } from './chat-gemini.js';
 import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import {
@@ -869,7 +870,7 @@ function protocolOf(conn: StoredConnection): Protocol {
  * worker's lifetime.
  */
 const learnedProtocols = new Map<string, Protocol>();
-const PROTOCOLS: readonly Protocol[] = ['chat-completions', 'anthropic', 'responses'];
+const PROTOCOLS: readonly Protocol[] = ['chat-completions', 'anthropic', 'responses', 'gemini'];
 
 const isOpenAi = (baseUrl: string): boolean => {
   try { return new URL(baseUrl).hostname === 'api.openai.com'; } catch { return false; }
@@ -879,7 +880,7 @@ function protocolCandidates(conn: StoredConnection, model: string): Protocol[] {
   const learned = learnedProtocols.get(`${conn.id}:${model}`);
   if (conn.issuer === 'opencode') {
     const first = learned
-      ?? (/^claude-/.test(model) ? 'anthropic' : /^(gpt-|grok-|muse-)/.test(model) ? 'responses' : 'chat-completions');
+      ?? (/^claude-/.test(model) ? 'anthropic' : /^(gpt-|grok-|muse-)/.test(model) ? 'responses' : /^gemini-/.test(model) ? 'gemini' : 'chat-completions');
     return [first, ...PROTOCOLS.filter((p) => p !== first)];
   }
   const saved = protocolOf(conn);
@@ -908,7 +909,30 @@ async function turn(
 ): Promise<AIChatResult> {
   if (protocol === 'anthropic') return anthropicTurn(conn, token, model, req, signal, debug);
   if (protocol === 'responses') return responsesTurn(conn, token, model, req, signal, debug);
+  if (protocol === 'gemini') return geminiTurn(conn, token, model, req, signal, debug);
   return chatCompletionsTurn(conn, token, model, req, signal, debug);
+}
+
+/** The Gemini API root: the base URL, or for Gemini's OpenAI-compatible root (`…/v1beta/openai`) the root above it. */
+const geminiRoot = (baseUrl: string): string => apiRoot(baseUrl).replace(/\/openai$/, '');
+
+/** Gemini API: Google itself with the key in `x-goog-api-key`, or another server serving it, such as OpenCode. */
+async function geminiTurn(conn: StoredConnection, token: string, model: string, req: AIChatRequest, signal: AbortSignal, debug: boolean): Promise<AIChatResult> {
+  const url = new URL(`${geminiRoot(conn.baseUrl)}/models/${encodeURIComponent(model)}:streamGenerateContent`);
+  url.searchParams.set('alt', 'sse');
+  const headers = conn.issuer === 'opencode' || conn.auth === 'device-key'
+    ? await (await authorizerFor(conn, token))('POST', url)
+    : token ? { 'x-goog-api-key': token } : {};
+  const body = geminiBody(req);
+  if (debug) dlog('chat request', { connection: conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+  const res = await fetch(url, {
+    method: 'POST', signal,
+    headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw httpError(res.status, await res.text());
+  if (!res.body) throw new Error('The provider sent no response body.');
+  return geminiResult(readSse(res.body));
 }
 
 /** Messages API: Anthropic itself (key or subscription), or another server serving it, such as OpenCode. */

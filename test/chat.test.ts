@@ -42,11 +42,11 @@ function installChrome() {
 }
 
 function seed(connections: Array<Record<string, unknown>>, activeId: string | null = null) {
-  local.set(STORAGE_KEY, { activeId, connections });
+  local.set(STORAGE_KEY, { activeId, connections, apiRoots: true });
 }
 
 const conn = (id: string, extra: Record<string, unknown> = {}) => ({
-  id, kind: 'openai-compatible', label: id, baseUrl: 'http://localhost:11434', model: 'gpt-oss:20b', apiKeyEnc: null, revision: 1, ...extra,
+  id, kind: 'openai-compatible', label: id, baseUrl: 'http://localhost:11434/v1', model: 'gpt-oss:20b', apiKeyEnc: null, revision: 1, ...extra,
 });
 
 const sseResponse = (text: string) => new Response(streamOf(text, 13), { status: 200, headers: { 'content-type': 'text/event-stream' } });
@@ -251,11 +251,35 @@ describe('chat()', () => {
     });
 
     it('says so when OpenCode serves a model on a protocol it has no client for', async () => {
-      seed([opencode('gemini-4-argon')], 'o');
+      seed([opencode('something-new')], 'o');
       vi.stubGlobal('fetch', vi.fn(async () => mismatch()));
       const result = await chat({ system: '', messages: [{ role: 'user', content: 'go' }] });
-      expect(result).toMatchObject({ ok: false, error: 'OpenCode serves gemini-4-argon on a protocol this library does not speak (HTTP 400: Model does not support this protocol.).' });
+      expect(result).toMatchObject({ ok: false, error: 'OpenCode serves something-new on a protocol this library does not speak (HTTP 400: Model does not support this protocol.).' });
       expect(result).not.toHaveProperty('retryable');
+    });
+
+    const geminiAnswer = () => sseResponse(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'hi' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1 } })}\n\n`);
+
+    it('sends an OpenCode Gemini model to the Gemini API with the Console token', async () => {
+      seed([opencode('gemini-3.8-flash')], 'o');
+      const fetched = vi.fn(async () => geminiAnswer());
+      vi.stubGlobal('fetch', fetched);
+      expect(await chat({ system: 'Be brief.', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: true, text: 'hi', usage: { inputTokens: 3, outputTokens: 1 } });
+      expect(calls(fetched)).toEqual(['https://opencode.ai/inference/v1/models/gemini-3.8-flash:streamGenerateContent?alt=sse']);
+      const init = (fetched.mock.calls[0] as unknown as [URL, RequestInit])[1];
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer access', 'x-opencode-org-id': 'org_1' });
+      expect(JSON.parse(String(init.body))).toMatchObject({ systemInstruction: { parts: [{ text: 'Be brief.' }] }, contents: [{ role: 'user', parts: [{ text: 'go' }] }] });
+    });
+
+    it('speaks the Gemini API to Google with the key in x-goog-api-key, from the preset\'s OpenAI-compatible root', async () => {
+      seed([conn('g', { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'gemini', model: 'gemini-3.8-flash', apiKeyEnc: { plain: 'AIza-1' } })], 'g');
+      const fetched = vi.fn(async () => geminiAnswer());
+      vi.stubGlobal('fetch', fetched);
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: true, text: 'hi' });
+      expect(calls(fetched)).toEqual(['https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse']);
+      const init = (fetched.mock.calls[0] as unknown as [URL, RequestInit])[1];
+      expect(init.headers).toMatchObject({ 'x-goog-api-key': 'AIza-1' });
+      expect(init.headers).not.toHaveProperty('Authorization');
     });
 
     it('speaks the Responses API to an openai-compatible server saved with that protocol, in the server\'s own words on failure', async () => {

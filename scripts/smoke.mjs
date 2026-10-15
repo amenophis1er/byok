@@ -5,8 +5,8 @@
  *   npm run build && node scripts/smoke.mjs
  *
  * - Ollama Cloud: signs with the device key in ~/.ollama (from `ollama signin`).
- * - Anthropic / OpenAI / OpenRouter: ANTHROPIC_API_KEY / OPENAI_API_KEY /
- *   OPENROUTER_API_KEY, each skipped when unset. Models via SMOKE_*_MODEL.
+ * - Anthropic / OpenAI / OpenRouter / Gemini: ANTHROPIC_API_KEY / OPENAI_API_KEY /
+ *   OPENROUTER_API_KEY / GEMINI_API_KEY, each skipped when unset. Models via SMOKE_*_MODEL.
  *
  * Turn 1 must call the tool; turn 2 sends the tool result back and must answer
  * with text that uses it. Costs a few hundred tokens per provider.
@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { anthropicBody, anthropicResult } from '../dist/background/chat-anthropic.js';
 import { openaiBody, openaiResult } from '../dist/background/chat-openai.js';
 import { codexBody, codexResult } from '../dist/background/chat-codex.js';
+import { geminiBody, geminiResult } from '../dist/background/chat-gemini.js';
 import { signRequest } from '../dist/background/ollama-device.js';
 import { readSse } from '../dist/background/sse.js';
 
@@ -61,6 +62,15 @@ async function responsesTurn(base, model, authorize, messages) {
   return codexResult(readSse(res.body), (failure) => failure);
 }
 
+/** The Gemini API itself, the key in x-goog-api-key. */
+async function geminiTurn(key, model, messages) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
+  const body = geminiBody({ system: SYSTEM, messages, tools: TOOLS, maxTokens: 2000 });
+  const res = await fetch(url, { method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return geminiResult(readSse(res.body));
+}
+
 async function anthropicTurn(key, model, messages) {
   const body = anthropicBody({ system: SYSTEM, messages, tools: TOOLS, maxTokens: 4000 }, model, [{ type: 'text', text: SYSTEM }]);
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -102,6 +112,8 @@ await run('OpenAI', process.env.OPENAI_API_KEY, () => roundTrip('OpenAI',
   (m) => openaiTurn('https://api.openai.com', process.env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }), m)));
 await run('OpenAI (Responses)', process.env.OPENAI_API_KEY, () => roundTrip('OpenAI (Responses)',
   (m) => responsesTurn('https://api.openai.com', process.env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }), m)));
+await run('Gemini', process.env.GEMINI_API_KEY, () => roundTrip('Gemini',
+  (m) => geminiTurn(process.env.GEMINI_API_KEY, process.env.SMOKE_GEMINI_MODEL ?? 'gemini-3.8-flash', m)));
 await run('OpenRouter', process.env.OPENROUTER_API_KEY, () => roundTrip('OpenRouter',
   (m) => openaiTurn('https://openrouter.ai/api', process.env.SMOKE_OPENROUTER_MODEL ?? 'openai/gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` }), m)));
 

@@ -418,13 +418,14 @@ export const OPENAI_COMPATIBLE_PRESETS: {
     label: string;
     baseUrl: string;
     keyOptional?: boolean;
+    protocol?: Protocol;
 }[];
 
 // @public
 export function originPattern(baseUrl: string): string | null;
 
 // @public
-export type Protocol = 'anthropic' | 'responses' | 'chat-completions';
+export type Protocol = 'anthropic' | 'responses' | 'chat-completions' | 'gemini';
 
 // @public
 export const PROTOCOL_VERSION = 1;

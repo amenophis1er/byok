@@ -187,14 +187,17 @@ What it guarantees:
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
   calls.
-- **Three protocols, any server.** A connection's `protocol` is how its
+- **Four protocols, any server.** A connection's `protocol` is how its
   requests are written: `anthropic` (the Messages API), `responses` (the OpenAI
-  Responses API) or `chat-completions`. The kind picks it — Anthropic, ChatGPT,
-  OpenAI-compatible — and an openai-compatible connection saved with
-  `protocol: 'responses'` speaks OpenAI's own Responses API at
-  `${baseUrl}/responses`. An OpenCode sign-in speaks whichever each model is
-  served on: Claude on Messages, GPT on Responses, most others on Chat
-  Completions; the wrong guess is answered with a 400 and the next is tried.
+  Responses API), `chat-completions` or `gemini` (the Gemini API). The kind
+  picks it — Anthropic, ChatGPT, OpenAI-compatible — and an openai-compatible
+  connection saved with another speaks that: `responses` for OpenAI's own
+  Responses API at `${baseUrl}/responses`, `gemini` for Google's
+  `models/{model}:streamGenerateContent` (the Gemini preset carries it; pass
+  `preset.protocol` on save). An OpenCode sign-in speaks whichever each model
+  is served on: Claude on Messages, GPT on Responses, Gemini on the Gemini API,
+  most others on Chat Completions; the wrong guess is answered with a 400 and
+  the next is tried.
 - **ChatGPT subscription too.** A ChatGPT Plus/Pro connection (signed
   in with the device code) talks to OpenAI's Codex backend — the Responses API
   — with the same tools: calls and results become `function_call` /

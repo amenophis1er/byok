@@ -3,6 +3,18 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.4
+
+- **The Gemini API as a protocol** (`protocol: 'gemini'`):
+  `models/{model}:streamGenerateContent`, with function calling, images and
+  documents, token counts, and the model turn's parts — thought signatures
+  included — returned in `providerState` and replayed. The Google Gemini preset
+  now carries `protocol: 'gemini'`: a host that passes it on save gets the
+  native API (a base URL ending in `/openai` is read as the root above it);
+  one that does not keeps the OpenAI-compatible endpoint, as do connections
+  saved earlier. OpenCode's `gemini-*` models, served on this protocol, work.
+  Gemini has no switch for parallel calls: a turn may carry several.
+
 ## 0.1.3
 
 - **Protocols are separate from connections.** A connection says who requests
