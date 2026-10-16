@@ -15,7 +15,9 @@ while on 0.x, a breaking change bumps the minor version.
   saved earlier. OpenCode's `gemini-*` models, served on this protocol, work.
   Gemini has no switch for parallel calls: a turn may carry several.
 
-## 0.1.3
+## 0.1.3 (never released)
+
+Merged but not tagged, so never published: everything below shipped in 0.1.4.
 
 - **Protocols are separate from connections.** A connection says who requests
   go to and how they authenticate; its `protocol` — `anthropic` (the Messages

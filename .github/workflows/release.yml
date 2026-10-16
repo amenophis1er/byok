@@ -3,6 +3,9 @@
 #   (bump version in package.json, add the release to CHANGELOG.md, merge)
 #   git tag v0.1.1 && git push --tags
 #
+# Tag right after the merge that bumps the version: CI refuses a PR that bumps
+# the version again while the one on main is not yet on npm (ci.yml).
+#
 # Auth: npm trusted publishing (OIDC) — no token stored in the repository. On
 # npmjs.com → @amenophis1er/byok → Settings → Trusted publisher: repository
 # amenophis1er/byok, workflow release.yml. Published with a provenance
