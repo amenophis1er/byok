@@ -22,3 +22,29 @@ jobs:
       - run: npm run check
       - name: What would be published
         run: npm pack --dry-run
+
+  # A version bump is only allowed once the version before it is on npm.
+  # Releases are cut by tagging main (see release.yml); without this, a PR
+  # can bump past a merged-but-untagged version and that version is never
+  # released (0.1.3 was lost that way).
+  version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: The version main is at has been released
+        run: |
+          HEAD_VERSION="$(node -p "require('./package.json').version")"
+          git fetch --depth=1 origin "$GITHUB_BASE_REF"
+          BASE_VERSION="$(git show FETCH_HEAD:package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          echo "base $BASE_VERSION, this PR $HEAD_VERSION"
+          [ "$HEAD_VERSION" != "$BASE_VERSION" ] || exit 0
+          if npm view "@amenophis1er/byok@$BASE_VERSION" version >/dev/null 2>&1; then
+            echo "$BASE_VERSION is published; bumping to $HEAD_VERSION is fine"
+          else
+            echo "::error::main is at $BASE_VERSION, which is not on npm. Tag and release it (git tag v$BASE_VERSION && git push origin v$BASE_VERSION) before bumping to $HEAD_VERSION."
+            exit 1
+          fi
