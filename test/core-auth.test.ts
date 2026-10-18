@@ -19,4 +19,7 @@ it('exports each flow: Claude PKCE, ChatGPT device, OpenCode device grant, Ollam
   expect(auth.whoami).toBeTypeOf('function');
   expect(auth.disconnect).toBeTypeOf('function');
   expect(auth.withClaudeCodeSystem('x').system[0]?.text).toBe(auth.CLAUDE_CODE_SENTINEL);
+  // Authentication only: the catalog is listModels's.
+  expect('codexModels' in auth).toBe(false);
+  expect('CODEX_MODELS' in auth).toBe(false);
 });

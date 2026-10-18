@@ -114,7 +114,12 @@ export const codexFailure = (body: string): string => codexHttpError(0, body).re
  */
 export async function codexResult(events: AsyncIterable<SseEvent>, failure: (body: string) => string = codexFailure, onEvent?: ChatEventSink): Promise<AIChatResult> {
   const texts = new Map<string, string>();
-  const calls = new Map<string, { callId: string; name: string; args: string; gotDelta: boolean }>();
+  const calls = new Map<string, { callId: string; name: string; args: string; gotDelta: boolean; started?: boolean; ended?: boolean }>();
+  const announce = (entry: { callId: string; name: string; started?: boolean }) => {
+    if (entry.started) return;
+    entry.started = true;
+    onEvent?.({ type: 'tool_call_start', id: entry.callId, name: entry.name });
+  };
   let completed = false;
   let incomplete = false;
   let usage: AIChatResult['usage'];
@@ -138,7 +143,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
       case 'response.output_item.added':
         if (event['item']?.type === 'function_call') {
           const entry = call(event['item']);
-          onEvent?.({ type: 'tool_call_start', id: entry.callId, name: entry.name });
+          if (entry.name) announce(entry); // else once the name arrives, on `done`, or with the first arguments
         }
         break;
       case 'response.output_text.delta':
@@ -151,6 +156,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
         const entry = calls.get(itemId);
         if (entry && typeof event['delta'] === 'string') {
           entry.args += event['delta']; entry.gotDelta = true;
+          announce(entry);
           if (event['delta']) onEvent?.({ type: 'tool_call_delta', id: entry.callId, argsDelta: event['delta'] });
         }
         break;
@@ -158,14 +164,15 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
       case 'response.output_item.done': {
         const item = event['item'] ?? {};
         if (item.type !== 'function_call') break;
-        const known = calls.has(typeof item['id'] === 'string' ? item['id'] : String(item['call_id'] ?? ''));
         const entry = call(item);
+        if (entry.ended) break; // a repeated `done` changes nothing
         if (!entry.name && typeof item.name === 'string') entry.name = item.name;
-        if (!known) onEvent?.({ type: 'tool_call_start', id: entry.callId, name: entry.name });
+        announce(entry);
         if (!entry.gotDelta && typeof item.arguments === 'string') {
           entry.args = item.arguments;
           if (item.arguments) onEvent?.({ type: 'tool_call_delta', id: entry.callId, argsDelta: item.arguments });
         }
+        entry.ended = true;
         onEvent?.({ type: 'tool_call_end', id: entry.callId });
         break;
       }
@@ -186,6 +193,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
     }
   }
   if (!completed) return { ok: false, error: 'The response stream ended before it finished.' };
+  for (const entry of calls.values()) if (!entry.ended) { announce(entry); onEvent?.({ type: 'tool_call_end', id: entry.callId }); }
 
   const toolCalls: AIToolCall[] = [...calls.values()].map((entry) => {
     const out: AIToolCall = { id: entry.callId, name: entry.name };

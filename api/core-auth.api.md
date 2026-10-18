@@ -19,27 +19,6 @@ export interface AnthropicTokens {
 // @public
 export const CLAUDE_CODE_SENTINEL = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-// @public
-export const CODEX_CLIENT_VERSION = "0.162.0";
-
-// @public
-export const CODEX_MODELS: string[];
-
-// @public
-export function codexCatalogModels(body: unknown): Array<{
-    id: string;
-    name: string;
-}>;
-
-// @public
-export function codexModels(input: {
-    accessToken: string;
-    accountId?: string;
-}): Promise<Array<{
-    id: string;
-    name: string;
-}>>;
-
 // @public (undocumented)
 export const CONNECT_POLL_MS = 3000;
 

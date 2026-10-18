@@ -137,13 +137,14 @@ function stripThinking(text: string): string {
 
 export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
   let text = '';
-  const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown; started?: boolean }>();
-  // A call is announced once its arguments start (its id is known by then), or when the turn ends.
-  const callId = (index: number, fragment: { id: string }) => fragment.id || `call_${index}`;
-  const announce = (index: number, fragment: { id: string; name: string; started?: boolean }) => {
-    if (fragment.started) return;
-    fragment.started = true;
-    onEvent?.({ type: 'tool_call_start', id: callId(index, fragment), name: fragment.name });
+  const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown; callId?: string }>();
+  // A call's id is settled when its arguments start (the server's, or `call_N`), and announced then — or when
+  // the turn ends; the result uses the same id, so an id arriving after the arguments began is not taken up.
+  const settle = (index: number, fragment: { id: string; name: string; callId?: string }): string => {
+    if (fragment.callId) return fragment.callId;
+    fragment.callId = fragment.id || `call_${index}`;
+    onEvent?.({ type: 'tool_call_start', id: fragment.callId, name: fragment.name });
+    return fragment.callId;
   };
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
@@ -173,8 +174,11 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
       if (piece['function']?.['name']) current.name += piece['function']['name'];
       if (typeof piece['function']?.['arguments'] === 'string') {
         current.args += piece['function']['arguments'];
-        announce(index, current);
-        if (piece['function']['arguments']) onEvent?.({ type: 'tool_call_delta', id: callId(index, current), argsDelta: piece['function']['arguments'] });
+        // Settled on the first piece of arguments proper: an empty `arguments: ''` opens a call whose name may still be coming.
+        if (piece['function']['arguments']) {
+          const id = settle(index, current); // observed or not: the result's id is fixed here
+          onEvent?.({ type: 'tool_call_delta', id, argsDelta: piece['function']['arguments'] });
+        }
       }
       if (piece['extra_content'] !== undefined) current.extra = piece['extra_content'];
       fragments.set(index, current);
@@ -183,13 +187,13 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   }
   if (!finishReason) return { ok: false, error: 'The response stream ended before it finished.' };
   for (const [index, fragment] of [...fragments.entries()].sort(([a], [b]) => a - b)) {
-    announce(index, fragment);
-    onEvent?.({ type: 'tool_call_end', id: callId(index, fragment) });
+    const id = settle(index, fragment); // a call that never got arguments is settled, and announced, here
+    onEvent?.({ type: 'tool_call_end', id });
   }
 
   const extraContent: Record<string, unknown> = {};
   const toolCalls: AIToolCall[] = [...fragments.entries()].sort(([a], [b]) => a - b).map(([index, fragment]) => {
-    const call: AIToolCall = { id: fragment.id || `call_${index}`, name: fragment.name };
+    const call: AIToolCall = { id: settle(index, fragment), name: fragment.name };
     if (fragment.extra !== undefined) extraContent[call.id] = fragment.extra;
     try {
       const parsed: unknown = fragment.args.trim() === '' ? {} : JSON.parse(fragment.args);

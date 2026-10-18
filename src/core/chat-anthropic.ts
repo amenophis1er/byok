@@ -99,6 +99,7 @@ const STOP: Record<string, AIStopReason> = {
 export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
   const blocks: Block[] = [];
   const partialJson = new Map<number, string>();
+  const ended = new Set<number>();
   let stopReason: string | undefined;
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let finished = false;
@@ -122,6 +123,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
           partialJson.set(payload['index'], '');
           onEvent?.({ type: 'tool_call_start', id: String(block['id']), name: String(block['name']) });
         }
+        if (block.type === 'text' && typeof block['text'] === 'string' && block['text']) onEvent?.({ type: 'text', delta: block['text'] });
         blocks[payload['index']] = block;
         break;
       }
@@ -143,7 +145,10 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
       }
       case 'content_block_stop': {
         const block = blocks[payload['index']];
-        if (block?.type === 'tool_use') onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
+        if (block?.type === 'tool_use' && !ended.has(payload['index'])) {
+          ended.add(payload['index']);
+          onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
+        }
         break;
       }
       case 'message_delta':
@@ -160,6 +165,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
     }
   }
   if (!finished) return { ok: false, error: 'The response stream ended before it finished.' };
+  for (const [index, block] of blocks.entries()) if (block?.type === 'tool_use' && !ended.has(index)) onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
 
   const toolCalls: AIToolCall[] = [];
   const texts: string[] = [];

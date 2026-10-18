@@ -130,7 +130,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
           const id = typeof fc.id === 'string' && fc.id ? fc.id : `call_${announced}`;
           announced += 1;
           onEvent({ type: 'tool_call_start', id, name: fc.name ?? '' });
-          onEvent({ type: 'tool_call_delta', id, argsDelta: JSON.stringify(fc.args ?? {}) });
+          onEvent({ type: 'tool_call_delta', id, argsDelta: fc.args === undefined ? '{}' : JSON.stringify(fc.args) });
           onEvent({ type: 'tool_call_end', id });
         }
       }

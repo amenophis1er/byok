@@ -24,12 +24,8 @@ export {
 } from './anthropic-oauth.js';
 
 export {
-  CODEX_CLIENT_VERSION,
-  CODEX_MODELS,
   DEVICE_TIMEOUT_MS,
   accountIdFromJwt,
-  codexCatalogModels,
-  codexModels,
   exchangeDeviceCode,
   nextPollDelayMs,
   pollDevice,
