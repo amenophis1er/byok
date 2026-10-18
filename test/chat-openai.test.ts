@@ -5,8 +5,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { openaiBody, openaiMessages, openaiResult, rejectedField } from '../src/background/chat-openai.js';
-import { readSse } from '../src/background/sse.js';
+import { openaiBody, openaiMessages, openaiResult, rejectedField } from '../src/core/chat-openai.js';
+import { readSse } from '../src/core/sse.js';
 import type { AIChatRequest, AIMessage } from '../src/types.js';
 import { openaiSse, streamOf } from './helpers.js';
 

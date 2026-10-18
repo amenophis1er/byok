@@ -12,7 +12,7 @@ import {
   refreshTokens,
   startLogin,
   withClaudeCodeSystem,
-} from '../src/background/anthropic-oauth.js';
+} from '../src/core/anthropic-oauth.js';
 
 const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { codexBody, codexHttpError, codexInput, codexResult } from '../src/background/chat-codex.js';
+import { codexBody, codexHttpError, codexInput, codexResult } from '../src/core/chat-codex.js';
 import type { AIMessage } from '../src/types.js';
-import type { SseEvent } from '../src/background/sse.js';
+import type { SseEvent } from '../src/core/sse.js';
 
 async function* events(...items: Array<Record<string, unknown> | string>): AsyncGenerator<SseEvent> {
   for (const item of items) yield { event: 'message', data: typeof item === 'string' ? item : JSON.stringify(item) };

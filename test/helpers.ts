@@ -1,5 +1,5 @@
 /** Test helpers: SSE bodies from strings, split into arbitrary chunks. */
-import { readSse, type SseEvent } from '../src/background/sse.js';
+import { readSse, type SseEvent } from '../src/core/sse.js';
 
 /** A ReadableStream that yields `text` in chunks of `size` bytes (splitting UTF-8 and lines anywhere). */
 export function streamOf(text: string, size = 7): ReadableStream<Uint8Array> {
