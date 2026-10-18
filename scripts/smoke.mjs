@@ -42,8 +42,12 @@ async function ollamaPair() {
 }
 
 /** One turn through the core, as a host would run it: the connection, its credential, the request. */
-const turnOn = (conn, credential) => (messages) =>
-  chat(conn, credential, { system: SYSTEM, messages, tools: TOOLS, maxTokens: 4000 });
+const turnOn = (conn, credential) => async (messages) => {
+  const seen = [];
+  const result = await chat(conn, credential, { system: SYSTEM, messages, tools: TOOLS, maxTokens: 4000 }, { onEvent: (e) => seen.push(e.type) });
+  if (result.ok && seen.length === 0) throw new Error('the turn reported no events while streaming');
+  return result;
+};
 
 async function roundTrip(name, turn) {
   const messages = [{ role: 'user', content: QUESTION }];

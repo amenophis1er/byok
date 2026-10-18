@@ -23,6 +23,7 @@
 
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
+import type { ChatEventSink } from './events.js';
 
 /** What an assistant turn carries back: each tool call's `extra_content`, by call id. */
 interface OpenAiState {
@@ -134,9 +135,16 @@ function stripThinking(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '').trim();
 }
 
-export async function openaiResult(events: AsyncIterable<SseEvent>): Promise<AIChatResult> {
+export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
   let text = '';
-  const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown }>();
+  const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown; started?: boolean }>();
+  // A call is announced once its arguments start (its id is known by then), or when the turn ends.
+  const callId = (index: number, fragment: { id: string }) => fragment.id || `call_${index}`;
+  const announce = (index: number, fragment: { id: string; name: string; started?: boolean }) => {
+    if (fragment.started) return;
+    fragment.started = true;
+    onEvent?.({ type: 'tool_call_start', id: callId(index, fragment), name: fragment.name });
+  };
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
 
@@ -154,19 +162,30 @@ export async function openaiResult(events: AsyncIterable<SseEvent>): Promise<AIC
     const choice = chunk['choices']?.[0];
     if (!choice) continue;
     const delta = choice['delta'] ?? {};
-    if (typeof delta['content'] === 'string') text += delta['content'];
+    if (typeof delta['content'] === 'string') {
+      text += delta['content'];
+      if (delta['content']) onEvent?.({ type: 'text', delta: delta['content'] });
+    }
     for (const piece of delta['tool_calls'] ?? []) {
       const index = typeof piece['index'] === 'number' ? piece['index'] : fragments.size;
       const current = fragments.get(index) ?? { id: '', name: '', args: '' };
       if (piece['id']) current.id = piece['id'];
       if (piece['function']?.['name']) current.name += piece['function']['name'];
-      if (typeof piece['function']?.['arguments'] === 'string') current.args += piece['function']['arguments'];
+      if (typeof piece['function']?.['arguments'] === 'string') {
+        current.args += piece['function']['arguments'];
+        announce(index, current);
+        if (piece['function']['arguments']) onEvent?.({ type: 'tool_call_delta', id: callId(index, current), argsDelta: piece['function']['arguments'] });
+      }
       if (piece['extra_content'] !== undefined) current.extra = piece['extra_content'];
       fragments.set(index, current);
     }
     if (choice['finish_reason']) finishReason = choice['finish_reason'];
   }
   if (!finishReason) return { ok: false, error: 'The response stream ended before it finished.' };
+  for (const [index, fragment] of [...fragments.entries()].sort(([a], [b]) => a - b)) {
+    announce(index, fragment);
+    onEvent?.({ type: 'tool_call_end', id: callId(index, fragment) });
+  }
 
   const extraContent: Record<string, unknown> = {};
   const toolCalls: AIToolCall[] = [...fragments.entries()].sort(([a], [b]) => a - b).map(([index, fragment]) => {

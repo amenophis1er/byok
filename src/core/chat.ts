@@ -17,6 +17,7 @@ import { readSse } from './sse.js';
 import { withClaudeCodeSystem } from './anthropic-oauth.js';
 import { ANTHROPIC_BASE, ANTHROPIC_VERSION, anthropicHeaders, apiRoot, describeHttpText, errMessage, type ConnectionCredential } from './http.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
+import type { ChatEventSink } from './events.js';
 
 /** A turn's request. The worker's `connectionId`/`connectionRevision` pin a stored connection; here the connection is given. */
 export type ChatRequest = Omit<AIChatRequest, 'connectionId' | 'connectionRevision'>;
@@ -30,6 +31,13 @@ export interface ChatOptions {
   debug?: (label: string, data: unknown) => void;
   /** Appended to "no model / no key" errors: tell users where to fix it. */
   settingsHint?: string;
+  /**
+   * Observes the turn as it streams: text deltas, tool calls as they are
+   * announced and filled in, and the usage once known. Nothing is reported
+   * before a protocol has been settled on, so a candidate that was then
+   * abandoned never shows. The result is the same with or without it.
+   */
+  onEvent?: ChatEventSink;
 }
 
 const CHAT_TIMEOUT_MS = 120_000;
@@ -51,7 +59,7 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     if (conn.kind === 'chrome-builtin') throw new Error('The on-device model has no tool calling.');
     const model = req.model ?? conn.model;
     if (!model) throw new Error(`The AI connection has no model selected.${hint}`);
-    const ctx: Turn = { conn, credential, model, req, signal: controller.signal, debug: options.debug, hint };
+    const ctx: Turn = { conn, credential, model, req, signal: controller.signal, debug: options.debug, hint, onEvent: options.onEvent };
 
     const candidates = protocolCandidates(conn, model);
     let mismatch: ProtocolMismatch | undefined;
@@ -59,6 +67,7 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
       try {
         const result = await turn(protocol, ctx);
         if (candidates.length > 1) learnedProtocols.set(learnKey(conn, model), protocol);
+        if (result.ok && result.usage) options.onEvent?.({ type: 'usage', usage: result.usage });
         options.debug?.('chat result', result);
         return transient(result);
       } catch (error) {
@@ -137,6 +146,7 @@ interface Turn {
   signal: AbortSignal;
   debug?: (label: string, data: unknown) => void;
   hint: string;
+  onEvent?: ChatEventSink;
 }
 
 /** Request bodies for the debug log, with image bytes replaced (they are never logged). */
@@ -182,7 +192,7 @@ async function geminiTurn(t: Turn): Promise<AIChatResult> {
     : token ? { 'x-goog-api-key': token } : {};
   const res = await post(t, url, headers, geminiBody(t.req));
   if (!res.ok) throw httpError(res.status, await res.text());
-  return geminiResult(readSse(bodyOf(res)));
+  return geminiResult(readSse(bodyOf(res)), t.onEvent);
 }
 
 /** Messages API: Anthropic itself (key or subscription), or another server serving it, such as OpenCode. */
@@ -200,7 +210,7 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
     : { ...(await authorizerFor(conn, credential)('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
   const res = await post(t, url, headers, anthropicBody(req, t.model, system));
   if (!res.ok) throw httpError(res.status, await res.text());
-  return anthropicResult(readSse(bodyOf(res)));
+  return anthropicResult(readSse(bodyOf(res)), t.onEvent);
 }
 
 /** Responses API: the Codex backend for a ChatGPT sign-in, else `${baseUrl}/responses`. */
@@ -223,7 +233,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
     const text = await res.text();
     throw codex ? new Error(codexHttpError(res.status, text)) : httpError(res.status, text);
   }
-  return codexResult(readSse(bodyOf(res)), codex ? codexFailure : providerFailure);
+  return codexResult(readSse(bodyOf(res)), codex ? codexFailure : providerFailure, t.onEvent);
 }
 
 /** Chat Completions at `${baseUrl}/chat/completions`. */
@@ -244,7 +254,7 @@ async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
     omit.add(field);
     res = await send();
   }
-  return openaiResult(readSse(bodyOf(res)));
+  return openaiResult(readSse(bodyOf(res)), t.onEvent);
 }
 
 /* ── failures ────────────────────────────────────────────────────── */
