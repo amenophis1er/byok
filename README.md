@@ -448,9 +448,10 @@ in [CHANGELOG.md](CHANGELOG.md).
 ## Releasing (maintainers)
 
 Bump `version` in package.json and add the release to CHANGELOG.md, merge,
-then tag right away: `git tag v0.1.1 && git push --tags`. Every merged version
-gets tagged before the next bump: CI refuses a PR that bumps the version while
-the one on main is not yet on npm. The release workflow checks the
+then tag main right away: `git checkout main && git pull && git tag v0.1.1 && git push origin v0.1.1`.
+Every merged version gets tagged before the next bump: the release workflow
+refuses a tag that is not on main, and CI refuses a PR that bumps the version
+while the one on main is not yet on npm. The release workflow checks the
 tag against the version, runs the tests and the API check, and publishes to
 npm with provenance through trusted publishing (no token stored anywhere).
 
