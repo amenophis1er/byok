@@ -1,12 +1,14 @@
 {
   "name": "@amenophis1er/byok",
-  "version": "0.1.4",
-  "description": "Bring-your-own-key AI for Chrome extensions (MV3): encrypted key storage, sign-in with Claude, ChatGPT and Ollama accounts, Anthropic and OpenAI-compatible providers, tool calling, one message API between the UI and the worker.",
+  "version": "0.1.5",
+  "description": "Bring-your-own-key AI for Chrome extensions (MV3): encrypted key storage, sign-in with Claude, ChatGPT and Ollama accounts, Anthropic and OpenAI-compatible providers, tool calling, one message API between the UI and the worker; the protocols alone, for Node and Workers, at ./core.",
   "keywords": [
     "byok",
     "ai",
     "llm",
     "chrome-extension",
+    "node",
+    "gemini",
     "manifest-v3",
     "anthropic",
     "claude",
@@ -44,6 +46,10 @@
       "types": "./dist/background/index.d.ts",
       "default": "./dist/background/index.js"
     },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
     "./client": {
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
@@ -71,7 +77,7 @@
     "dev": "node scripts/dev.mjs",
     "test": "vitest run",
     "smoke": "npm run build && node scripts/smoke.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.core.json",
     "api": "npm run build && node scripts/api-report.mjs",
     "api:update": "npm run build && node scripts/api-report.mjs --update",
     "check": "npm run typecheck && npm test && npm run api",

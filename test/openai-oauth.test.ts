@@ -13,7 +13,7 @@ import {
   pollDevice,
   refreshOpenAiTokens,
   startDeviceLogin,
-} from '../src/background/openai-oauth.js';
+} from '../src/core/openai-oauth.js';
 import { streamOf } from './helpers.js';
 
 function mockFetch(...responses: Response[]) {

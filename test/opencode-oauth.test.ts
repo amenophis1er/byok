@@ -13,7 +13,7 @@ import {
   pollOpencode,
   refreshOpencodeTokens,
   startOpencodeLogin,
-} from '../src/background/opencode-oauth.js';
+} from '../src/core/opencode-oauth.js';
 
 function mockFetch(...responses: Response[]) {
   const fetch = vi.fn<typeof globalThis.fetch>();

@@ -226,7 +226,37 @@ What it guarantees:
 Live check: `npm run build && node scripts/smoke.mjs` runs a two-turn tool round
 trip against each provider it has credentials for (Ollama Cloud from
 `~/.ollama`, others from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
-`OPENROUTER_API_KEY`).
+`OPENROUTER_API_KEY`), through the core entry point below.
+
+## Outside the browser: `@amenophis1er/byok/core`
+
+The protocols alone, for a server, a CLI, a Worker or a page: `chat()` and
+`listModels()` take a connection and its credential, and run in anything with
+`fetch` and streams (Node 20+, Bun, Deno, Cloudflare Workers). Same four
+protocols, same fall-through routing, same results and error wording as the
+worker, which runs on it. Keys, storage and sign-in flows are yours.
+
+```ts
+import { chat, listModels } from '@amenophis1er/byok/core';
+
+const conn = { kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' } as const;
+const result = await chat(conn, process.env.OPENAI_API_KEY!, {
+  system: 'You answer about the shop. Use the tool.',
+  messages: [{ role: 'user', content: 'How much is the blue mug?' }],
+  tools: [{ name: 'get_price', description: '…', inputSchema: { type: 'object', properties: { product: { type: 'string' } } } }],
+});
+if (result.ok && result.stopReason === 'tool_use') { /* run result.toolCalls, append the tool messages, call again */ }
+
+const models = await listModels(conn, process.env.OPENAI_API_KEY!);
+```
+
+A connection is `{ kind, baseUrl, protocol?, model?, auth?, accountId?, issuer?, orgId? }`:
+`kind: 'anthropic'` with `baseUrl: ''` for the Messages API, `'openai-compatible'`
+with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
+`'chatgpt'` for a Codex token. The credential is the key or token, or a
+function `(method, url) => headers` that signs each request (an Ollama device
+key: `signRequest` is exported). `chat()` never throws: a failure is an
+`{ ok: false, error, retryable? }` result.
 
 ## What the host extension must declare
 
@@ -382,7 +412,7 @@ encrypted automatically on first load.
 
 ## Versioning
 
-[Semantic versioning](https://semver.org). The public API is what the four
+[Semantic versioning](https://semver.org). The public API is what the five
 entry points export; it is recorded in `api/*.api.md` and CI fails on any
 change to it that was not committed on purpose — so an additive change is a
 minor release and a breaking one a major (while on 0.x: a minor). The
@@ -394,7 +424,9 @@ in [CHANGELOG.md](CHANGELOG.md).
 ## Releasing (maintainers)
 
 Bump `version` in package.json and add the release to CHANGELOG.md, merge,
-then tag: `git tag v0.1.1 && git push --tags`. The release workflow checks the
+then tag right away: `git tag v0.1.1 && git push --tags`. Every merged version
+gets tagged before the next bump: CI refuses a PR that bumps the version while
+the one on main is not yet on npm. The release workflow checks the
 tag against the version, runs the tests and the API check, and publishes to
 npm with provenance through trusted publishing (no token stored anywhere).
 

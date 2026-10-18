@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CODEX_CLIENT_VERSION, codexCatalogModels, codexModels } from '../src/background/openai-oauth.js';
+import { CODEX_CLIENT_VERSION, codexCatalogModels, codexModels } from '../src/core/openai-oauth.js';
 
 const catalog = {
   models: [

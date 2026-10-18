@@ -4,8 +4,8 @@
  * (message_start, content_block_start/delta/stop, message_delta, message_stop).
  */
 import { describe, expect, it } from 'vitest';
-import { anthropicBody, anthropicMessages, anthropicResult } from '../src/background/chat-anthropic.js';
-import { readSse } from '../src/background/sse.js';
+import { anthropicBody, anthropicMessages, anthropicResult } from '../src/core/chat-anthropic.js';
+import { readSse } from '../src/core/sse.js';
 import type { AIChatRequest, AIMessage } from '../src/types.js';
 import { anthropicSse, streamOf } from './helpers.js';
 

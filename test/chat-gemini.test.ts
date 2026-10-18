@@ -3,8 +3,8 @@
  * streamGenerateContent SSE chunks.
  */
 import { describe, expect, it } from 'vitest';
-import { geminiBody, geminiContents, geminiResult } from '../src/background/chat-gemini.js';
-import { readSse } from '../src/background/sse.js';
+import { geminiBody, geminiContents, geminiResult } from '../src/core/chat-gemini.js';
+import { readSse } from '../src/core/sse.js';
 import type { AIChatRequest, AIMessage } from '../src/types.js';
 import { openaiSse, streamOf } from './helpers.js';
 

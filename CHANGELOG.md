@@ -3,6 +3,18 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.5
+
+- **The protocols without the browser: `@amenophis1er/byok/core`.** `chat()`
+  and `listModels()` take a connection (`kind`, `baseUrl`, `protocol`, `model`,
+  …) and its credential — a key or token, or a signer for an Ollama device key —
+  and run in anything with `fetch` and streams: Node 20+, Bun, Deno, Workers,
+  a page. Same four protocols, same fall-through routing, same results and
+  error wording as the worker, which now runs on it. Keys, storage and sign-in
+  flows stay the caller's. Nothing changes for an extension: the `background`,
+  `client`, `types` and root entry points export what they did.
+- `scripts/smoke.mjs` runs through the core, as a Node program would.
+
 ## 0.1.4
 
 - **The Gemini API as a protocol** (`protocol: 'gemini'`):

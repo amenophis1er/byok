@@ -1,6 +1,7 @@
 /**
  * Live smoke test (manual): a real two-turn tool round trip through the
- * library's own request and response code, per provider with credentials.
+ * library's core — `chat()` from `@amenophis1er/byok/core`, as a Node
+ * program would use it — per provider with credentials.
  *
  *   npm run build && node scripts/smoke.mjs
  *
@@ -13,12 +14,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { anthropicBody, anthropicResult } from '../dist/background/chat-anthropic.js';
-import { openaiBody, openaiResult } from '../dist/background/chat-openai.js';
-import { codexBody, codexResult } from '../dist/background/chat-codex.js';
-import { geminiBody, geminiResult } from '../dist/background/chat-gemini.js';
-import { signRequest } from '../dist/background/ollama-device.js';
-import { readSse } from '../dist/background/sse.js';
+import { chat, signRequest } from '../dist/core/index.js';
 
 const TOOLS = [{
   name: 'get_price',
@@ -45,42 +41,9 @@ async function ollamaPair() {
   };
 }
 
-async function openaiTurn(base, model, authorize, messages) {
-  const url = new URL(`${base}/v1/chat/completions`);
-  const body = openaiBody({ system: SYSTEM, messages, tools: TOOLS, maxTokens: 2000 }, model, base);
-  const res = await fetch(url, { method: 'POST', headers: { ...(await authorize('POST', url)), 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  return openaiResult(readSse(res.body));
-}
-
-/** The Responses API at a standard endpoint (not the Codex backend): the output cap is sent. */
-async function responsesTurn(base, model, authorize, messages) {
-  const url = new URL(`${base}/v1/responses`);
-  const body = codexBody({ system: SYSTEM, messages, tools: TOOLS, maxTokens: 2000 }, model, { maxOutputTokens: true });
-  const res = await fetch(url, { method: 'POST', headers: { ...(await authorize('POST', url)), 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  return codexResult(readSse(res.body), (failure) => failure);
-}
-
-/** The Gemini API itself, the key in x-goog-api-key. */
-async function geminiTurn(key, model, messages) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
-  const body = geminiBody({ system: SYSTEM, messages, tools: TOOLS, maxTokens: 2000 });
-  const res = await fetch(url, { method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  return geminiResult(readSse(res.body));
-}
-
-async function anthropicTurn(key, model, messages) {
-  const body = anthropicBody({ system: SYSTEM, messages, tools: TOOLS, maxTokens: 4000 }, model, [{ type: 'text', text: SYSTEM }]);
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  return anthropicResult(readSse(res.body));
-}
+/** One turn through the core, as a host would run it: the connection, its credential, the request. */
+const turnOn = (conn, credential) => (messages) =>
+  chat(conn, credential, { system: SYSTEM, messages, tools: TOOLS, maxTokens: 4000 });
 
 async function roundTrip(name, turn) {
   const messages = [{ role: 'user', content: QUESTION }];
@@ -104,17 +67,18 @@ async function run(name, available, fn) {
 }
 
 const pair = await ollamaPair();
+const env = process.env;
 await run('ollama.com (device key)', pair, () => roundTrip('ollama.com (device key)',
-  (m) => openaiTurn('https://ollama.com', process.env.SMOKE_OLLAMA_MODEL ?? 'glm-5.3-flash', (method, url) => signRequest(pair, method, url), m)));
-await run('Anthropic', process.env.ANTHROPIC_API_KEY, () => roundTrip('Anthropic',
-  (m) => anthropicTurn(process.env.ANTHROPIC_API_KEY, process.env.SMOKE_ANTHROPIC_MODEL ?? 'claude-opus-5', m)));
-await run('OpenAI', process.env.OPENAI_API_KEY, () => roundTrip('OpenAI',
-  (m) => openaiTurn('https://api.openai.com', process.env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }), m)));
-await run('OpenAI (Responses)', process.env.OPENAI_API_KEY, () => roundTrip('OpenAI (Responses)',
-  (m) => responsesTurn('https://api.openai.com', process.env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }), m)));
-await run('Gemini', process.env.GEMINI_API_KEY, () => roundTrip('Gemini',
-  (m) => geminiTurn(process.env.GEMINI_API_KEY, process.env.SMOKE_GEMINI_MODEL ?? 'gemini-3.8-flash', m)));
-await run('OpenRouter', process.env.OPENROUTER_API_KEY, () => roundTrip('OpenRouter',
-  (m) => openaiTurn('https://openrouter.ai/api', process.env.SMOKE_OPENROUTER_MODEL ?? 'openai/gpt-5.5', async () => ({ Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` }), m)));
+  turnOn({ kind: 'openai-compatible', auth: 'device-key', baseUrl: 'https://ollama.com/v1', model: env.SMOKE_OLLAMA_MODEL ?? 'glm-5.3-flash' }, (method, url) => signRequest(pair, method, url))));
+await run('Anthropic', env.ANTHROPIC_API_KEY, () => roundTrip('Anthropic',
+  turnOn({ kind: 'anthropic', baseUrl: '', model: env.SMOKE_ANTHROPIC_MODEL ?? 'claude-opus-5' }, env.ANTHROPIC_API_KEY)));
+await run('OpenAI', env.OPENAI_API_KEY, () => roundTrip('OpenAI',
+  turnOn({ kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5' }, env.OPENAI_API_KEY)));
+await run('OpenAI (Responses)', env.OPENAI_API_KEY, () => roundTrip('OpenAI (Responses)',
+  turnOn({ kind: 'openai-compatible', protocol: 'responses', baseUrl: 'https://api.openai.com/v1', model: env.SMOKE_OPENAI_MODEL ?? 'gpt-5.5' }, env.OPENAI_API_KEY)));
+await run('Gemini', env.GEMINI_API_KEY, () => roundTrip('Gemini',
+  turnOn({ kind: 'openai-compatible', protocol: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: env.SMOKE_GEMINI_MODEL ?? 'gemini-3.8-flash' }, env.GEMINI_API_KEY)));
+await run('OpenRouter', env.OPENROUTER_API_KEY, () => roundTrip('OpenRouter',
+  turnOn({ kind: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1', model: env.SMOKE_OPENROUTER_MODEL ?? 'openai/gpt-5.5' }, env.OPENROUTER_API_KEY)));
 
 process.exit(results.every(Boolean) ? 0 : 1);
