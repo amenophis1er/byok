@@ -250,6 +250,30 @@ if (result.ok && result.stopReason === 'tool_use') { /* run result.toolCalls, ap
 const models = await listModels(conn, process.env.OPENAI_API_KEY!);
 ```
 
+To forward tokens as they arrive, observe the turn; the result is the same
+with or without it:
+
+```ts
+const result = await chat(conn, key, request, {
+  onEvent: (e) => {
+    if (e.type === 'text') res.write(e.delta);                 // text as it streams
+    else if (e.type === 'tool_call_start') { /* e.id, e.name */ }
+    else if (e.type === 'tool_call_delta') { /* e.id, e.argsDelta: argument JSON as it arrives */ }
+    else if (e.type === 'tool_call_end') { /* e.id */ }
+    else if (e.type === 'usage') { /* e.usage, once the turn is done */ }
+  },
+});
+```
+
+The sign-in flows are at `@amenophis1er/byok/core/auth` for a host that owns
+storage and UI: the Claude subscription PKCE flow (`startLogin`,
+`exchangeCode`, `refreshTokens`), the ChatGPT device flow (`startDeviceLogin`,
+`pollDevice`, `exchangeDeviceCode`, `refreshOpenAiTokens`), the OpenCode device
+grant (`startOpencodeLogin`, `pollOpencode`, `refreshOpencodeTokens`) and the
+Ollama pairing (`publicKeyLine`, `connectUrl`, `whoami`, `disconnect`,
+`signRequest`). The same warning applies as in the extension: the Claude and
+ChatGPT flows are unofficial.
+
 A connection is `{ kind, baseUrl, protocol?, model?, auth?, accountId?, issuer?, orgId? }`:
 `kind: 'anthropic'` with `baseUrl: ''` for the Messages API, `'openai-compatible'`
 with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
@@ -412,7 +436,7 @@ encrypted automatically on first load.
 
 ## Versioning
 
-[Semantic versioning](https://semver.org). The public API is what the five
+[Semantic versioning](https://semver.org). The public API is what the six
 entry points export; it is recorded in `api/*.api.md` and CI fails on any
 change to it that was not committed on purpose — so an additive change is a
 minor release and a breaking one a major (while on 0.x: a minor). The

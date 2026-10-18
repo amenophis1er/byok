@@ -19,6 +19,7 @@
 
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
+import type { ChatEventSink } from './events.js';
 
 export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
 
@@ -111,9 +112,14 @@ export const codexFailure = (body: string): string => codexHttpError(0, body).re
  * `response.failed` are failures (worded by `failure`), and so is a stream
  * that ends before either.
  */
-export async function codexResult(events: AsyncIterable<SseEvent>, failure: (body: string) => string = codexFailure): Promise<AIChatResult> {
+export async function codexResult(events: AsyncIterable<SseEvent>, failure: (body: string) => string = codexFailure, onEvent?: ChatEventSink): Promise<AIChatResult> {
   const texts = new Map<string, string>();
-  const calls = new Map<string, { callId: string; name: string; args: string; gotDelta: boolean }>();
+  const calls = new Map<string, { callId: string; name: string; args: string; gotDelta: boolean; started?: boolean; ended?: boolean }>();
+  const announce = (entry: { callId: string; name: string; started?: boolean }) => {
+    if (entry.started) return;
+    entry.started = true;
+    onEvent?.({ type: 'tool_call_start', id: entry.callId, name: entry.name });
+  };
   let completed = false;
   let incomplete = false;
   let usage: AIChatResult['usage'];
@@ -135,22 +141,39 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
     const itemId = typeof event['item_id'] === 'string' ? event['item_id'] : '';
     switch (event['type']) {
       case 'response.output_item.added':
-        if (event['item']?.type === 'function_call') call(event['item']);
+        if (event['item']?.type === 'function_call') {
+          const entry = call(event['item']);
+          if (entry.name) announce(entry); // else once the name arrives, on `done`, or with the first arguments
+        }
         break;
       case 'response.output_text.delta':
-        if (typeof event['delta'] === 'string') texts.set(itemId, (texts.get(itemId) ?? '') + event['delta']);
+        if (typeof event['delta'] === 'string') {
+          texts.set(itemId, (texts.get(itemId) ?? '') + event['delta']);
+          if (event['delta']) onEvent?.({ type: 'text', delta: event['delta'] });
+        }
         break;
       case 'response.function_call_arguments.delta': {
         const entry = calls.get(itemId);
-        if (entry && typeof event['delta'] === 'string') { entry.args += event['delta']; entry.gotDelta = true; }
+        if (entry && typeof event['delta'] === 'string') {
+          entry.args += event['delta']; entry.gotDelta = true;
+          announce(entry);
+          if (event['delta']) onEvent?.({ type: 'tool_call_delta', id: entry.callId, argsDelta: event['delta'] });
+        }
         break;
       }
       case 'response.output_item.done': {
         const item = event['item'] ?? {};
         if (item.type !== 'function_call') break;
         const entry = call(item);
-        if (!entry.gotDelta && typeof item.arguments === 'string') entry.args = item.arguments;
+        if (entry.ended) break; // a repeated `done` changes nothing
         if (!entry.name && typeof item.name === 'string') entry.name = item.name;
+        announce(entry);
+        if (!entry.gotDelta && typeof item.arguments === 'string') {
+          entry.args = item.arguments;
+          if (item.arguments) onEvent?.({ type: 'tool_call_delta', id: entry.callId, argsDelta: item.arguments });
+        }
+        entry.ended = true;
+        onEvent?.({ type: 'tool_call_end', id: entry.callId });
         break;
       }
       case 'response.completed':
@@ -170,6 +193,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
     }
   }
   if (!completed) return { ok: false, error: 'The response stream ended before it finished.' };
+  for (const entry of calls.values()) if (!entry.ended) { announce(entry); onEvent?.({ type: 'tool_call_end', id: entry.callId }); }
 
   const toolCalls: AIToolCall[] = [...calls.values()].map((entry) => {
     const out: AIToolCall = { id: entry.callId, name: entry.name };

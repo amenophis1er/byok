@@ -27,6 +27,7 @@
 
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
+import type { ChatEventSink } from './events.js';
 
 type Part = Record<string, unknown>;
 interface Content { role: 'user' | 'model'; parts: Part[] }
@@ -100,8 +101,9 @@ const STOP: Record<string, AIStopReason> = {
 };
 
 /** Rebuild the turn from its SSE chunks. Anything short of a finishReason is a failure. */
-export async function geminiResult(events: AsyncIterable<SseEvent>): Promise<AIChatResult> {
+export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
   const parts: Part[] = [];
+  let announced = 0;
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
 
@@ -120,6 +122,18 @@ export async function geminiResult(events: AsyncIterable<SseEvent>): Promise<AIC
     const candidate = chunk['candidates']?.[0];
     if (!candidate) continue;
     for (const part of candidate['content']?.['parts'] ?? []) {
+      if (onEvent) {
+        if (typeof part['text'] === 'string' && !part['thought'] && part['text']) onEvent({ type: 'text', delta: part['text'] });
+        if (part['functionCall']) {
+          // Arguments arrive whole: one delta carries them, numbered as the result will number the call.
+          const fc = part['functionCall'] as { id?: string; name?: string; args?: unknown };
+          const id = typeof fc.id === 'string' && fc.id ? fc.id : `call_${announced}`;
+          announced += 1;
+          onEvent({ type: 'tool_call_start', id, name: fc.name ?? '' });
+          onEvent({ type: 'tool_call_delta', id, argsDelta: fc.args === undefined ? '{}' : JSON.stringify(fc.args) });
+          onEvent({ type: 'tool_call_end', id });
+        }
+      }
       const last = parts[parts.length - 1];
       // Text streams in pieces: join them into one part, unless a signature rides on one.
       if (typeof part['text'] === 'string' && !part['thought'] && !part['thoughtSignature'] && last && typeof last['text'] === 'string' && !last['thoughtSignature'] && !last['thought']) {

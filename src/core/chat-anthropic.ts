@@ -18,6 +18,7 @@
 
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
+import type { ChatEventSink } from './events.js';
 
 type Block = Record<string, unknown> & { type: string };
 
@@ -95,9 +96,10 @@ const STOP: Record<string, AIStopReason> = {
 };
 
 /** Rebuild the response from its SSE events. Anything short of a clean `message_stop` is a failure. */
-export async function anthropicResult(events: AsyncIterable<SseEvent>): Promise<AIChatResult> {
+export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
   const blocks: Block[] = [];
   const partialJson = new Map<number, string>();
+  const ended = new Set<number>();
   let stopReason: string | undefined;
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let finished = false;
@@ -117,7 +119,11 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>): Promise<
       }
       case 'content_block_start': {
         const block = { ...(payload['content_block'] as Block) };
-        if (block.type === 'tool_use') partialJson.set(payload['index'], '');
+        if (block.type === 'tool_use') {
+          partialJson.set(payload['index'], '');
+          onEvent?.({ type: 'tool_call_start', id: String(block['id']), name: String(block['name']) });
+        }
+        if (block.type === 'text' && typeof block['text'] === 'string' && block['text']) onEvent?.({ type: 'text', delta: block['text'] });
         blocks[payload['index']] = block;
         break;
       }
@@ -125,10 +131,24 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>): Promise<
         const block = blocks[payload['index']];
         const delta = payload['delta'] ?? {};
         if (!block) break;
-        if (delta['type'] === 'text_delta') block['text'] = `${block['text'] ?? ''}${delta['text']}`;
+        if (delta['type'] === 'text_delta') {
+          block['text'] = `${block['text'] ?? ''}${delta['text']}`;
+          if (block.type === 'text' && delta['text']) onEvent?.({ type: 'text', delta: String(delta['text']) });
+        }
         else if (delta['type'] === 'thinking_delta') block['thinking'] = `${block['thinking'] ?? ''}${delta['thinking']}`;
         else if (delta['type'] === 'signature_delta') block['signature'] = `${block['signature'] ?? ''}${delta['signature']}`;
-        else if (delta['type'] === 'input_json_delta') partialJson.set(payload['index'], `${partialJson.get(payload['index']) ?? ''}${delta['partial_json']}`);
+        else if (delta['type'] === 'input_json_delta') {
+          partialJson.set(payload['index'], `${partialJson.get(payload['index']) ?? ''}${delta['partial_json']}`);
+          if (delta['partial_json']) onEvent?.({ type: 'tool_call_delta', id: String(block['id']), argsDelta: String(delta['partial_json']) });
+        }
+        break;
+      }
+      case 'content_block_stop': {
+        const block = blocks[payload['index']];
+        if (block?.type === 'tool_use' && !ended.has(payload['index'])) {
+          ended.add(payload['index']);
+          onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
+        }
         break;
       }
       case 'message_delta':
@@ -145,6 +165,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>): Promise<
     }
   }
   if (!finished) return { ok: false, error: 'The response stream ended before it finished.' };
+  for (const [index, block] of blocks.entries()) if (block?.type === 'tool_use' && !ended.has(index)) onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
 
   const toolCalls: AIToolCall[] = [];
   const texts: string[] = [];

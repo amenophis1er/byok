@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const update = process.argv.includes('--update');
-const ENTRIES = { index: 'dist/index.d.ts', background: 'dist/background/index.d.ts', core: 'dist/core/index.d.ts', client: 'dist/client.d.ts', types: 'dist/types.d.ts' };
+const ENTRIES = { index: 'dist/index.d.ts', background: 'dist/background/index.d.ts', core: 'dist/core/index.d.ts', 'core-auth': 'dist/core/auth.d.ts', client: 'dist/client.d.ts', types: 'dist/types.d.ts' };
 
 let failed = false;
 for (const [name, entry] of Object.entries(ENTRIES)) {

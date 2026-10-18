@@ -12,6 +12,7 @@
  */
 
 export { chat, protocolCandidates, TIMED_OUT, type ChatOptions, type ChatRequest } from './chat.js';
+export type { ChatEvent, ChatEventSink } from './events.js';
 export { listModels } from './models.js';
 export { protocolOf, type Connection } from './connection.js';
 export { apiRoot, type Authorizer, type ConnectionCredential } from './http.js';

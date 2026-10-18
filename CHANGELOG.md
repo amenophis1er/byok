@@ -3,6 +3,21 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.6
+
+- **Observe a turn while it streams** (`@amenophis1er/byok/core`):
+  `ChatOptions.onEvent` gets `ChatEvent`s — `text` deltas, `tool_call_start`,
+  `tool_call_delta` (argument JSON as it arrives; whole for Gemini) and
+  `tool_call_end`, then `usage` — the same shape from the Messages, Chat
+  Completions, Responses and Gemini APIs. Nothing is reported before a protocol
+  is settled on, so a candidate that was then abandoned never shows. The
+  result is the same with or without it.
+- **The sign-in flows, from `@amenophis1er/byok/core/auth`**: the Claude
+  subscription PKCE flow, the ChatGPT device flow, the OpenCode Console device
+  grant and the Ollama connected-device pairing, with their refresh functions
+  and the Claude Code sentinel helper, for a host that owns storage and UI.
+- Nothing changes for callers of `chat()` or for extensions.
+
 ## 0.1.5
 
 - **The protocols without the browser: `@amenophis1er/byok/core`.** `chat()`

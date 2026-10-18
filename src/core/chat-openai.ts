@@ -23,6 +23,7 @@
 
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
+import type { ChatEventSink } from './events.js';
 
 /** What an assistant turn carries back: each tool call's `extra_content`, by call id. */
 interface OpenAiState {
@@ -134,9 +135,17 @@ function stripThinking(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '').trim();
 }
 
-export async function openaiResult(events: AsyncIterable<SseEvent>): Promise<AIChatResult> {
+export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
   let text = '';
-  const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown }>();
+  const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown; callId?: string }>();
+  // A call's id is settled when its arguments start (the server's, or `call_N`), and announced then — or when
+  // the turn ends; the result uses the same id, so an id arriving after the arguments began is not taken up.
+  const settle = (index: number, fragment: { id: string; name: string; callId?: string }): string => {
+    if (fragment.callId) return fragment.callId;
+    fragment.callId = fragment.id || `call_${index}`;
+    onEvent?.({ type: 'tool_call_start', id: fragment.callId, name: fragment.name });
+    return fragment.callId;
+  };
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
 
@@ -154,23 +163,37 @@ export async function openaiResult(events: AsyncIterable<SseEvent>): Promise<AIC
     const choice = chunk['choices']?.[0];
     if (!choice) continue;
     const delta = choice['delta'] ?? {};
-    if (typeof delta['content'] === 'string') text += delta['content'];
+    if (typeof delta['content'] === 'string') {
+      text += delta['content'];
+      if (delta['content']) onEvent?.({ type: 'text', delta: delta['content'] });
+    }
     for (const piece of delta['tool_calls'] ?? []) {
       const index = typeof piece['index'] === 'number' ? piece['index'] : fragments.size;
       const current = fragments.get(index) ?? { id: '', name: '', args: '' };
       if (piece['id']) current.id = piece['id'];
       if (piece['function']?.['name']) current.name += piece['function']['name'];
-      if (typeof piece['function']?.['arguments'] === 'string') current.args += piece['function']['arguments'];
+      if (typeof piece['function']?.['arguments'] === 'string') {
+        current.args += piece['function']['arguments'];
+        // Settled on the first piece of arguments proper: an empty `arguments: ''` opens a call whose name may still be coming.
+        if (piece['function']['arguments']) {
+          const id = settle(index, current); // observed or not: the result's id is fixed here
+          onEvent?.({ type: 'tool_call_delta', id, argsDelta: piece['function']['arguments'] });
+        }
+      }
       if (piece['extra_content'] !== undefined) current.extra = piece['extra_content'];
       fragments.set(index, current);
     }
     if (choice['finish_reason']) finishReason = choice['finish_reason'];
   }
   if (!finishReason) return { ok: false, error: 'The response stream ended before it finished.' };
+  for (const [index, fragment] of [...fragments.entries()].sort(([a], [b]) => a - b)) {
+    const id = settle(index, fragment); // a call that never got arguments is settled, and announced, here
+    onEvent?.({ type: 'tool_call_end', id });
+  }
 
   const extraContent: Record<string, unknown> = {};
   const toolCalls: AIToolCall[] = [...fragments.entries()].sort(([a], [b]) => a - b).map(([index, fragment]) => {
-    const call: AIToolCall = { id: fragment.id || `call_${index}`, name: fragment.name };
+    const call: AIToolCall = { id: settle(index, fragment), name: fragment.name };
     if (fragment.extra !== undefined) extraContent[call.id] = fragment.extra;
     try {
       const parsed: unknown = fragment.args.trim() === '' ? {} : JSON.parse(fragment.args);

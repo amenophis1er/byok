@@ -14,8 +14,32 @@ export type Authorizer = (method: string, url: URL) => Promise<Record<string, st
 export function chat(conn: Connection, credential: ConnectionCredential, req: ChatRequest, options?: ChatOptions): Promise<AIChatResult>;
 
 // @public (undocumented)
+export type ChatEvent = {
+    type: 'text';
+    delta: string;
+} | {
+    type: 'tool_call_start';
+    id: string;
+    name: string;
+} | {
+    type: 'tool_call_delta';
+    id: string;
+    argsDelta: string;
+} | {
+    type: 'tool_call_end';
+    id: string;
+} | {
+    type: 'usage';
+    usage: NonNullable<AIChatResult['usage']>;
+};
+
+// @public (undocumented)
+export type ChatEventSink = (event: ChatEvent) => void;
+
+// @public (undocumented)
 export interface ChatOptions {
     debug?: (label: string, data: unknown) => void;
+    onEvent?: ChatEventSink;
     settingsHint?: string;
     signal?: AbortSignal;
     timeoutMs?: number;
