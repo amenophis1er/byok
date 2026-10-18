@@ -6,23 +6,35 @@
 
 import type { ModelInfo } from '../types.js';
 import { codexModels } from './openai-oauth.js';
-import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, bearer, describeHttp, type Authorizer, type ConnectionCredential } from './http.js';
+import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, describeHttp, type Authorizer, type ConnectionCredential } from './http.js';
 import { authorizerFor, tokenOf, type Connection } from './connection.js';
 
 /** The models a connection offers, sorted by id. Throws on an HTTP failure, in words. */
 export async function listModels(conn: Connection, credential: ConnectionCredential): Promise<ModelInfo[]> {
   if (conn.kind === 'chrome-builtin') return [{ id: 'gemini-nano', name: 'Chrome on-device model' }];
   const token = tokenOf(credential);
-  if (conn.kind === 'chatgpt') return codexModels({ accessToken: token, accountId: conn.accountId });
+  const signer = typeof credential === 'function';
+  if (conn.kind === 'chatgpt') {
+    if (signer) throw new Error('ChatGPT takes a token, not a request signer.');
+    return codexModels({ accessToken: token, accountId: conn.accountId });
+  }
   if (conn.kind === 'anthropic') {
+    if (signer) throw new Error('Anthropic takes a key or token, not a request signer.');
     if (!token) throw new Error('Enter an API key first.');
     return anthropicModels(token, conn.auth === 'oauth' || conn.auth === 'setup-token');
   }
   const base = apiRoot(conn.baseUrl);
-  if (isGemini(base)) return geminiModels(token, new URL(base).origin);
+  const authorize = authorizerFor(conn, credential);
+  // Google and Cloudflare take the key in their own header; a signer, or another server's token, goes as its headers.
+  if (isGemini(base)) return geminiModels(signer || conn.issuer ? authorize : keyHeader('x-goog-api-key', token), new URL(base).origin);
   const account = workersAiAccount(base);
-  if (account) return workersAiModels(token, account);
-  return openaiModels(authorizerFor(conn, credential), base);
+  if (account) return workersAiModels(signer ? authorize : keyHeader('Authorization', token && `Bearer ${token}`), account);
+  return openaiModels(authorize, base);
+}
+
+/** One header with the key, or none when there is no key; the listing then says so. */
+function keyHeader(name: string, value: string): Authorizer | undefined {
+  return value ? async () => ({ [name]: value }) : undefined;
 }
 
 async function anthropicModels(token: string, subscription: boolean): Promise<ModelInfo[]> {
@@ -43,15 +55,15 @@ export const isGemini = (base: string): boolean => {
  * embedding, image and agent models included, which 404 on chat. Its own
  * API says what each supports: keep the generateContent ones.
  */
-async function geminiModels(apiKey: string, origin: string): Promise<ModelInfo[]> {
-  if (!apiKey) throw new Error('Enter an API key first.');
+async function geminiModels(authorize: Authorizer | undefined, origin: string): Promise<ModelInfo[]> {
+  if (!authorize) throw new Error('Enter an API key first.');
   const models: ModelInfo[] = [];
   let pageToken = '';
   do {
     const url = new URL(`${origin}/v1beta/models`);
     url.searchParams.set('pageSize', '1000');
     if (pageToken) url.searchParams.set('pageToken', pageToken);
-    const res = await fetch(url, { headers: { 'x-goog-api-key': apiKey } });
+    const res = await fetch(url, { headers: await authorize('GET', url) });
     if (!res.ok) throw new Error(await describeHttp(res));
     const json = (await res.json()) as {
       models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
@@ -82,8 +94,8 @@ export function workersAiAccount(base: string): string | undefined {
  * Workers AI has no OpenAI-style /models (405): its own model search lists
  * the account's catalog. Keep the Text Generation models, across pages.
  */
-async function workersAiModels(apiKey: string, account: string): Promise<ModelInfo[]> {
-  if (!apiKey) throw new Error('Enter an API token first.');
+async function workersAiModels(authorize: Authorizer | undefined, account: string): Promise<ModelInfo[]> {
+  if (!authorize) throw new Error('Enter an API token first.');
   const models: ModelInfo[] = [];
   const perPage = 100;
   for (let page = 1; ; page++) {
@@ -91,7 +103,7 @@ async function workersAiModels(apiKey: string, account: string): Promise<ModelIn
     url.searchParams.set('task', 'Text Generation');
     url.searchParams.set('per_page', String(perPage));
     url.searchParams.set('page', String(page));
-    const res = await fetch(url, { headers: bearer(apiKey) });
+    const res = await fetch(url, { headers: await authorize('GET', url) });
     if (!res.ok) throw new Error(await describeHttp(res));
     const json = (await res.json()) as {
       result?: { name?: string; task?: { name?: string } }[];

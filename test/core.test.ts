@@ -64,6 +64,21 @@ describe('core listModels()', () => {
     expect(await listModels({ kind: 'openai-compatible', baseUrl: 'https://api.together.xyz/v1' }, 'k')).toEqual([{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }]);
   });
 
+  it('lists Gemini models with the key in its header, or with a signer\'s headers; Anthropic and ChatGPT take no signer', async () => {
+    const fetched = vi.fn(async () => new Response(JSON.stringify({ models: [{ name: 'models/g', supportedGenerationMethods: ['generateContent'] }] })));
+    vi.stubGlobal('fetch', fetched);
+    const gemini: Connection = { kind: 'openai-compatible', protocol: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' };
+    expect(await listModels(gemini, 'g-key')).toEqual([{ id: 'g', name: 'g' }]);
+    expect((fetched.mock.calls[0] as unknown as [URL, RequestInit])[1].headers).toEqual({ 'x-goog-api-key': 'g-key' });
+    await listModels(gemini, async () => ({ Authorization: 'Signed' }));
+    expect((fetched.mock.calls[1] as unknown as [URL, RequestInit])[1].headers).toEqual({ Authorization: 'Signed' });
+    await expect(listModels(gemini, '')).rejects.toThrow('Enter an API key first.');
+    const signer = async () => ({});
+    await expect(listModels({ kind: 'anthropic', baseUrl: '' }, signer)).rejects.toThrow(/not a request signer/);
+    await expect(chat({ kind: 'anthropic', baseUrl: '', model: 'c' }, signer, req)).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/not a request signer/) });
+    await expect(chat({ kind: 'chatgpt', baseUrl: '', model: 'c' }, signer, req)).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/not a request signer/) });
+  });
+
   it('throws in words when the server refuses', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'bad key' } }), { status: 401 })));
     await expect(listModels({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1' }, 'k')).rejects.toThrow('HTTP 401: bad key');

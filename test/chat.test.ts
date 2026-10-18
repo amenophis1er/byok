@@ -194,6 +194,48 @@ describe('chat()', () => {
     expect(stored.refreshTokenEnc).toEqual({ plain: 'new-refresh' });
   });
 
+  it('refuses an already-stopped call before reading storage, and times out a token refresh that hangs', async () => {
+    seed([conn('o', { auth: 'oauth', issuer: 'opencode', baseUrl: 'https://opencode.ai/inference/v1', model: 'glm',
+      apiKeyEnc: { plain: 'old' }, refreshTokenEnc: { plain: 'r' }, expiresAt: Date.now() - 1 })], 'o');
+    const stop = new AbortController();
+    stop.abort();
+    const get = vi.spyOn(chrome.storage.local, 'get');
+    expect(await chat({ system: '', messages: [] }, { signal: stop.signal })).toEqual({ ok: false, error: 'Stopped.' });
+    expect(get).not.toHaveBeenCalled();
+    // The refresh answers, but only after the limit (the one writer must get it back: a hung refresh holds the queue).
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => setTimeout(() => resolve(new Response('{}', { status: 500 })), 40))));
+    expect(await chat({ system: '', messages: [], timeoutMs: 10 })).toEqual({ ok: false, error: 'Timed out waiting for the model.' });
+  });
+
+  it('marks a token refresh its server failed as worth retrying', async () => {
+    seed([conn('o', { auth: 'oauth', issuer: 'opencode', baseUrl: 'https://opencode.ai/inference/v1', model: 'glm',
+      apiKeyEnc: { plain: 'old' }, refreshTokenEnc: { plain: 'r' }, expiresAt: Date.now() - 1 })], 'o');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('down', { status: 503 })));
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: expect.stringMatching(/refresh failed \(503\)/), retryable: true });
+  });
+
+  describe('listing models', () => {
+    const list = (message: Record<string, unknown>) => new Promise((resolve) => createAiMessageHandler({ prefix: 't' })({ type: 't:ai-list-models', ...message } as never, resolve));
+
+    it('answers for the on-device model without touching the saved sign-in', async () => {
+      seed([conn('d', { kind: 'chrome-builtin', auth: 'device-key', baseUrl: '', model: 'gemini-nano' })], 'd');
+      vi.stubGlobal('fetch', vi.fn());
+      expect(await list({ id: 'd', kind: 'chrome-builtin', baseUrl: '' })).toEqual({ ok: true, data: [{ id: 'gemini-nano', name: 'Chrome on-device model' }] });
+    });
+
+    it('tries a key typed in the form as a plain Bearer, not under the saved OpenCode organization', async () => {
+      seed([conn('o', { auth: 'oauth', issuer: 'opencode', orgId: 'org_1', baseUrl: 'https://opencode.ai/inference/v1', apiKeyEnc: { plain: 'access' }, expiresAt: Date.now() + 3_600_000 })], 'o');
+      const fetched = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'm' }] })));
+      vi.stubGlobal('fetch', fetched);
+      expect(await list({ id: 'o', kind: 'openai-compatible', baseUrl: 'https://other.example/v1', apiKey: 'typed' })).toEqual({ ok: true, data: [{ id: 'm', name: 'm' }] });
+      const init = (fetched.mock.calls[0] as unknown as [URL, RequestInit])[1];
+      expect(init.headers).toEqual({ Authorization: 'Bearer typed' });
+      // Without a typed key, the saved sign-in's headers.
+      await list({ id: 'o', kind: 'openai-compatible', baseUrl: 'https://opencode.ai/inference/v1' });
+      expect((fetched.mock.calls[1] as unknown as [URL, RequestInit])[1].headers).toMatchObject({ Authorization: 'Bearer access', 'x-opencode-org-id': 'org_1' });
+    });
+  });
+
   it('answers the ai-chat message op with the same result', async () => {
     seed([conn('a')], 'a');
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse(toolCallStream)));

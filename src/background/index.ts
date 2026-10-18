@@ -706,12 +706,18 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
   try {
     const cfg = await load();
     const stored = req.id ? cfg.connections.find((c) => c.id === req.id) : undefined;
+    if (req.kind === 'chrome-builtin') return { ok: true, data: await coreListModels({ kind: 'chrome-builtin', baseUrl: '' }, '') };
     // The Codex catalog, for the signed-in account; the curated list when it cannot be fetched.
     if (req.kind === 'chatgpt') {
       return { ok: true, data: stored ? await codexModelsFor(stored) : fallbackCodexModels() };
     }
-    // The form's kind and base URL, which may be edited; the saved sign-in's auth and credential.
-    const conn: Connection = { ...stored, kind: req.kind, baseUrl: req.kind === 'openai-compatible' ? req.baseUrl : '' };
+    // The form's kind and base URL, which may be edited, and the saved sign-in's auth. A key typed in
+    // the form is tried as itself, a plain Bearer, not under the saved sign-in's issuer.
+    const conn: Connection = {
+      kind: req.kind, baseUrl: req.kind === 'openai-compatible' ? req.baseUrl : '',
+      ...(stored ? { id: stored.id, auth: stored.auth, accountId: stored.accountId } : {}),
+      ...(stored && !req.apiKey ? { issuer: stored.issuer, orgId: stored.orgId } : {}),
+    };
     const credential = req.apiKey || (stored ? await credentialFor(stored) : '');
     return { ok: true, data: await coreListModels(conn, credential) };
   } catch (error) {
@@ -755,6 +761,7 @@ async function complete(req: AICompleteRequest): Promise<AIResult<string>> {
  * itself is the core's `chat()`, with the connection's credential.
  */
 export async function chat(req: AIChatRequest, options: { signal?: AbortSignal } = {}): Promise<AIChatResult> {
+  if (options.signal?.aborted) return { ok: false, error: 'Stopped.' };
   try {
     const cfg = await load();
     const id = req.connectionId ?? cfg.activeId;
@@ -768,15 +775,34 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
       throw new Error('The AI connection was changed during this run. Start a new run to use the new settings.');
     }
     if (conn.kind === 'chrome-builtin') throw new Error('The on-device model has no tool calling.');
-    const credential = await credentialFor(conn);
+    // The limit covers the token refresh as well as the turn.
+    const started = Date.now();
+    const limit = req.timeoutMs ?? CHAT_TIMEOUT_MS;
+    const credential = await withTimeout(credentialFor(conn), limit);
     const debug = await debugOn();
-    return await coreChat(conn, credential, req, { signal: options.signal, debug: debug ? dlog : undefined, settingsHint: opts.settingsHint });
+    return await coreChat(conn, credential, req, {
+      signal: options.signal, timeoutMs: Math.max(1, limit - (Date.now() - started)),
+      debug: debug ? dlog : undefined, settingsHint: opts.settingsHint,
+    });
   } catch (error) {
     if (options.signal?.aborted) return { ok: false, error: 'Stopped.' };
-    // The token refresh could not reach its server: nothing was acted on.
+    if (error === TIMEOUT) return { ok: false, error: TIMED_OUT };
+    // The token refresh could not reach its server, or its server failed: nothing was acted on.
     if (error instanceof TypeError) return { ok: false, error: errMessage(error), retryable: true };
-    return { ok: false, error: errMessage(error) };
+    const message = errMessage(error);
+    return { ok: false, error: message, ...(/\b(5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {}) };
   }
+}
+
+/** Whole-request default for chat(), token refresh included; the stream itself keeps the worker's fetch alive. */
+const CHAT_TIMEOUT_MS = 120_000;
+const TIMEOUT = Symbol('timeout');
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(TIMEOUT), ms); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /** What a connection authenticates with: its (fresh) token, or for an Ollama device key a signer. */

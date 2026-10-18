@@ -18,6 +18,9 @@ import { withClaudeCodeSystem } from './anthropic-oauth.js';
 import { ANTHROPIC_BASE, ANTHROPIC_VERSION, anthropicHeaders, apiRoot, describeHttpText, errMessage, type ConnectionCredential } from './http.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
 
+/** A turn's request. The worker's `connectionId`/`connectionRevision` pin a stored connection; here the connection is given. */
+export type ChatRequest = Omit<AIChatRequest, 'connectionId' | 'connectionRevision'>;
+
 export interface ChatOptions {
   /** Stops the turn; the result is then `Stopped.`. */
   signal?: AbortSignal;
@@ -37,7 +40,7 @@ export const TIMED_OUT = 'Timed out waiting for the model.';
  * after the provider's terminal event. Never throws: every failure is an
  * `{ ok: false }` result, `retryable` when nothing was acted on.
  */
-export async function chat(conn: Connection, credential: ConnectionCredential, req: AIChatRequest, options: ChatOptions = {}): Promise<AIChatResult> {
+export async function chat(conn: Connection, credential: ConnectionCredential, req: ChatRequest, options: ChatOptions = {}): Promise<AIChatResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), req.timeoutMs ?? options.timeoutMs ?? CHAT_TIMEOUT_MS);
   const onAbort = () => controller.abort(options.signal?.reason);
@@ -130,7 +133,7 @@ interface Turn {
   conn: Connection;
   credential: ConnectionCredential;
   model: string;
-  req: AIChatRequest;
+  req: ChatRequest;
   signal: AbortSignal;
   debug?: (label: string, data: unknown) => void;
   hint: string;
@@ -188,6 +191,7 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
   const native = conn.kind === 'anthropic';
   const subscription = native && (conn.auth === 'oauth' || conn.auth === 'setup-token');
   const token = tokenOf(credential);
+  if (native && typeof credential === 'function') throw new Error('Anthropic takes a key or token, not a request signer.');
   if (native && !token) throw new Error(`The AI connection has no key.${t.hint}`);
   const system = subscription ? withClaudeCodeSystem(req.system).system : req.system ? [{ type: 'text' as const, text: req.system }] : [];
   const url = new URL(native ? `${ANTHROPIC_BASE}/v1/messages` : `${apiRoot(conn.baseUrl)}/messages`);
@@ -204,6 +208,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
   const { conn, credential, req } = t;
   const codex = conn.kind === 'chatgpt';
   const token = tokenOf(credential);
+  if (codex && typeof credential === 'function') throw new Error('ChatGPT takes a token, not a request signer.');
   if (codex && !token) throw new Error(`The ChatGPT sign-in is missing.${t.hint}`);
   const url = new URL(codex ? CODEX_RESPONSES_URL : `${apiRoot(conn.baseUrl)}/responses`);
   const headers = codex
@@ -256,7 +261,7 @@ function networkError(conn: Pick<Connection, 'kind' | 'baseUrl'>): string {
   let host = '';
   try { host = new URL(conn.baseUrl).hostname; } catch { /* no URL */ }
   if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
-    return `Could not reach the model server on this computer (${conn.baseUrl}). Check that it is running; it may also need CORS opened for the extension, e.g. OLLAMA_ORIGINS.`;
+    return `Could not reach the model server on this computer (${conn.baseUrl}). Check that it is running; from a browser it may also need CORS opened, e.g. OLLAMA_ORIGINS.`;
   }
   return `The connection to ${host || 'the provider'} dropped (network error).`;
 }

@@ -11,7 +11,7 @@ export function apiRoot(baseUrl: string): string;
 export type Authorizer = (method: string, url: URL) => Promise<Record<string, string>>;
 
 // @public
-export function chat(conn: Connection, credential: ConnectionCredential, req: AIChatRequest, options?: ChatOptions): Promise<AIChatResult>;
+export function chat(conn: Connection, credential: ConnectionCredential, req: ChatRequest, options?: ChatOptions): Promise<AIChatResult>;
 
 // @public (undocumented)
 export interface ChatOptions {
@@ -20,6 +20,9 @@ export interface ChatOptions {
     signal?: AbortSignal;
     timeoutMs?: number;
 }
+
+// @public
+export type ChatRequest = Omit<AIChatRequest, 'connectionId' | 'connectionRevision'>;
 
 // @public
 export const CODEX_CLIENT_VERSION = "0.162.0";
