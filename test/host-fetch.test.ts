@@ -163,6 +163,13 @@ describe('the sign-in flows with the host fetch', () => {
 });
 
 describe('without the option', () => {
+  it('the global fetch is itself a Fetch, so a host passes it straight or wrapped', () => {
+    const direct: Fetch = globalThis.fetch;
+    const wrapped: Fetch = (input, init) => globalThis.fetch(input, { ...init, keepalive: false });
+    expect(typeof direct).toBe('function');
+    expect(typeof wrapped).toBe('function');
+  });
+
   it('the global fetch is called, and looked up at call time', async () => {
     const fetch = vi.fn(async () => sse(answer));
     vi.stubGlobal('fetch', fetch);

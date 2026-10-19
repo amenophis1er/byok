@@ -331,13 +331,16 @@ connection per request (`node:https` with `agent: false`) or undici with a
 tuned `keepAliveTimeout`:
 
 ```ts
-import { Agent, fetch as undiciFetch } from 'undici';
+import { Agent } from 'undici';
 import { chat, type Fetch } from '@amenophis1er/byok/core';
 
+// Node's global fetch takes an undici dispatcher in its init (not in the DOM types, hence the cast).
 const dispatcher = new Agent({ keepAliveTimeout: 10_000 });
-const fetch: Fetch = (input, init) => undiciFetch(input, { ...init, dispatcher });
+const fetch: Fetch = (input, init) => globalThis.fetch(input, { ...init, dispatcher } as RequestInit);
 const result = await chat(conn, key, request, { fetch, signal });
 ```
+
+The global `fetch` of Node, Bun, Deno and the browser is itself a `Fetch`.
 
 A connection is `{ kind, baseUrl, protocol?, model?, auth?, accountId?, issuer?, orgId? }`:
 `kind: 'anthropic'` with `baseUrl: ''` for the Messages API, `'openai-compatible'`
