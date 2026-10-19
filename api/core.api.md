@@ -81,6 +81,9 @@ export class HttpError extends Error {
 }
 
 // @public
+export function isNetworkFailure(result: AIChatResult): boolean;
+
+// @public
 export function listModels(conn: Connection, credential: ConnectionCredential): Promise<ModelInfo[]>;
 
 // @public
@@ -110,11 +113,35 @@ export function rateLimitOf(status: number, headers: Headers | undefined, body: 
 // @public
 export type RateLimitWindow = NonNullable<AIChatResult['quota']>;
 
+// @public (undocumented)
+export interface RetryNotice {
+    attempt: number;
+    network: boolean;
+    result: AIChatResult;
+    waitMs: number;
+}
+
+// @public (undocumented)
+export interface RetryOptions {
+    baseDelayMs?: number;
+    maxAttempts?: number;
+    maxDelayMs?: number;
+    maxNetworkAttempts?: number;
+    maxWaitMs?: number;
+    onRetry?: (notice: RetryNotice) => void;
+    random?: () => number;
+    signal?: AbortSignal;
+    sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
 // @public
 export function signRequest(pair: CryptoKeyPair, method: string, url: URL): Promise<Record<string, string>>;
 
 // @public (undocumented)
 export const TIMED_OUT = "Timed out waiting for the model.";
+
+// @public
+export function withRetry(attempt: (attempt: number) => Promise<AIChatResult>, options?: RetryOptions): Promise<AIChatResult>;
 
 // (No @packageDocumentation comment for this package)
 

@@ -273,6 +273,25 @@ const result = await chat(conn, key, request, {
 });
 ```
 
+To try again on failures where nothing was acted on, wrap the turn; `chat()`
+itself stays single-shot:
+
+```ts
+import { withRetry } from '@amenophis1er/byok/core';
+
+const result = await withRetry((attempt) => chat(conn, key, request, { signal }), {
+  signal,                                   // honoured between attempts: Stopped.
+  maxAttempts: 4,                           // server failures: 5xx, overloaded, a short 429
+  maxNetworkAttempts: 6,                    // a dropped connection: nothing was sent
+  onRetry: ({ attempt, waitMs, result }) => status(`Retrying in ${Math.round(waitMs / 1000)} s: ${result.error}`),
+});
+```
+
+It waits as the provider asked (`retryAfterMs`), else exponentially with
+jitter (1 s, 2 s, 4 s, … up to `maxDelayMs`), and never retries a day window,
+a wait over `maxWaitMs` (60 s), or a turn that already produced text or a
+tool call. `sleep` and `random` are injectable for tests.
+
 The sign-in flows are at `@amenophis1er/byok/core/auth` for a host that owns
 storage and UI: the Claude subscription PKCE flow (`startLogin`,
 `exchangeCode`, `refreshTokens`), the ChatGPT device flow (`startDeviceLogin`,
