@@ -20,6 +20,15 @@ while on 0.x, a breaking change bumps the minor version.
   carries `retryAfterMs` and `quota` on a rate-limited listing.
 - `rateLimitOf(status, headers, body)` is exported from the core for a host
   that reads provider responses itself.
+- **`withRetry()`, the loop on top of `chat()`** (#24, `@amenophis1er/byok/core`):
+  `withRetry((attempt) => chat(conn, credential, request, { signal }), { signal, onRetry })`
+  tries again only what `retryable` already means — nothing was acted on —
+  waiting as the provider asked (`retryAfterMs`) or else exponentially with
+  jitter. It never retries a day window, a wait over `maxWaitMs` (60 s), or a
+  turn that produced text or a tool call; a dropped connection gets its own,
+  longer budget (`maxNetworkAttempts`, 6) than a server failure
+  (`maxAttempts`, 4); the signal is honoured between attempts (`Stopped.`).
+  `sleep` and `random` are injectable. `chat()` itself stays single-shot.
 
 ## 0.1.6
 
