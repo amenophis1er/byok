@@ -1,7 +1,7 @@
 /** What is known about a model before asking it: the tables, each listing's own fields, and getModelInfo. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getModelInfo, knownModelInfo, listModels, type Connection } from '../src/core/index.js';
-import { geminiFacts, mergeFacts, openaiListingFacts, workersAiFacts } from '../src/core/model-info.js';
+import { anthropicFacts, geminiFacts, mergeFacts, openaiListingFacts, workersAiFacts } from '../src/core/model-info.js';
 
 const ALL = { tools: true, images: true, pdf: true };
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -24,8 +24,21 @@ describe('the tables', () => {
     expect(knownModelInfo(anthropic, 'claude-3-5-haiku-20241022')).toEqual({ contextWindow: 200_000, maxOutputTokens: 8192, capabilities: { tools: true } });
     expect(knownModelInfo(anthropic, 'claude-3-opus-20240229')).toMatchObject({ maxOutputTokens: 4096, capabilities: { pdf: false } });
     // A Claude the table does not know: nothing, not a guess.
-    expect(knownModelInfo(anthropic, 'claude-opus-5-5')).toEqual({});
+    expect(knownModelInfo(anthropic, 'claude-opus-6')).toEqual({});
     expect(knownModelInfo(anthropic, 'something-else')).toEqual({});
+  });
+
+  it('know the Claude 5 generation and the 1M models of the 4.x line, as the model pages say', () => {
+    const five = { contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: { tools: true, images: true } };
+    for (const id of ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-mythos-5-1']) {
+      expect(knownModelInfo(anthropic, id), id).toEqual(five);
+    }
+    for (const id of ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6']) {
+      expect(knownModelInfo(anthropic, id), id).toEqual({ contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: ALL });
+    }
+    expect(knownModelInfo(anthropic, 'claude-opus-4-5-20251101')).toEqual({ contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL });
+    expect(knownModelInfo(anthropic, 'claude-haiku-4-5-20251001')).toEqual({ contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL });
+    expect(knownModelInfo(anthropic, 'claude-opus-55')).toEqual({});
   });
 
   it('know the OpenAI families, for api.openai.com and a ChatGPT sign-in, the Codex slugs included', () => {
@@ -61,6 +74,15 @@ describe('the tables', () => {
 });
 
 describe('each listing\'s own fields', () => {
+  it('Anthropic: the limits and inputs the Models API says, nothing for a null or missing field', () => {
+    const entry = { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5', max_input_tokens: 1000000, max_tokens: 128000,
+      capabilities: { image_input: { supported: true }, pdf_input: { supported: false }, thinking: { supported: true } } };
+    expect(anthropicFacts(entry)).toEqual({ contextWindow: 1000000, maxOutputTokens: 128000, capabilities: { images: true, pdf: false } });
+    expect(anthropicFacts({ id: 'claude-3-opus-20240229', max_input_tokens: null, max_tokens: null, capabilities: null })).toEqual({});
+    expect(anthropicFacts({ id: 'x', capabilities: { image_input: { supported: 'yes' }, pdf_input: 7 } })).toEqual({});
+    expect(anthropicFacts({ id: 'x' })).toEqual({});
+  });
+
   it('Gemini: the token limits, and what the family takes', () => {
     expect(geminiFacts('gemini-2.5-pro', { inputTokenLimit: 1048576, outputTokenLimit: 65536 })).toEqual({ contextWindow: 1048576, maxOutputTokens: 65536, capabilities: ALL });
     // Gemma and the image/speech/live models: no tools, no PDFs; images unsaid. Another family: nothing.
@@ -105,9 +127,18 @@ describe('each listing\'s own fields', () => {
 
 describe('listModels carries what is known', () => {
   it('under each listed model\'s own fields, field by field', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'claude-sonnet-4-5-20250929', display_name: 'Claude Sonnet 4.5' }, { id: 'claude-future' }] })));
+    vi.stubGlobal('fetch', vi.fn(async () => json({ data: [
+      { id: 'claude-sonnet-4-5-20250929', display_name: 'Claude Sonnet 4.5' },
+      { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5', max_input_tokens: 1000000, max_tokens: 128000, capabilities: { image_input: { supported: true }, pdf_input: { supported: true } } },
+      { id: 'claude-opus-6', display_name: 'Claude Opus 6', max_input_tokens: 2000000, max_tokens: 256000, capabilities: { image_input: { supported: true }, pdf_input: { supported: true } } },
+      { id: 'claude-future' },
+    ] })));
     expect(await listModels({ kind: 'anthropic', baseUrl: '' }, 'sk')).toEqual([
       { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL },
+      // The listing says PDFs, the table says tools: both.
+      { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: ALL },
+      // A Claude newer than the table is known once listed.
+      { id: 'claude-opus-6', name: 'Claude Opus 6', contextWindow: 2_000_000, maxOutputTokens: 256_000, capabilities: { images: true, pdf: true } },
       { id: 'claude-future', name: 'claude-future' },
     ]);
     vi.stubGlobal('fetch', vi.fn(async () => json({ data: [
@@ -143,7 +174,9 @@ describe('getModelInfo', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(await getModelInfo(gemini, 'g-key', 'gemini-9')).toEqual({ id: 'gemini-9', name: 'gemini-9' });
     vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'claude-sonnet-4-5' }] })));
-    expect(await getModelInfo({ kind: 'anthropic', baseUrl: '' }, 'sk', 'claude-opus-5-5')).toEqual({ id: 'claude-opus-5-5', name: 'claude-opus-5-5' });
+    expect(await getModelInfo({ kind: 'anthropic', baseUrl: '' }, 'sk', 'claude-opus-6')).toEqual({ id: 'claude-opus-6', name: 'claude-opus-6' });
+    // A current Claude needs no request.
+    expect(await getModelInfo({ kind: 'anthropic', baseUrl: '' }, 'sk', 'claude-fable-5-1')).toMatchObject({ contextWindow: 1_000_000, maxOutputTokens: 128_000 });
     await expect(getModelInfo({ kind: 'anthropic', baseUrl: '' }, 'sk')).rejects.toThrow('No model given');
   });
 });

@@ -4,11 +4,12 @@
  * takes (`capabilities`), so a caller can keep a transcript under the limit
  * or leave a PDF out instead of learning from a 400 after the data went.
  *
- * Providers whose listing says so (Gemini's `models.list`, OpenRouter's and
- * vLLM's `/models`, Workers AI's search) are read in `listModels()`. Anthropic's
- * and OpenAI's listings say nothing, so their families are tabled here, as
- * published at this release; a model that is not in the table carries
- * nothing. Each field is absent when not known, never guessed, and what a
+ * Providers whose listing says so (Anthropic's `/v1/models` since the 5
+ * generation, Gemini's `models.list`, OpenRouter's and vLLM's `/models`,
+ * Workers AI's search) are read in `listModels()`. OpenAI's listing says
+ * nothing, and Anthropic's did not always, so their families are tabled
+ * here, as published at this release; a model that is not in the table
+ * carries nothing. Each field is absent when not known, never guessed, and what a
  * listing says wins over the table, field by field.
  */
 
@@ -24,8 +25,18 @@ const TEXT_ONLY: ModelCapabilities = { tools: false, images: false, pdf: false }
 
 type Rule = [pattern: RegExp, facts: ModelFacts];
 
-/** Anthropic's families: a 200k window; the output cap grew with each generation. Haiku 3.5 shipped text-only. */
+/**
+ * Anthropic's families, as the models overview and each model's page say
+ * (platform.claude.com/docs/en/models/overview, read 2026-10-19): the 5
+ * generation (Fable, Mythos, Opus, Sonnet, Haiku) and the 4.6–4.8 models have
+ * a 1M window and 128K output; Opus 4.5 and before, 200k, with an output cap
+ * that grew by generation. Haiku 3.5 shipped text-only. Whether a 5 model
+ * takes PDFs is left to the Models API, which says (`pdf_input`).
+ */
 const CLAUDE: Rule[] = [
+  [/^claude-(?:fable|mythos|opus|sonnet|haiku)-5(?:-|$)/, { contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: { tools: true, images: true } }],
+  [/^claude-opus-4-[678](?:-|$)/, { contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: ALL }],
+  [/^claude-sonnet-4-6(?:-|$)/, { contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: ALL }],
   [/^claude-opus-4(?:-[01])?(?:-\d{8})?$/, { contextWindow: 200_000, maxOutputTokens: 32_000, capabilities: ALL }],
   [/^claude-opus-4(?:-|\.|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
   [/^claude-(?:sonnet|haiku)-4(?:-|\.|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
@@ -80,6 +91,30 @@ export function knownModelInfo(conn: Pick<Connection, 'kind' | 'baseUrl' | 'issu
 export function mergeFacts(table: ModelFacts, listing: ModelFacts): ModelFacts {
   const capabilities = table.capabilities || listing.capabilities ? { capabilities: { ...table.capabilities, ...listing.capabilities } } : {};
   return { ...table, ...listing, ...capabilities };
+}
+
+/**
+ * Anthropic's `/v1/models` entry, which says since the 5 generation: the
+ * window (`max_input_tokens`), the output cap (`max_tokens`) and whether the
+ * model takes images and PDFs (`capabilities.image_input` / `pdf_input`).
+ * Nothing for a field that is missing or null.
+ */
+export function anthropicFacts(m: Record<string, unknown>): ModelFacts {
+  const capabilities = m['capabilities'];
+  const supported = (name: string): boolean | undefined => {
+    if (!capabilities || typeof capabilities !== 'object') return undefined;
+    const entry = (capabilities as Record<string, unknown>)[name];
+    const value = entry && typeof entry === 'object' ? (entry as Record<string, unknown>)['supported'] : undefined;
+    return typeof value === 'boolean' ? value : undefined;
+  };
+  const images = supported('image_input');
+  const pdf = supported('pdf_input');
+  const takes: ModelCapabilities = { ...(images !== undefined ? { images } : {}), ...(pdf !== undefined ? { pdf } : {}) };
+  return {
+    ...count('contextWindow', m['max_input_tokens']),
+    ...count('maxOutputTokens', m['max_tokens']),
+    ...(Object.keys(takes).length > 0 ? { capabilities: takes } : {}),
+  };
 }
 
 /**

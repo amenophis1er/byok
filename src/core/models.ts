@@ -8,7 +8,7 @@ import type { ModelInfo } from '../types.js';
 import { codexModels } from './openai-oauth.js';
 import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, httpFailure, type Authorizer, type ConnectionCredential } from './http.js';
 import { authorizerFor, tokenOf, type Connection } from './connection.js';
-import { geminiFacts, knownModelInfo, mergeFacts, openaiListingFacts, workersAiFacts } from './model-info.js';
+import { anthropicFacts, geminiFacts, knownModelInfo, mergeFacts, openaiListingFacts, workersAiFacts } from './model-info.js';
 
 /**
  * The models a connection offers, sorted by id, each with what is known
@@ -69,8 +69,9 @@ async function anthropicModels(token: string, subscription: boolean): Promise<Mo
     headers: anthropicHeaders(token, subscription),
   });
   if (!res.ok) throw await httpFailure(res);
-  const json = (await res.json()) as { data?: { id: string; display_name?: string }[] };
-  return (json.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id }));
+  // Since the 5 generation the listing says each model's limits and inputs; those win over the table.
+  const json = (await res.json()) as { data?: Array<Record<string, unknown> & { id: string; display_name?: string }> };
+  return (json.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id, ...anthropicFacts(m) }));
 }
 
 export const isGemini = (base: string): boolean => {
