@@ -361,7 +361,32 @@ export interface AIResult<T> {
   quota?: 'minute' | 'day';
 }
 
-export type ModelInfo = { id: string; name: string };
+/** What a model takes, each when known: tool calling, image parts, PDF `document` parts. */
+export interface ModelCapabilities {
+  /** Tool calling. */
+  tools?: boolean;
+  /** `image` content parts. */
+  images?: boolean;
+  /** `document` content parts (PDF). */
+  pdf?: boolean;
+}
+
+/**
+ * A model a connection offers. Beyond `id` and `name`, what is known about it
+ * — from the provider's listing (Gemini, OpenRouter, vLLM, Workers AI) or a
+ * built-in table (Anthropic, OpenAI) — and absent when not known, never
+ * guessed.
+ */
+export type ModelInfo = {
+  id: string;
+  name: string;
+  /** Input tokens the model accepts, when known. */
+  contextWindow?: number;
+  /** Output tokens one turn may produce, when known. */
+  maxOutputTokens?: number;
+  /** What the model takes, when known. */
+  capabilities?: ModelCapabilities;
+};
 
 /**
  * The version of the messages between `createAiClient` (UI) and the worker's

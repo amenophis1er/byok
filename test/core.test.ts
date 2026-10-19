@@ -121,7 +121,7 @@ describe('core listModels()', () => {
     const fetched = vi.fn(async () => new Response(JSON.stringify({ models: [{ name: 'models/g', supportedGenerationMethods: ['generateContent'] }] })));
     vi.stubGlobal('fetch', fetched);
     const gemini: Connection = { kind: 'openai-compatible', protocol: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' };
-    expect(await listModels(gemini, 'g-key')).toEqual([{ id: 'g', name: 'g' }]);
+    expect(await listModels(gemini, 'g-key')).toMatchObject([{ id: 'g', name: 'g' }]);
     expect((fetched.mock.calls[0] as unknown as [URL, RequestInit])[1].headers).toEqual({ 'x-goog-api-key': 'g-key' });
     await listModels(gemini, async () => ({ Authorization: 'Signed' }));
     expect((fetched.mock.calls[1] as unknown as [URL, RequestInit])[1].headers).toEqual({ Authorization: 'Signed' });

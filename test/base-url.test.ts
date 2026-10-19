@@ -134,7 +134,7 @@ describe('listModels', () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(json({
         models: [
-          { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+          { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'], inputTokenLimit: 1048576, outputTokenLimit: 65536 },
           { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] },
           { name: 'models/imagen-4.0-generate-001', supportedGenerationMethods: ['predict'] },
           { name: 'models/antigravity-preview', supportedGenerationMethods: [] },
@@ -143,9 +143,11 @@ describe('listModels', () => {
       }))
       .mockResolvedValueOnce(json({ models: [{ name: 'models/gemini-2.5-pro', supportedGenerationMethods: ['generateContent'] }] }));
     vi.stubGlobal('fetch', fetch);
+    // Each with its token limits when listed, and what the family takes.
+    const takes = { tools: true, images: true, pdf: true };
     expect(await list('https://generativelanguage.googleapis.com/v1beta/openai')).toEqual({ ok: true, data: [
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-      { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1048576, maxOutputTokens: 65536, capabilities: takes },
+      { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', capabilities: takes },
     ] });
     const [first, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
     expect(`${first.origin}${first.pathname}`).toBe('https://generativelanguage.googleapis.com/v1beta/models');

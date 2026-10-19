@@ -29,6 +29,17 @@ while on 0.x, a breaking change bumps the minor version.
   longer budget (`maxNetworkAttempts`, 6) than a server failure
   (`maxAttempts`, 4); the signal is honoured between attempts (`Stopped.`).
   `sleep` and `random` are injectable. `chat()` itself stays single-shot.
+- **What is known about a model, before asking it** (#23). `ModelInfo` gains
+  `contextWindow`, `maxOutputTokens` and `capabilities: { tools?, images?, pdf? }`,
+  each when known and never guessed: from the listing where it says (Gemini's
+  token limits; OpenRouter's `context_length`, `max_completion_tokens`,
+  `input_modalities`, `supported_parameters`; vLLM's `max_model_len`; Workers
+  AI's `context_window` / `function_calling` properties), else from a built-in
+  table of the Anthropic and OpenAI families (the Codex slugs included), else
+  absent, and a model the tables do not know carries nothing. `getModelInfo(conn, credential, modelId?)` answers for one model —
+  the bound one by default — from the table without a request when it knows,
+  else from the listing. `knownModelInfo(conn, id)` is the table alone. The
+  worker's `ai-list-models` answer carries the new fields.
 
 ## 0.1.6
 

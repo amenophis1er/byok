@@ -273,6 +273,20 @@ const result = await chat(conn, key, request, {
 });
 ```
 
+A listed model carries what is known about it — `contextWindow`,
+`maxOutputTokens`, `capabilities: { tools?, images?, pdf? }` — from the
+listing where it says (Gemini, OpenRouter, vLLM, Workers AI) or a built-in
+table of the Anthropic and OpenAI families, and nothing where nothing is
+known. Ask about one model without listing them all:
+
+```ts
+import { getModelInfo } from '@amenophis1er/byok/core';
+
+const info = await getModelInfo(conn, key);         // the bound model; or pass an id
+if (info.capabilities?.pdf === false) { /* send the text, not the PDF */ }
+if (info.contextWindow && estimate(messages) > info.contextWindow) { /* trim first */ }
+```
+
 To try again on failures where nothing was acted on, wrap the turn; `chat()`
 itself stays single-shot:
 

@@ -73,6 +73,9 @@ export interface Connection {
 export type ConnectionCredential = string | Authorizer;
 
 // @public
+export function getModelInfo(conn: Connection, credential: ConnectionCredential, modelId?: string | undefined): Promise<ModelInfo>;
+
+// @public
 export class HttpError extends Error {
     constructor(status: number, message: string, rateLimit?: RateLimit);
     readonly quota?: RateLimitWindow;
@@ -84,7 +87,13 @@ export class HttpError extends Error {
 export function isNetworkFailure(result: AIChatResult): boolean;
 
 // @public
+export function knownModelInfo(conn: Pick<Connection, 'kind' | 'baseUrl' | 'issuer'>, id: string): ModelFacts;
+
+// @public
 export function listModels(conn: Connection, credential: ConnectionCredential): Promise<ModelInfo[]>;
+
+// @public
+export type ModelFacts = Omit<ModelInfo, 'id' | 'name'>;
 
 // @public
 export const OLLAMA_BASE = "https://ollama.com";
