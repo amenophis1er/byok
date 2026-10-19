@@ -141,7 +141,7 @@ export function signRequest(pair: CryptoKeyPair, method: string, url: URL): Prom
 export const TIMED_OUT = "Timed out waiting for the model.";
 
 // @public
-export function withRetry(attempt: (attempt: number) => Promise<AIChatResult>, options?: RetryOptions): Promise<AIChatResult>;
+export function withRetry(attempt: (n: number) => Promise<AIChatResult>, options?: RetryOptions): Promise<AIChatResult>;
 
 // (No @packageDocumentation comment for this package)
 
