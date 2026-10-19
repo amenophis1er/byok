@@ -20,8 +20,10 @@
 
 import type { AIChatResult } from '../types.js';
 
+/** A rate-limit window: a minute window heals by itself, a day window not before tomorrow. */
 export type RateLimitWindow = NonNullable<AIChatResult['quota']>;
 
+/** What a failed response said about coming back: each field only when the provider said. */
 export interface RateLimit {
   /** How long the provider asked us to wait, when it said. */
   retryAfterMs?: number;
@@ -76,8 +78,8 @@ function bodyWait(json: Record<string, unknown> | undefined, body: string): numb
 
 /**
  * OpenAI's and Anthropic's per-window headers: the wait is the latest reset
- * among the windows that ran out (remaining 0); when no window is marked, on
- * a 429, the latest reset given.
+ * among the windows that ran out (remaining 0); without remaining counts, the
+ * latest reset given.
  */
 function resetWindows(get: (name: string) => string | null, now: number): number | undefined {
   const windows: Array<{ remaining: string | null; reset: string | null; parse: (value: string) => number | undefined }> = [];
@@ -88,8 +90,10 @@ function resetWindows(get: (name: string) => string | null, now: number): number
     windows.push({ remaining: get(`anthropic-ratelimit-${name}-remaining`), reset: get(`anthropic-ratelimit-${name}-reset`), parse: (v) => instant(v, now) });
   }
   const given = windows.filter((w) => w.reset !== null);
-  const exhausted = given.filter((w) => w.remaining !== null && Number(w.remaining) === 0);
-  const waits = (exhausted.length > 0 ? exhausted : given).map((w) => w.parse(w.reset!)).filter((ms): ms is number => ms !== undefined);
+  // With remaining counts given, only a window at 0 ran out; a healthy window's reset says nothing about the wait.
+  const marked = given.some((w) => w.remaining !== null);
+  const pool = marked ? given.filter((w) => Number(w.remaining) === 0) : given;
+  const waits = pool.map((w) => w.parse(w.reset!)).filter((ms): ms is number => ms !== undefined);
   return waits.length > 0 ? Math.max(...waits) : undefined;
 }
 
@@ -114,7 +118,7 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Ra
   const text = names.join(' ');
   if (/per[_ ]?day|daily|\b[RT]PD\b/i.test(text)) return 'day';
   if (/per[_ ]?minute|per[_ ]?min\b|\b[RT]PM\b/i.test(text)) return 'minute';
-  if (/\b(?:requests|tokens|input tokens|output tokens)?\s*per day\b|\bdaily (?:limit|quota)\b|\b[RT]PD\b/i.test(body)) return 'day';
+  if (/\bper day\b|\bdaily (?:limit|quota)\b|\b[RT]PD\b/i.test(body)) return 'day';
   if (/\bper min(?:ute)?\b|\b(?:[RT]PM|ITPM|OTPM)\b/i.test(body)) return 'minute';
   return undefined;
 }

@@ -67,6 +67,7 @@ export function anthropicHeaders(token: string, subscription: boolean): Record<s
  * result (`error`, `retryAfterMs`, `quota`, `retryable`).
  */
 export class HttpError extends Error {
+  /** The HTTP status the server answered with. */
   readonly status: number;
   /** How long the server asked us to wait, when it said. */
   readonly retryAfterMs?: number;

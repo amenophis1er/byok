@@ -77,7 +77,6 @@ export class HttpError extends Error {
     constructor(status: number, message: string, rateLimit?: RateLimit);
     readonly quota?: RateLimitWindow;
     readonly retryAfterMs?: number;
-    // (undocumented)
     readonly status: number;
 }
 
@@ -99,7 +98,7 @@ export function protocolCandidates(conn: Connection, model: string): Protocol[];
 // @public
 export function protocolOf(conn: Pick<Connection, 'kind' | 'protocol'>): Protocol;
 
-// @public (undocumented)
+// @public
 export interface RateLimit {
     quota?: RateLimitWindow;
     retryAfterMs?: number;
@@ -108,7 +107,7 @@ export interface RateLimit {
 // @public
 export function rateLimitOf(status: number, headers: Headers | undefined, body: string, now?: number): RateLimit;
 
-// @public (undocumented)
+// @public
 export type RateLimitWindow = NonNullable<AIChatResult['quota']>;
 
 // @public

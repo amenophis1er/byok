@@ -100,9 +100,10 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     if (error instanceof SinkError) return { ok: false, error: error.message };
     // A dropped connection or a server-side failure: nothing was acted on, so the caller may send the same request again.
     if (error instanceof TypeError) return { ok: false, error: networkError(conn), retryable: true };
-    // The server refused: a 5xx is worth another try, and so is a rate limit that lifts within the minute. It says when.
+    // The server refused: a 5xx (or an overloaded one) is worth another try, and so is a rate limit that lifts within the minute. It says when.
     if (error instanceof HttpError) {
-      return { ok: false, error: error.message, ...rateLimitFields(error), ...(error.status >= 500 || shortRateLimit(error) ? { retryable: true } : {}) };
+      const retryable = error.status >= 500 || shortRateLimit(error) || /overloaded|backend failed/i.test(error.message);
+      return { ok: false, error: error.message, ...rateLimitFields(error), ...(retryable ? { retryable: true } : {}) };
     }
     const message = errMessage(error);
     return { ok: false, error: message, ...(/^HTTP (5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {}) };
@@ -151,13 +152,13 @@ class ProtocolMismatch extends Error {}
 
 /**
  * An HTTP failure as an error: a protocol mismatch when the server says so,
- * else an `HttpError` with the text in words (`describe` words it) and what
- * the server said about coming back.
+ * else an `HttpError` with the text in words and what the server said about
+ * coming back.
  */
-function httpError(res: Response, text: string, describe: (status: number, text: string) => string = describeHttpText): Error {
+function httpError(res: Response, text: string): Error {
+  const message = describeHttpText(res.status, text);
   const mismatch = res.status === 400 && (/does not support this protocol/i.test(text) || /use \/v1\/responses/i.test(text));
-  if (mismatch) return new ProtocolMismatch(describeHttpText(res.status, text));
-  return new HttpError(res.status, describe(res.status, text), rateLimitOf(res.status, res.headers, text));
+  return mismatch ? new ProtocolMismatch(message) : new HttpError(res.status, message, rateLimitOf(res.status, res.headers, text));
 }
 
 /** A failure event in a Responses stream from a server other than ChatGPT, in its own words. */
@@ -256,7 +257,8 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
   const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex }));
   if (!res.ok) {
     const text = await res.text();
-    throw codex ? httpError(res, text, codexHttpError) : httpError(res, text);
+    // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
+    throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text)) : httpError(res, text);
   }
   return codexResult(readSse(bodyOf(res)), codex ? codexFailure : providerFailure, t.onEvent);
 }

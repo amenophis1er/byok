@@ -24,6 +24,9 @@ describe('rateLimitOf', () => {
     // The words name the wait before the reset headers do.
     expect(rateLimitOf(429, headers, body, NOW)).toEqual({ retryAfterMs: 20_000, quota: 'minute' });
     expect(rateLimitOf(429, headers, '', NOW)).toEqual({ retryAfterMs: 360_000 });
+    // A healthy window's reset says nothing about the wait; without remaining counts, the latest reset given does.
+    expect(rateLimitOf(429, h({ 'x-ratelimit-remaining-requests': '5', 'x-ratelimit-reset-requests': '6m0s' }), '', NOW)).toEqual({});
+    expect(rateLimitOf(429, h({ 'x-ratelimit-reset-requests': '6m0s', 'x-ratelimit-reset-tokens': '8s' }), '', NOW)).toEqual({ retryAfterMs: 360_000 });
     const daily = JSON.stringify({ error: { message: 'Rate limit reached for gpt-5-mini on requests per day (RPD): Limit 200, Used 200, Requested 1. Please try again in 7h12m3s.' } });
     expect(rateLimitOf(429, undefined, daily, NOW)).toEqual({ retryAfterMs: 7 * 3_600_000 + 12 * 60_000 + 3000, quota: 'day' });
   });
