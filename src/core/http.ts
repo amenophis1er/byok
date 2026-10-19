@@ -4,6 +4,7 @@
  */
 
 import { normalizeBaseUrl } from '../types.js';
+import { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
 
 export const ANTHROPIC_BASE = 'https://api.anthropic.com';
 export const ANTHROPIC_VERSION = '2023-06-01';
@@ -57,6 +58,48 @@ export function anthropicHeaders(token: string, subscription: boolean): Record<s
         'anthropic-version': ANTHROPIC_VERSION,
         'anthropic-dangerous-direct-browser-access': 'true',
       };
+}
+
+/**
+ * A request the server refused, with what it said about coming back: the
+ * status, and on a rate limit the wait it asked for and the window that ran
+ * out, when it said. `listModels()` throws it; `chat()` folds it into its
+ * result (`error`, `retryAfterMs`, `quota`, `retryable`).
+ */
+export class HttpError extends Error {
+  readonly status: number;
+  /** How long the server asked us to wait, when it said. */
+  readonly retryAfterMs?: number;
+  /** Which rate-limit window ran out, when the server said. */
+  readonly quota?: RateLimitWindow;
+  constructor(status: number, message: string, rateLimit: RateLimit = {}) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+    if (rateLimit.retryAfterMs !== undefined) this.retryAfterMs = rateLimit.retryAfterMs;
+    if (rateLimit.quota !== undefined) this.quota = rateLimit.quota;
+  }
+}
+
+/** A failed response as an `HttpError`: the status and body in words, and what it said about coming back. */
+export async function httpFailure(res: Response, message?: string): Promise<HttpError> {
+  const text = await res.text();
+  return new HttpError(res.status, message ?? describeHttpText(res.status, text), rateLimitOf(res.status, res.headers, text));
+}
+
+/** The rate-limit fields of a failure, only those it carries, for spreading into a result. */
+export function rateLimitFields(error: HttpError): RateLimit {
+  return { ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}), ...(error.quota !== undefined ? { quota: error.quota } : {}) };
+}
+
+/**
+ * A 429 worth one more try: the provider asked for a short wait (a minute at
+ * most), or named a minute window, which heals by itself. A day window is
+ * gone until tomorrow, a long or unknown wait is the caller's to decide.
+ */
+export function shortRateLimit(error: HttpError): boolean {
+  if (error.status !== 429 || error.quota === 'day') return false;
+  return error.retryAfterMs !== undefined ? error.retryAfterMs <= 60_000 : error.quota === 'minute';
 }
 
 export async function describeHttp(res: Response): Promise<string> {

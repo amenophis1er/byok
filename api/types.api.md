@@ -95,7 +95,9 @@ export interface AIChatResult {
     ok: boolean;
     // (undocumented)
     providerState?: unknown;
+    quota?: 'minute' | 'day';
     retryable?: boolean;
+    retryAfterMs?: number;
     // (undocumented)
     stopReason?: AIStopReason;
     // (undocumented)
@@ -262,6 +264,8 @@ export interface AIResult<T> {
     error?: string;
     // (undocumented)
     ok: boolean;
+    quota?: 'minute' | 'day';
+    retryAfterMs?: number;
 }
 
 // @public (undocumented)

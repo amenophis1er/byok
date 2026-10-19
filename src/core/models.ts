@@ -6,10 +6,10 @@
 
 import type { ModelInfo } from '../types.js';
 import { codexModels } from './openai-oauth.js';
-import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, describeHttp, type Authorizer, type ConnectionCredential } from './http.js';
+import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, httpFailure, type Authorizer, type ConnectionCredential } from './http.js';
 import { authorizerFor, tokenOf, type Connection } from './connection.js';
 
-/** The models a connection offers, sorted by id. Throws on an HTTP failure, in words. */
+/** The models a connection offers, sorted by id. Throws on an HTTP failure, in words: an `HttpError` with the status and, on a rate limit, `retryAfterMs` and `quota` when the server said. */
 export async function listModels(conn: Connection, credential: ConnectionCredential): Promise<ModelInfo[]> {
   if (conn.kind === 'chrome-builtin') return [{ id: 'gemini-nano', name: 'Chrome on-device model' }];
   const token = tokenOf(credential);
@@ -41,7 +41,7 @@ async function anthropicModels(token: string, subscription: boolean): Promise<Mo
   const res = await fetch(`${ANTHROPIC_BASE}/v1/models?limit=100`, {
     headers: anthropicHeaders(token, subscription),
   });
-  if (!res.ok) throw new Error(await describeHttp(res));
+  if (!res.ok) throw await httpFailure(res);
   const json = (await res.json()) as { data?: { id: string; display_name?: string }[] };
   return (json.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id }));
 }
@@ -64,7 +64,7 @@ async function geminiModels(authorize: Authorizer | undefined, origin: string): 
     url.searchParams.set('pageSize', '1000');
     if (pageToken) url.searchParams.set('pageToken', pageToken);
     const res = await fetch(url, { headers: await authorize('GET', url) });
-    if (!res.ok) throw new Error(await describeHttp(res));
+    if (!res.ok) throw await httpFailure(res);
     const json = (await res.json()) as {
       models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
       nextPageToken?: string;
@@ -104,7 +104,7 @@ async function workersAiModels(authorize: Authorizer | undefined, account: strin
     url.searchParams.set('per_page', String(perPage));
     url.searchParams.set('page', String(page));
     const res = await fetch(url, { headers: await authorize('GET', url) });
-    if (!res.ok) throw new Error(await describeHttp(res));
+    if (!res.ok) throw await httpFailure(res);
     const json = (await res.json()) as {
       result?: { name?: string; task?: { name?: string } }[];
       result_info?: { total_count?: number };
@@ -122,7 +122,7 @@ async function workersAiModels(authorize: Authorizer | undefined, account: strin
 async function openaiModels(authorize: Authorizer, base: string): Promise<ModelInfo[]> {
   const url = new URL(`${base}/models`);
   const res = await fetch(url, { headers: await authorize('GET', url) });
-  if (!res.ok) throw new Error(await describeHttp(res));
+  if (!res.ok) throw await httpFailure(res);
   // `{ data: [...] }`, or a bare array (Together).
   const json = (await res.json()) as { data?: { id: string }[] } | { id: string }[];
   return (Array.isArray(json) ? json : (json.data ?? []))

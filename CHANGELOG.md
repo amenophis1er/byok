@@ -3,6 +3,24 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.7
+
+- **A rate limit says when to come back** (#22). A failed `chat()` result
+  carries `retryAfterMs` — how long the provider asked us to wait — and
+  `quota: 'minute' | 'day'` — which window ran out — whenever the provider
+  said: the standard `Retry-After` and OpenAI's `retry-after-ms`, OpenAI's
+  `x-ratelimit-reset-*` for the window at 0, Anthropic's
+  `anthropic-ratelimit-*-reset`, Gemini's `RetryInfo` and `QuotaFailure`
+  details, ChatGPT's `resets_in_seconds`, and the words ("try again in 6m0s",
+  "requests per day"). A 429 that lifts within the minute is `retryable`; a
+  day window never is. A 5xx carries its `Retry-After` too. Nothing is
+  inferred: a failure that said nothing carries nothing.
+- `listModels()` from the core throws an `HttpError` (exported) with the same
+  `status`, `retryAfterMs` and `quota`; the worker's `ai-list-models` answer
+  carries `retryAfterMs` and `quota` on a rate-limited listing.
+- `rateLimitOf(status, headers, body)` is exported from the core for a host
+  that reads provider responses itself.
+
 ## 0.1.6
 
 - **Observe a turn while it streams** (`@amenophis1er/byok/core`):

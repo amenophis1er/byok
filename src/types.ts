@@ -334,8 +334,16 @@ export interface AIChatResult {
   stopReason?: AIStopReason;
   usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
   error?: string;
-  /** A failure worth one more try: the connection dropped, or the provider's server failed (5xx, overloaded). */
+  /**
+   * A failure worth one more try: the connection dropped, the provider's
+   * server failed (5xx, overloaded), or a rate limit lifts within the minute
+   * (a 429 with a wait of a minute at most, or on a minute window).
+   */
   retryable?: boolean;
+  /** How long the provider asked us to wait before trying again, when it said (`Retry-After`, OpenAI's reset headers, Gemini's `RetryInfo`). */
+  retryAfterMs?: number;
+  /** Which rate-limit window ran out, when the provider said: a minute window heals by itself, a day window not before tomorrow. */
+  quota?: 'minute' | 'day';
 }
 
 /** `${prefix}:ai-chat` — the same request as `chat()`, for hosts whose caller is a page. */
@@ -347,6 +355,10 @@ export interface AIResult<T> {
   ok: boolean;
   data?: T;
   error?: string;
+  /** On a rate-limited `listModels`: how long the provider asked us to wait, when it said. */
+  retryAfterMs?: number;
+  /** On a rate-limited `listModels`: which window ran out, when the provider said. */
+  quota?: 'minute' | 'day';
 }
 
 export type ModelInfo = { id: string; name: string };

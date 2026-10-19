@@ -37,7 +37,7 @@ import {
 import { chat as coreChat, TIMED_OUT } from '../core/chat.js';
 import { listModels as coreListModels } from '../core/models.js';
 import { protocolOf, type Connection } from '../core/connection.js';
-import { apiRoot, type ConnectionCredential } from '../core/http.js';
+import { HttpError, apiRoot, rateLimitFields, type ConnectionCredential } from '../core/http.js';
 import {
   CONNECT_POLL_MS,
   CONNECT_TIMEOUT_MS,
@@ -721,6 +721,8 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
     const credential = req.apiKey || (stored ? await credentialFor(stored) : '');
     return { ok: true, data: await coreListModels(conn, credential) };
   } catch (error) {
+    // A rate-limited listing says when to come back, as a chat turn does.
+    if (error instanceof HttpError) return { ok: false, error: error.message, ...rateLimitFields(error) };
     return { ok: false, error: errMessage(error) };
   }
 }

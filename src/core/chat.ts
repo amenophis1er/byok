@@ -15,7 +15,8 @@ import { geminiBody, geminiResult } from './chat-gemini.js';
 import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import { withClaudeCodeSystem } from './anthropic-oauth.js';
-import { ANTHROPIC_BASE, ANTHROPIC_VERSION, anthropicHeaders, apiRoot, describeHttpText, errMessage, type ConnectionCredential } from './http.js';
+import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot, describeHttpText, errMessage, rateLimitFields, shortRateLimit, type ConnectionCredential } from './http.js';
+import { rateLimitOf } from './rate-limit.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
 import type { ChatEventSink } from './events.js';
 
@@ -99,6 +100,10 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     if (error instanceof SinkError) return { ok: false, error: error.message };
     // A dropped connection or a server-side failure: nothing was acted on, so the caller may send the same request again.
     if (error instanceof TypeError) return { ok: false, error: networkError(conn), retryable: true };
+    // The server refused: a 5xx is worth another try, and so is a rate limit that lifts within the minute. It says when.
+    if (error instanceof HttpError) {
+      return { ok: false, error: error.message, ...rateLimitFields(error), ...(error.status >= 500 || shortRateLimit(error) ? { retryable: true } : {}) };
+    }
     const message = errMessage(error);
     return { ok: false, error: message, ...(/^HTTP (5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {}) };
   } finally {
@@ -144,11 +149,15 @@ export function protocolCandidates(conn: Connection, model: string): Protocol[] 
 /** The server's answer to a request in a protocol it does not serve that model on. */
 class ProtocolMismatch extends Error {}
 
-/** An HTTP failure as an error: a protocol mismatch when the server says so, else the text in words. */
-function httpError(status: number, text: string): Error {
-  const message = describeHttpText(status, text);
-  const mismatch = status === 400 && (/does not support this protocol/i.test(text) || /use \/v1\/responses/i.test(text));
-  return mismatch ? new ProtocolMismatch(message) : new Error(message);
+/**
+ * An HTTP failure as an error: a protocol mismatch when the server says so,
+ * else an `HttpError` with the text in words (`describe` words it) and what
+ * the server said about coming back.
+ */
+function httpError(res: Response, text: string, describe: (status: number, text: string) => string = describeHttpText): Error {
+  const mismatch = res.status === 400 && (/does not support this protocol/i.test(text) || /use \/v1\/responses/i.test(text));
+  if (mismatch) return new ProtocolMismatch(describeHttpText(res.status, text));
+  return new HttpError(res.status, describe(res.status, text), rateLimitOf(res.status, res.headers, text));
 }
 
 /** A failure event in a Responses stream from a server other than ChatGPT, in its own words. */
@@ -207,7 +216,7 @@ async function geminiTurn(t: Turn): Promise<AIChatResult> {
     ? await authorizerFor(conn, credential)('POST', url)
     : token ? { 'x-goog-api-key': token } : {};
   const res = await post(t, url, headers, geminiBody(t.req));
-  if (!res.ok) throw httpError(res.status, await res.text());
+  if (!res.ok) throw httpError(res, await res.text());
   return geminiResult(readSse(bodyOf(res)), t.onEvent);
 }
 
@@ -225,7 +234,7 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
     ? anthropicHeaders(token, subscription)
     : { ...(await authorizerFor(conn, credential)('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
   const res = await post(t, url, headers, anthropicBody(req, t.model, system));
-  if (!res.ok) throw httpError(res.status, await res.text());
+  if (!res.ok) throw httpError(res, await res.text());
   return anthropicResult(readSse(bodyOf(res)), t.onEvent);
 }
 
@@ -247,7 +256,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
   const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex }));
   if (!res.ok) {
     const text = await res.text();
-    throw codex ? new Error(codexHttpError(res.status, text)) : httpError(res.status, text);
+    throw codex ? httpError(res, text, codexHttpError) : httpError(res, text);
   }
   return codexResult(readSse(bodyOf(res)), codex ? codexFailure : providerFailure, t.onEvent);
 }
@@ -266,7 +275,7 @@ async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
   while (!res.ok) {
     const text = await res.text();
     const field = rejectedField(res.status, text);
-    if (!field || omit.has(field)) throw httpError(res.status, text);
+    if (!field || omit.has(field)) throw httpError(res, text);
     omit.add(field);
     res = await send();
   }
