@@ -104,6 +104,8 @@ export interface AiHandlerOptions {
   openConsentTab?: boolean;
   /** The client id the OpenCode Console sign-in sends: your extension's name, shown on its approval page. Default 'byok'. */
   opencodeClientId?: string;
+  /** The `originator` header ChatGPT (Codex) requests carry, naming the client. Default `codex_cli_rs`, the Codex CLI's. */
+  codexOriginator?: string;
 }
 
 interface Resolved {
@@ -114,6 +116,7 @@ interface Resolved {
   settingsHint: string;
   openConsentTab: boolean;
   opencodeClientId: string;
+  codexOriginator?: string;
 }
 
 let opts: Resolved = resolve({});
@@ -127,6 +130,7 @@ function resolve(o: AiHandlerOptions): Resolved {
     settingsHint: o.settingsHint ?? 'Add one in the extension settings.',
     openConsentTab: o.openConsentTab ?? true,
     opencodeClientId: o.opencodeClientId ?? 'byok',
+    ...(o.codexOriginator ? { codexOriginator: o.codexOriginator } : {}),
   };
 }
 
@@ -517,7 +521,7 @@ async function chatgptLoginPoll(label: string): Promise<AIResult<AIChatgptPoll>>
     });
     await chrome.storage.session.remove(CHATGPT_PENDING);
     // The catalog's first model is the one the backend puts forward for this account.
-    const catalog = await codexModels({ accessToken: tokens.accessToken, accountId: tokens.accountId }).catch(() => []);
+    const catalog = await codexModels({ accessToken: tokens.accessToken, accountId: tokens.accountId, originator: opts.codexOriginator }).catch(() => []);
     const conn: StoredConnection = {
       id: crypto.randomUUID(),
       kind: 'chatgpt',
@@ -782,7 +786,7 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     const limit = req.timeoutMs ?? CHAT_TIMEOUT_MS;
     const credential = await withTimeout(credentialFor(conn), limit);
     const debug = await debugOn();
-    return await coreChat(conn, credential, req, {
+    return await coreChat({ ...conn, originator: opts.codexOriginator }, credential, req, {
       signal: options.signal, timeoutMs: Math.max(1, limit - (Date.now() - started)),
       debug: debug ? dlog : undefined, settingsHint: opts.settingsHint,
     });
@@ -822,7 +826,7 @@ function fallbackCodexModels(): ModelInfo[] {
 /** The Codex catalog for a ChatGPT connection, or the curated list when the request fails (the picker never comes up empty). */
 async function codexModelsFor(conn: StoredConnection): Promise<ModelInfo[]> {
   try {
-    return await codexModels({ accessToken: await freshToken(conn.id), accountId: conn.accountId });
+    return await codexModels({ accessToken: await freshToken(conn.id), accountId: conn.accountId, originator: opts.codexOriginator });
   } catch (error) {
     console.warn('Codex model catalog unavailable, using the built-in list:', errMessage(error));
     return fallbackCodexModels();

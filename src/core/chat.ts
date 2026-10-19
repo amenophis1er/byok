@@ -15,6 +15,7 @@ import { geminiBody, geminiResult } from './chat-gemini.js';
 import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import { withClaudeCodeSystem } from './anthropic-oauth.js';
+import { CODEX_ORIGINATOR } from './openai-oauth.js';
 import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot, describeHttpText, errMessage, fetchOf, rateLimitFields, shortRateLimit, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
 import { rateLimitOf } from './rate-limit.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
@@ -252,7 +253,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
     ? {
         authorization: `Bearer ${token}`,
         ...(conn.accountId ? { 'chatgpt-account-id': conn.accountId } : {}),
-        originator: 'codex_cli_rs', 'openai-beta': 'responses=experimental',
+        originator: conn.originator || CODEX_ORIGINATOR, 'openai-beta': 'responses=experimental',
       }
     : await authorizerFor(conn, credential)('POST', url);
   const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex }));

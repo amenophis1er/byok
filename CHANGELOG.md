@@ -13,6 +13,12 @@ while on 0.x, a breaking change bumps the minor version.
   `Fetch` and `RequestOptions` are exported. For a proxy, a custom CA,
   logging, a test double, or a Node transport that does not reuse a stale
   keep-alive socket. Nothing changes for extensions.
+- **The Codex originator is the host's to set** (#25): `Connection.originator`
+  names the client in the `originator` header of a ChatGPT turn and of the
+  Codex catalog request (`codexModels`'s `originator` too), default
+  `codex_cli_rs` as before (`CODEX_ORIGINATOR`, exported). The worker takes
+  it as `AiHandlerOptions.codexOriginator`. The device-flow and refresh calls
+  never carried one, and still do not.
 
 ## 0.1.8
 

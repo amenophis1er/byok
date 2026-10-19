@@ -20,5 +20,5 @@ export { apiRoot, HttpError, type Authorizer, type ConnectionCredential, type Fe
 export { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
 export { withRetry, isNetworkFailure, type RetryOptions, type RetryNotice } from './retry.js';
 export { OPENCODE_BASE, opencodeHeaders } from './opencode-oauth.js';
-export { CODEX_MODELS, CODEX_CLIENT_VERSION } from './openai-oauth.js';
+export { CODEX_MODELS, CODEX_CLIENT_VERSION, CODEX_ORIGINATOR } from './openai-oauth.js';
 export { signRequest, OLLAMA_BASE } from './ollama-device.js';

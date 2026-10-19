@@ -25,7 +25,7 @@ export async function listModels(conn: Connection, credential: ConnectionCredent
   const signer = typeof credential === 'function';
   if (conn.kind === 'chatgpt') {
     if (signer) throw new Error('ChatGPT takes a token, not a request signer.');
-    return withKnown(conn, await codexModels({ accessToken: token, accountId: conn.accountId }, options));
+    return withKnown(conn, await codexModels({ accessToken: token, accountId: conn.accountId, originator: conn.originator }, options));
   }
   if (conn.kind === 'anthropic') {
     if (signer) throw new Error('Anthropic takes a key or token, not a request signer.');

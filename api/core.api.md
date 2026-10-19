@@ -54,6 +54,9 @@ export const CODEX_CLIENT_VERSION = "0.162.0";
 // @public
 export const CODEX_MODELS: string[];
 
+// @public
+export const CODEX_ORIGINATOR = "codex_cli_rs";
+
 // @public (undocumented)
 export interface Connection {
     accountId?: string;
@@ -66,6 +69,7 @@ export interface Connection {
     label?: string;
     model?: string;
     orgId?: string;
+    originator?: string;
     protocol?: Protocol;
 }
 
