@@ -15,6 +15,8 @@ describe('the tables', () => {
   it('know the Claude families, and that every Claude takes tools, images and PDFs', () => {
     expect(knownModelInfo(anthropic, 'claude-sonnet-4-5-20250929')).toEqual({ contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL });
     expect(knownModelInfo(anthropic, 'claude-opus-4-1-20250805')).toEqual({ contextWindow: 200_000, maxOutputTokens: 32_000, capabilities: ALL });
+    expect(knownModelInfo(anthropic, 'claude-opus-4-20250514')).toMatchObject({ maxOutputTokens: 32_000 });
+    expect(knownModelInfo(anthropic, 'claude-opus-4-0')).toMatchObject({ maxOutputTokens: 32_000 });
     expect(knownModelInfo(anthropic, 'claude-opus-4-5')).toMatchObject({ maxOutputTokens: 64_000 });
     expect(knownModelInfo(anthropic, 'claude-haiku-4-5')).toMatchObject({ maxOutputTokens: 64_000 });
     expect(knownModelInfo(anthropic, 'claude-3-5-haiku-20241022')).toEqual({ contextWindow: 200_000, maxOutputTokens: 8192, capabilities: ALL });
@@ -30,6 +32,7 @@ describe('the tables', () => {
     expect(knownModelInfo(openai, 'gpt-4.1-mini')).toMatchObject({ contextWindow: 1_047_576, maxOutputTokens: 32_768 });
     expect(knownModelInfo(openai, 'gpt-4o-mini')).toMatchObject({ contextWindow: 128_000, maxOutputTokens: 16_384 });
     expect(knownModelInfo(openai, 'o3-mini')).toMatchObject({ capabilities: { tools: true, images: false, pdf: false } });
+    expect(knownModelInfo(openai, 'o1-preview')).toMatchObject({ maxOutputTokens: 32_768, capabilities: { tools: false } });
     expect(knownModelInfo(openai, 'o4-mini')).toMatchObject({ contextWindow: 200_000, capabilities: ALL });
     expect(knownModelInfo(openai, 'gpt-3.5-turbo')).toMatchObject({ contextWindow: 16_385, capabilities: { images: false } });
     expect(knownModelInfo(openai, 'text-embedding-3-small')).toEqual({});
@@ -48,8 +51,9 @@ describe('the tables', () => {
 describe('each listing\'s own fields', () => {
   it('Gemini: the token limits, and what the family takes', () => {
     expect(geminiFacts('gemini-2.5-pro', { inputTokenLimit: 1048576, outputTokenLimit: 65536 })).toEqual({ contextWindow: 1048576, maxOutputTokens: 65536, capabilities: ALL });
-    expect(geminiFacts('gemma-3-27b-it', { inputTokenLimit: 131072, outputTokenLimit: 8192 })).toMatchObject({ capabilities: { tools: false, images: true, pdf: false } });
-    expect(geminiFacts('gemini-2.0-flash-preview-image-generation', {})).toEqual({ capabilities: { tools: false, images: true, pdf: false } });
+    // Gemma and the image/speech/live models: no tools, no PDFs; images unsaid.
+    expect(geminiFacts('gemma-3-27b-it', { inputTokenLimit: 131072, outputTokenLimit: 8192 })).toEqual({ contextWindow: 131072, maxOutputTokens: 8192, capabilities: { tools: false, pdf: false } });
+    expect(geminiFacts('gemini-2.0-flash-preview-image-generation', {})).toEqual({ capabilities: { tools: false, pdf: false } });
     // Limits that are not counts are left out.
     expect(geminiFacts('g', { inputTokenLimit: 'lots', outputTokenLimit: -1 })).toEqual({ capabilities: ALL });
   });

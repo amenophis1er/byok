@@ -25,7 +25,7 @@ type Rule = [pattern: RegExp, facts: ModelFacts];
 
 /** Anthropic's families: a 200k window; the output cap grew with each generation. */
 const CLAUDE: Rule[] = [
-  [/^claude-opus-4-[01](?:-|$)/, { contextWindow: 200_000, maxOutputTokens: 32_000, capabilities: ALL }],
+  [/^claude-opus-4(?:-[01])?(?:-\d{8})?$/, { contextWindow: 200_000, maxOutputTokens: 32_000, capabilities: ALL }],
   [/^claude-opus-4(?:-|\.|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
   [/^claude-(?:sonnet|haiku)-4(?:-|\.|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
   [/^claude-3-7-sonnet/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
@@ -40,6 +40,7 @@ const GPT: Rule[] = [
   [/^gpt-4\.1/, { contextWindow: 1_047_576, maxOutputTokens: 32_768, capabilities: ALL }],
   [/^(?:gpt-4o|chatgpt-4o)/, { contextWindow: 128_000, maxOutputTokens: 16_384, capabilities: ALL }],
   [/^o1-mini/, { contextWindow: 128_000, maxOutputTokens: 65_536, capabilities: { tools: false, images: false, pdf: false } }],
+  [/^o1-preview/, { contextWindow: 128_000, maxOutputTokens: 32_768, capabilities: { tools: false, images: false, pdf: false } }],
   [/^o3-mini/, { contextWindow: 200_000, maxOutputTokens: 100_000, capabilities: TEXT_TOOLS }],
   [/^o[134](?:-|$)/, { contextWindow: 200_000, maxOutputTokens: 100_000, capabilities: ALL }],
   [/^gpt-4-turbo/, { contextWindow: 128_000, maxOutputTokens: 4096, capabilities: { tools: true, images: true, pdf: false } }],
@@ -69,13 +70,18 @@ export function knownModelInfo(conn: Pick<Connection, 'kind' | 'baseUrl' | 'issu
   return {};
 }
 
-/** Gemini's `models.list` entry: its token limits, and what the family takes (Gemma and the image/audio models take no tools or PDFs). */
+/**
+ * Gemini's `models.list` entry: its token limits, and what the family takes.
+ * A Gemini model takes tools, images and PDFs; Gemma and the image, speech
+ * and live models take no tools or PDFs, and whether they take images is
+ * theirs to say (so it is not said).
+ */
 export function geminiFacts(id: string, m: { inputTokenLimit?: unknown; outputTokenLimit?: unknown }): ModelFacts {
-  const plain = !/gemma|image|tts|audio|live/i.test(id);
+  const gemini = /^gemini-/.test(id) && !/image|tts|audio|live/i.test(id);
   return {
     ...count('contextWindow', m.inputTokenLimit),
     ...count('maxOutputTokens', m.outputTokenLimit),
-    capabilities: { tools: plain, images: true, pdf: plain },
+    capabilities: gemini ? ALL : { tools: false, pdf: false },
   };
 }
 

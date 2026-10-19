@@ -353,11 +353,8 @@ export function defaultLabel(kind: ProviderKind, baseUrl: string): string;
 
 // @public
 export interface ModelCapabilities {
-    // (undocumented)
     images?: boolean;
-    // (undocumented)
     pdf?: boolean;
-    // (undocumented)
     tools?: boolean;
 }
 

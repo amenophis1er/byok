@@ -363,8 +363,11 @@ export interface AIResult<T> {
 
 /** What a model takes, each when known: tool calling, image parts, PDF `document` parts. */
 export interface ModelCapabilities {
+  /** Tool calling. */
   tools?: boolean;
+  /** `image` content parts. */
   images?: boolean;
+  /** `document` content parts (PDF). */
   pdf?: boolean;
 }
 
