@@ -37,7 +37,7 @@ export type ChatEvent = {
 export type ChatEventSink = (event: ChatEvent) => void;
 
 // @public (undocumented)
-export interface ChatOptions {
+export interface ChatOptions extends RequestOptions {
     debug?: (label: string, data: unknown) => void;
     onEvent?: ChatEventSink;
     settingsHint?: string;
@@ -73,7 +73,10 @@ export interface Connection {
 export type ConnectionCredential = string | Authorizer;
 
 // @public
-export function getModelInfo(conn: Connection, credential: ConnectionCredential, modelId?: string | undefined): Promise<ModelInfo>;
+export type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+// @public
+export function getModelInfo(conn: Connection, credential: ConnectionCredential, modelId?: string | undefined, options?: RequestOptions): Promise<ModelInfo>;
 
 // @public
 export class HttpError extends Error {
@@ -90,12 +93,12 @@ export function isNetworkFailure(result: AIChatResult): boolean;
 export function knownModelInfo(conn: Pick<Connection, 'kind' | 'baseUrl' | 'issuer'>, id: string): ModelFacts;
 
 // @public
-export function listModels(conn: Connection, credential: ConnectionCredential): Promise<ModelInfo[]>;
+export function listModels(conn: Connection, credential: ConnectionCredential, options?: RequestOptions): Promise<ModelInfo[]>;
 
 // @public
 export type ModelFacts = Omit<ModelInfo, 'id' | 'name'>;
 
-// @public
+// @public (undocumented)
 export const OLLAMA_BASE = "https://ollama.com";
 
 // @public
@@ -121,6 +124,11 @@ export function rateLimitOf(status: number, headers: Headers | undefined, body: 
 
 // @public
 export type RateLimitWindow = NonNullable<AIChatResult['quota']>;
+
+// @public
+export interface RequestOptions {
+    fetch?: Fetch;
+}
 
 // @public (undocumented)
 export interface RetryNotice {

@@ -318,6 +318,27 @@ Ollama pairing (`publicKeyLine`, `connectUrl`, `whoami`, `disconnect`,
 `signRequest`). The same warning applies as in the extension: the Claude and
 ChatGPT flows are unofficial.
 
+Every request goes through the global `fetch` unless you pass your own:
+`chat(conn, key, request, { fetch })`, `listModels(conn, key, { fetch })`,
+`getModelInfo(conn, key, modelId, { fetch })`, and a trailing `{ fetch }` on
+each sign-in, poll and refresh call. The contract is the standard one,
+`(input, init) => Promise<Response>` with a streaming `body` and `init.signal`
+honoured, so a proxy, a custom CA, request logging or a test double fit
+without patching the global for every other library in the process. A
+long-running Node host whose pooled keep-alive socket goes stale while an
+agent thinks between turns can hand in a transport that opens a fresh
+connection per request (`node:https` with `agent: false`) or undici with a
+tuned `keepAliveTimeout`:
+
+```ts
+import { Agent, fetch as undiciFetch } from 'undici';
+import { chat, type Fetch } from '@amenophis1er/byok/core';
+
+const dispatcher = new Agent({ keepAliveTimeout: 10_000 });
+const fetch: Fetch = (input, init) => undiciFetch(input, { ...init, dispatcher });
+const result = await chat(conn, key, request, { fetch, signal });
+```
+
 A connection is `{ kind, baseUrl, protocol?, model?, auth?, accountId?, issuer?, orgId? }`:
 `kind: 'anthropic'` with `baseUrl: ''` for the Messages API, `'openai-compatible'`
 with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and

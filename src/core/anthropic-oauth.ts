@@ -14,6 +14,8 @@
  * URLSearchParams emits '+' for spaces, which the endpoint rejects.
  */
 
+import { fetchOf, type RequestOptions } from './http.js';
+
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize';
 const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
@@ -115,17 +117,17 @@ function tokensFromResponse(raw: unknown): AnthropicTokens {
   return { accessToken, refreshToken, expiresAt: Date.now() + expiresInSec * 1000 };
 }
 
-/** Exchange the pasted `code#state` (state REQUIRED — enforces CSRF). JSON body. */
+/** Exchange the pasted `code#state` (state REQUIRED — enforces CSRF). JSON body. Takes the host's `fetch` in `options`, else the global one. */
 export async function exchangeCode(input: {
   pasted: string;
   expectedState: string;
   verifier: string;
-}): Promise<AnthropicTokens> {
+}, options: RequestOptions = {}): Promise<AnthropicTokens> {
   const { code, state } = parsePaste(input.pasted);
   if (!code) throw new Error('Paste the code shown after approving in the browser.');
   if (!state) throw new Error("Paste the FULL code, including the part after '#'.");
   if (state !== input.expectedState) throw new Error('Sign-in state mismatch — start again.');
-  const res = await fetch(TOKEN_URL, {
+  const res = await fetchOf(options)(TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({
@@ -142,8 +144,8 @@ export async function exchangeCode(input: {
 }
 
 /** Refresh grant (JSON body). Refresh token is SINGLE-USE and rotates. */
-export async function refreshTokens(refreshToken: string): Promise<AnthropicTokens> {
-  const res = await fetch(TOKEN_URL, {
+export async function refreshTokens(refreshToken: string, options: RequestOptions = {}): Promise<AnthropicTokens> {
+  const res = await fetchOf(options)(TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({

@@ -18,7 +18,7 @@
  * call 404s without it).
  */
 
-import { httpFailure } from './http.js';
+import { fetchOf, httpFailure, type RequestOptions } from './http.js';
 
 const ISSUER = 'https://auth.openai.com';
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -73,8 +73,8 @@ export function codexCatalogModels(body: unknown): Array<{ id: string; name: str
 }
 
 /** GET the Codex model catalog for a signed-in account. Throws on a failed request or an empty catalog. */
-export async function codexModels(input: { accessToken: string; accountId?: string }): Promise<Array<{ id: string; name: string }>> {
-  const res = await fetch(`${CODEX_MODELS_URL}?client_version=${CODEX_CLIENT_VERSION}`, {
+export async function codexModels(input: { accessToken: string; accountId?: string }, options: RequestOptions = {}): Promise<Array<{ id: string; name: string }>> {
+  const res = await fetchOf(options)(`${CODEX_MODELS_URL}?client_version=${CODEX_CLIENT_VERSION}`, {
     headers: {
       authorization: `Bearer ${input.accessToken}`,
       ...(input.accountId ? { 'chatgpt-account-id': input.accountId } : {}),
@@ -149,8 +149,9 @@ export interface DeviceStart {
   expiresAt: number;
 }
 
-export async function startDeviceLogin(): Promise<DeviceStart> {
-  const res = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {
+/** Start the device flow. Every call here takes the host's `fetch` in `options`, else the global one. */
+export async function startDeviceLogin(options: RequestOptions = {}): Promise<DeviceStart> {
+  const res = await fetchOf(options)(`${ISSUER}/api/accounts/deviceauth/usercode`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ client_id: CLIENT_ID }),
@@ -189,8 +190,8 @@ export type DevicePoll =
   | { status: 'denied'; error: string };
 
 /** One poll. 403/404 and `deviceauth_authorization_pending` mean keep going. */
-export async function pollDevice(deviceAuthId: string, userCode: string): Promise<DevicePoll> {
-  const res = await fetch(`${ISSUER}/api/accounts/deviceauth/token`, {
+export async function pollDevice(deviceAuthId: string, userCode: string, options: RequestOptions = {}): Promise<DevicePoll> {
+  const res = await fetchOf(options)(`${ISSUER}/api/accounts/deviceauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ device_auth_id: deviceAuthId, user_code: userCode }),
@@ -222,8 +223,8 @@ export async function pollDevice(deviceAuthId: string, userCode: string): Promis
 export async function exchangeDeviceCode(input: {
   authorizationCode: string;
   codeVerifier: string;
-}): Promise<OpenAiTokens> {
-  const res = await fetch(`${ISSUER}/oauth/token`, {
+}, options: RequestOptions = {}): Promise<OpenAiTokens> {
+  const res = await fetchOf(options)(`${ISSUER}/oauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -240,8 +241,8 @@ export async function exchangeDeviceCode(input: {
 
 /** Rotate a refresh token. SINGLE-USE — persist the pair immediately. A
  *  response omitting refresh_token keeps the old one. */
-export async function refreshOpenAiTokens(refreshToken: string): Promise<OpenAiTokens> {
-  const res = await fetch(`${ISSUER}/oauth/token`, {
+export async function refreshOpenAiTokens(refreshToken: string, options: RequestOptions = {}): Promise<OpenAiTokens> {
+  const res = await fetchOf(options)(`${ISSUER}/oauth/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -277,8 +278,9 @@ export async function codexComplete(
     prompt: string;
   },
   signal: AbortSignal,
+  options: RequestOptions = {},
 ): Promise<string> {
-  const res = await fetch(CODEX_URL, {
+  const res = await fetchOf(options)(CODEX_URL, {
     method: 'POST',
     signal,
     headers: {

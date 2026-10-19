@@ -3,6 +3,17 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.9
+
+- **The host's own `fetch`** (#31, `@amenophis1er/byok/core`): every request
+  the core makes goes through `options.fetch` when given — `chat(…, { fetch })`,
+  `listModels(conn, credential, { fetch })`, `getModelInfo(conn, credential,
+  modelId, { fetch })`, and a trailing `{ fetch }` on each sign-in, poll and
+  refresh call in `core/auth` — else the global one, looked up at call time.
+  `Fetch` and `RequestOptions` are exported. For a proxy, a custom CA,
+  logging, a test double, or a Node transport that does not reuse a stale
+  keep-alive socket. Nothing changes for extensions.
+
 ## 0.1.8
 
 - **The Claude 5 generation in the model table** (#29): `claude-fable-5-1`,

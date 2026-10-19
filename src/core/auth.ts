@@ -11,6 +11,8 @@
  * Codex CLI client ids (see the README's warning).
  */
 
+export type { Fetch, RequestOptions } from './http.js';
+
 export {
   CLAUDE_CODE_SENTINEL,
   exchangeCode,

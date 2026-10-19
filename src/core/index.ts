@@ -16,7 +16,7 @@ export type { ChatEvent, ChatEventSink } from './events.js';
 export { listModels, getModelInfo } from './models.js';
 export { knownModelInfo, type ModelFacts } from './model-info.js';
 export { protocolOf, type Connection } from './connection.js';
-export { apiRoot, HttpError, type Authorizer, type ConnectionCredential } from './http.js';
+export { apiRoot, HttpError, type Authorizer, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
 export { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
 export { withRetry, isNetworkFailure, type RetryOptions, type RetryNotice } from './retry.js';
 export { OPENCODE_BASE, opencodeHeaders } from './opencode-oauth.js';
