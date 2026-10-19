@@ -137,6 +137,25 @@ describe('core listModels()', () => {
     await expect(listModels({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1' }, 'k')).rejects.toThrow('HTTP 401: bad key');
   });
 
+  it('the Codex catalog too: an HttpError with its own words and the wait', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 429, headers: { 'retry-after': '10' } })));
+    const error = await listModels({ kind: 'chatgpt', baseUrl: '' }, 'tok').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HttpError);
+    expect(error).toMatchObject({ status: 429, message: 'Codex model catalog failed (HTTP 429)', retryAfterMs: 10_000 });
+  });
+
+  it('a malformed rate-limit answer is still the HTTP failure, not a crash', async () => {
+    const body = JSON.stringify({ error: { message: 'quota', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [null] }] } });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 429 })));
+    expect(await chat({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1', model: 'm' }, 'k', req)).toEqual({ ok: false, error: 'HTTP 429: quota' });
+    await expect(listModels({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1' }, 'k')).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('a 4xx that says overloaded stays worth another try', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"upstream overloaded"}}', { status: 429 })));
+    expect(await chat({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1', model: 'm' }, 'k', req)).toEqual({ ok: false, error: 'HTTP 429: upstream overloaded', retryable: true });
+  });
+
   it('throws an HttpError that says when to come back after a rate limit', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'Rate limit reached on requests per min (RPM).' } }), { status: 429, headers: { 'retry-after': '9' } })));
     const error = await listModels({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1' }, 'k').catch((e: unknown) => e);

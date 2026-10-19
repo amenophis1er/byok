@@ -67,8 +67,23 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, undefined, 'not json', NOW)).toEqual({});
     expect(rateLimitOf(500, undefined, JSON.stringify({ error: { message: 'tokens per minute' } }), NOW)).toEqual({});
     expect(rateLimitOf(400, h({ 'x-ratelimit-remaining-requests': '0', 'x-ratelimit-reset-requests': '1s' }), '', NOW)).toEqual({});
-    // Garbage in the headers is ignored, not a crash.
+    // Garbage in the headers is ignored, not a crash; a malformed number is not a date in the past.
     expect(rateLimitOf(429, h({ 'retry-after': 'soon', 'retry-after-ms': 'x', 'x-ratelimit-reset-requests': 'later' }), '', NOW)).toEqual({});
+    expect(rateLimitOf(429, h({ 'retry-after': '-1' }), JSON.stringify({ error: { message: 'Please try again in 3s.' } }), NOW)).toEqual({ retryAfterMs: 3000 });
+    // Malformed details say nothing, and never throw.
+    const malformed = JSON.stringify({ error: { details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [null, 7, 'x'] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: 20 }, null] } });
+    expect(rateLimitOf(429, undefined, malformed, NOW)).toEqual({});
+  });
+
+  it('reads the words of the message only, the window named first, and a spaced duration whole', () => {
+    const message = (text: string) => JSON.stringify({ error: { message: text }, meta: { plan: 'daily quota 10000 requests per day', note: 'try again in 1s' } });
+    expect(rateLimitOf(429, undefined, message('Rate limit reached on requests per min (RPM). Please try again in 2s. Your plan also has a daily quota of 10000 requests.'), NOW))
+      .toEqual({ retryAfterMs: 2000, quota: 'minute' });
+    expect(rateLimitOf(429, undefined, message('Rate limit reached on requests per day (RPD): Limit 200. Also 3 RPM. Please try again in 1m 30s.'), NOW))
+      .toEqual({ retryAfterMs: 90_000, quota: 'day' });
+    expect(rateLimitOf(429, undefined, message('slow down'), NOW)).toEqual({});
+    // A body that is not JSON is read as the message.
+    expect(rateLimitOf(429, undefined, 'Too many requests per minute. Retry in 500ms', NOW)).toEqual({ retryAfterMs: 500, quota: 'minute' });
   });
 });
 
@@ -77,6 +92,7 @@ it('reads Go-style durations', () => {
   expect(duration('20ms')).toBe(20);
   expect(duration('1h2m3.5s')).toBe(3_600_000 + 120_000 + 3500);
   expect(duration('1.5s')).toBe(1500);
+  expect(duration('1m 30s')).toBe(90_000);
   expect(duration('')).toBeUndefined();
   expect(duration('5')).toBeUndefined();
   expect(duration(5)).toBeUndefined();

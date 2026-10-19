@@ -11,11 +11,13 @@
  * - Gemini's body: a `RetryInfo` detail (`"retryDelay": "20s"`) and a
  *   `QuotaFailure` naming the quota (`…PerDay…` / `…PerMinute…`);
  * - ChatGPT's body: `resets_in_seconds`;
- * - and the words: "Please try again in 1h2m3s", "requests per day (RPD)",
- *   "tokens per minute".
+ * - and the words of the error message: "Please try again in 1h2m3s",
+ *   "requests per day (RPD)", "tokens per minute".
  *
  * The wait is read from every failure; the window only from a 429. Neither is
- * inferred: a failure that said nothing carries nothing.
+ * inferred: a failure that said nothing carries nothing. A malformed answer
+ * (a violation that is not an object, a Retry-After that is neither a number
+ * nor a date) says nothing either, and never throws.
  */
 
 import type { AIChatResult } from '../types.js';
@@ -54,6 +56,8 @@ function retryAfterHeader(get: (name: string) => string | null, now: number): nu
   if (header === null) return undefined;
   const value = header.trim();
   if (/^\d+(\.\d+)?$/.test(value)) return Math.ceil(Number(value) * 1000);
+  // Else an HTTP date ("Sat, 18 Oct 2026 12:00:30 GMT"); a malformed number is not one.
+  if (!/^[A-Za-z]/.test(value)) return undefined;
   const date = Date.parse(value);
   return Number.isNaN(date) ? undefined : Math.max(0, date - now);
 }
@@ -72,8 +76,17 @@ function bodyWait(json: Record<string, unknown> | undefined, body: string): numb
   const error = (json?.['error'] ?? json) as Record<string, unknown> | undefined;
   const seconds = error?.['resets_in_seconds'] ?? json?.['resets_in_seconds'];
   if (typeof seconds === 'number' && seconds >= 0) return Math.ceil(seconds * 1000);
-  const words = /\b(?:try again|retry)\s+(?:again\s+)?in\s+(\d+(?:\.\d+)?(?:ms|s|m|h)(?:\d+(?:\.\d+)?(?:ms|s|m))*)\b/i.exec(body);
+  const words = /\b(?:try again|retry)\s+(?:again\s+)?in\s+(\d+(?:\.\d+)?(?:ms|s|m|h)(?:\s*\d+(?:\.\d+)?(?:ms|s|m))*)\b/i.exec(messageOf(json, body));
   return words ? duration(words[1]) : undefined;
+}
+
+/** The provider's message: `error.message`, a string `error`, `message`, else the whole body. */
+function messageOf(json: Record<string, unknown> | undefined, body: string): string {
+  if (!json) return body;
+  const error = json['error'];
+  if (typeof error === 'string') return error;
+  const message = (error && typeof error === 'object' ? (error as Record<string, unknown>)['message'] : undefined) ?? json['message'] ?? json['detail'];
+  return typeof message === 'string' ? message : body;
 }
 
 /**
@@ -108,9 +121,11 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Ra
     if (typeof detail['@type'] === 'string' && /QuotaFailure$/.test(detail['@type'])) {
       const violations = detail['violations'];
       if (!Array.isArray(violations)) continue;
-      for (const v of violations as Array<Record<string, unknown>>) {
+      for (const v of violations) {
+        if (!v || typeof v !== 'object') continue;
         for (const key of ['quotaId', 'quotaMetric', 'subject', 'description']) {
-          if (typeof v[key] === 'string') names.push(v[key]);
+          const value = (v as Record<string, unknown>)[key];
+          if (typeof value === 'string') names.push(value);
         }
       }
     }
@@ -118,9 +133,12 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Ra
   const text = names.join(' ');
   if (/per[_ ]?day|daily|\b[RT]PD\b/i.test(text)) return 'day';
   if (/per[_ ]?minute|per[_ ]?min\b|\b[RT]PM\b/i.test(text)) return 'minute';
-  if (/\bper day\b|\bdaily (?:limit|quota)\b|\b[RT]PD\b/i.test(body)) return 'day';
-  if (/\bper min(?:ute)?\b|\b(?:[RT]PM|ITPM|OTPM)\b/i.test(body)) return 'minute';
-  return undefined;
+  // In words, the window named first is the one that ran out ("on requests per day (RPD): … Please try again in …").
+  const message = messageOf(json, body);
+  const day = /\bper day\b|\bdaily (?:limit|quota)\b|\b[RT]PD\b/i.exec(message)?.index;
+  const minute = /\bper min(?:ute)?\b|\b(?:[RT]PM|ITPM|OTPM)\b/i.exec(message)?.index;
+  if (day === undefined && minute === undefined) return undefined;
+  return minute === undefined || (day !== undefined && day < minute) ? 'day' : 'minute';
 }
 
 /* ── pieces ──────────────────────────────────────────────────────── */
@@ -141,10 +159,10 @@ function details(json: Record<string, unknown> | undefined): Array<Record<string
   return Array.isArray(list) ? (list.filter((d) => d && typeof d === 'object') as Array<Record<string, unknown>>) : [];
 }
 
-/** A Go-style duration — "1h2m3.5s", "6m0s", "20ms", "1.5s" — in milliseconds. */
+/** A Go-style duration — "1h2m3.5s", "6m0s", "20ms", "1.5s", also "1m 30s" — in milliseconds. */
 export function duration(value: unknown): number | undefined {
   if (typeof value !== 'string') return undefined;
-  const text = value.trim();
+  const text = value.trim().replace(/(?<=[a-z])\s+(?=\d)/g, '');
   if (!/^(\d+(\.\d+)?(ms|s|m|h))+$/.test(text)) return undefined;
   let ms = 0;
   for (const match of text.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g)) {
