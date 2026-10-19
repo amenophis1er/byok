@@ -54,6 +54,19 @@ describe('withRetry', () => {
     expect(await withRetry(h.attempt, { ...h, maxAttempts: 2, maxNetworkAttempts: 6, maxDelayMs: 5000 })).toBe(dropped);
     expect(h.attempt).toHaveBeenCalledTimes(6);
     expect(h.waits).toEqual([1000, 2000, 4000, 5000, 5000]);
+    // The ceiling holds jitter included.
+    const high = harness([server]);
+    expect(await withRetry(high.attempt, { ...high, random: () => 0.99, maxDelayMs: 1000 })).toBe(server);
+    expect(high.waits).toEqual([1000, 1000, 1000]);
+  });
+
+  it('spends each budget separately when the failures mix', async () => {
+    const h = harness([server, dropped, server, ok]);
+    expect(await withRetry(h.attempt, { ...h, maxAttempts: 2, maxNetworkAttempts: 3 })).toBe(server);
+    expect(h.attempt).toHaveBeenCalledTimes(3);
+    const mixed = harness([server, dropped, dropped, server, ok]);
+    expect(await withRetry(mixed.attempt, { ...mixed, maxAttempts: 3, maxNetworkAttempts: 3 })).toBe(ok);
+    expect(mixed.attempt).toHaveBeenCalledTimes(5);
   });
 
   it('never retries a day window, a long wait, or a turn that produced output', async () => {

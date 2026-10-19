@@ -288,9 +288,11 @@ const result = await withRetry((attempt) => chat(conn, key, request, { signal })
 ```
 
 It waits as the provider asked (`retryAfterMs`), else exponentially with
-jitter (1 s, 2 s, 4 s, … up to `maxDelayMs`), and never retries a day window,
-a wait over `maxWaitMs` (60 s), or a turn that already produced text or a
-tool call. `sleep` and `random` are injectable for tests.
+jitter (1 s, 2 s, 4 s, … ×[0.5, 1.5), never over `maxDelayMs`), and never
+retries a day window, a wait over `maxWaitMs` (60 s), or a turn that already
+produced text or a tool call. The two budgets are separate, so a mix of
+failures may run to `maxAttempts + maxNetworkAttempts − 1` attempts. `sleep`
+and `random` are injectable for tests.
 
 The sign-in flows are at `@amenophis1er/byok/core/auth` for a host that owns
 storage and UI: the Claude subscription PKCE flow (`startLogin`,

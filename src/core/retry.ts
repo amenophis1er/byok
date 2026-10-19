@@ -21,13 +21,13 @@
 import type { AIChatResult } from '../types.js';
 
 export interface RetryOptions {
-  /** Attempts in all for failures the server answered (5xx, overloaded, a short 429). Default 4. */
+  /** Attempts answered by the server with a failure (5xx, overloaded, a short 429) before giving up. Default 4. */
   maxAttempts?: number;
-  /** Attempts in all when the connection dropped (nothing was sent). Default 6. */
+  /** Attempts on which the connection dropped (nothing was sent) before giving up; its own budget, so a mix may run to maxAttempts + maxNetworkAttempts − 1 attempts. Default 6. */
   maxNetworkAttempts?: number;
-  /** The first backoff, doubled each retry. Default 1000 ms. */
+  /** The first backoff, doubled each retry, then jittered by ×[0.5, 1.5). Default 1000 ms. */
   baseDelayMs?: number;
-  /** The backoff's ceiling, before jitter. Default 30 000 ms. */
+  /** The longest backoff, jitter included. Default 30 000 ms. */
   maxDelayMs?: number;
   /** The longest wait honoured: a provider asking for more ends the retries. Default 60 000 ms. */
   maxWaitMs?: number;
@@ -58,7 +58,7 @@ const DEFAULTS = { maxAttempts: 4, maxNetworkAttempts: 6, baseDelayMs: 1000, max
  * Runs `attempt` until it succeeds, fails for good, or the budget is spent.
  * Never throws for a failed result; an exception from `attempt` propagates.
  */
-export async function withRetry(attempt: (attempt: number) => Promise<AIChatResult>, options: RetryOptions = {}): Promise<AIChatResult> {
+export async function withRetry(attempt: (n: number) => Promise<AIChatResult>, options: RetryOptions = {}): Promise<AIChatResult> {
   const maxAttempts = options.maxAttempts ?? DEFAULTS.maxAttempts;
   const maxNetworkAttempts = options.maxNetworkAttempts ?? DEFAULTS.maxNetworkAttempts;
   const baseDelayMs = options.baseDelayMs ?? DEFAULTS.baseDelayMs;
@@ -67,7 +67,7 @@ export async function withRetry(attempt: (attempt: number) => Promise<AIChatResu
   const sleep = options.sleep ?? defaultSleep;
   const random = options.random ?? Math.random;
   const { signal, onRetry } = options;
-  // Each kind of failure spends its own budget; the loop ends at the larger one in all.
+  // Each kind of failure spends its own budget: at most maxAttempts + maxNetworkAttempts − 1 attempts in all.
   let statusFailures = 0;
   let networkFailures = 0;
   for (let n = 1; ; n++) {
@@ -76,10 +76,10 @@ export async function withRetry(attempt: (attempt: number) => Promise<AIChatResu
     if (!shouldRetry(result)) return result;
     const network = isNetworkFailure(result);
     const failures = network ? ++networkFailures : ++statusFailures;
-    if (failures >= (network ? maxNetworkAttempts : maxAttempts) || n >= Math.max(maxAttempts, maxNetworkAttempts)) return result;
+    if (failures >= (network ? maxNetworkAttempts : maxAttempts)) return result;
     const asked = result.retryAfterMs;
     if (asked !== undefined && asked > maxWaitMs) return result;
-    const waitMs = asked ?? Math.round(Math.min(maxDelayMs, baseDelayMs * 2 ** (n - 1)) * (0.5 + random()));
+    const waitMs = asked ?? Math.min(maxDelayMs, Math.round(baseDelayMs * 2 ** (n - 1) * (0.5 + random())));
     onRetry?.({ attempt: n, waitMs, result, network });
     if (signal?.aborted) return STOPPED;
     await sleep(waitMs, signal);
