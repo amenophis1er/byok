@@ -8,7 +8,7 @@ import type { ModelInfo } from '../types.js';
 import { codexModels } from './openai-oauth.js';
 import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, httpFailure, type Authorizer, type ConnectionCredential } from './http.js';
 import { authorizerFor, tokenOf, type Connection } from './connection.js';
-import { geminiFacts, knownModelInfo, openaiListingFacts, workersAiFacts } from './model-info.js';
+import { geminiFacts, knownModelInfo, mergeFacts, openaiListingFacts, workersAiFacts } from './model-info.js';
 
 /**
  * The models a connection offers, sorted by id, each with what is known
@@ -43,7 +43,8 @@ export async function listModels(conn: Connection, credential: ConnectionCredent
  * What is known about one model on a connection — the bound one by default —
  * without listing them all when the tables already say (Anthropic, OpenAI,
  * ChatGPT). Else the listing is asked and the model found in it; a model the
- * listing does not carry comes back as its id with what the tables say.
+ * listing does not carry comes back as its id with what the tables say, which
+ * may be nothing.
  */
 export async function getModelInfo(conn: Connection, credential: ConnectionCredential, modelId: string | undefined = conn.model): Promise<ModelInfo> {
   if (!modelId) throw new Error('No model given, and the connection has none selected.');
@@ -53,9 +54,9 @@ export async function getModelInfo(conn: Connection, credential: ConnectionCrede
   return listed ?? { id: modelId, name: modelId, ...known };
 }
 
-/** The tables' facts under each listed model's own. */
+/** The tables' facts under each listed model's own, field by field. */
 function withKnown(conn: Connection, models: ModelInfo[]): ModelInfo[] {
-  return models.map((m) => ({ ...knownModelInfo(conn, m.id), ...m }));
+  return models.map(({ id, name, ...listed }) => ({ id, name, ...mergeFacts(knownModelInfo(conn, id), listed) }));
 }
 
 /** One header with the key, or none when there is no key; the listing then says so. */

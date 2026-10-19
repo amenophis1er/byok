@@ -36,7 +36,7 @@ while on 0.x, a breaking change bumps the minor version.
   `input_modalities`, `supported_parameters`; vLLM's `max_model_len`; Workers
   AI's `context_window` / `function_calling` properties), else from a built-in
   table of the Anthropic and OpenAI families (the Codex slugs included), else
-  absent. `getModelInfo(conn, credential, modelId?)` answers for one model —
+  absent, and a model the tables do not know carries nothing. `getModelInfo(conn, credential, modelId?)` answers for one model —
   the bound one by default — from the table without a request when it knows,
   else from the listing. `knownModelInfo(conn, id)` is the table alone. The
   worker's `ai-list-models` answer carries the new fields.
