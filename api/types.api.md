@@ -351,10 +351,23 @@ export interface ConnectionView {
 // @public
 export function defaultLabel(kind: ProviderKind, baseUrl: string): string;
 
-// @public (undocumented)
+// @public
+export interface ModelCapabilities {
+    // (undocumented)
+    images?: boolean;
+    // (undocumented)
+    pdf?: boolean;
+    // (undocumented)
+    tools?: boolean;
+}
+
+// @public
 export type ModelInfo = {
     id: string;
     name: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    capabilities?: ModelCapabilities;
 };
 
 // @public

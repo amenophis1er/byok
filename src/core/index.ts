@@ -13,7 +13,8 @@
 
 export { chat, protocolCandidates, TIMED_OUT, type ChatOptions, type ChatRequest } from './chat.js';
 export type { ChatEvent, ChatEventSink } from './events.js';
-export { listModels } from './models.js';
+export { listModels, getModelInfo } from './models.js';
+export { knownModelInfo, type ModelFacts } from './model-info.js';
 export { protocolOf, type Connection } from './connection.js';
 export { apiRoot, HttpError, type Authorizer, type ConnectionCredential } from './http.js';
 export { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
