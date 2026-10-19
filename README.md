@@ -183,6 +183,14 @@ What it guarantees:
   OpenRouter, Ollama local and ollama.com, …). One call per response by default
   (`parallelToolCalls: false`); servers that reject the field are retried
   without it.
+- **A failure says whether, and when, to try again.** `retryable: true` means
+  nothing was acted on: the connection dropped, the server failed (5xx), or a
+  rate limit lifts within the minute. A rate-limited result also carries what
+  the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
+  headers, Anthropic's reset instants, Gemini's `RetryInfo`) and
+  `quota: 'minute' | 'day'` (the window that ran out). Show "Rate limited,
+  retrying in 20 s" or "Daily quota reached for this key" instead of the raw
+  HTTP error; a day window is never `retryable`.
 - **Nothing half-made is handed out.** Arguments that are not valid JSON come
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
@@ -280,7 +288,11 @@ with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
 `'chatgpt'` for a Codex token. The credential is the key or token, or a
 function `(method, url) => headers` that signs each request (an Ollama device
 key: `signRequest` is exported). `chat()` never throws: a failure is an
-`{ ok: false, error, retryable? }` result.
+`{ ok: false, error, retryable?, retryAfterMs?, quota? }` result — the last
+two when the provider said how long to wait and which rate-limit window ran
+out. `listModels()` throws an `HttpError` with the same `status`,
+`retryAfterMs` and `quota`; `rateLimitOf(status, headers, body)` reads them
+from any provider response you fetch yourself.
 
 ## What the host extension must declare
 

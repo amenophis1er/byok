@@ -149,6 +149,12 @@ describe('chat()', () => {
     expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', retryable: true });
   });
 
+  it('passes on when the provider said to come back after a rate limit', async () => {
+    seed([conn('l')], 'l');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"Rate limit reached on tokens per minute (TPM). Please try again in 1.5s."}}', { status: 429 })));
+    expect(await chat({ system: '', messages: [] })).toEqual({ ok: false, error: expect.stringContaining('HTTP 429'), retryable: true, retryAfterMs: 1500, quota: 'minute' });
+  });
+
   it('declines the on-device model, which has no tool calling', async () => {
     seed([conn('n', { kind: 'chrome-builtin' })], 'n');
     expect((await chat({ system: '', messages: [] })).error).toMatch(/no tool calling/);
@@ -221,6 +227,12 @@ describe('chat()', () => {
       seed([conn('d', { kind: 'chrome-builtin', auth: 'device-key', baseUrl: '', model: 'gemini-nano' })], 'd');
       vi.stubGlobal('fetch', vi.fn());
       expect(await list({ id: 'd', kind: 'chrome-builtin', baseUrl: '' })).toEqual({ ok: true, data: [{ id: 'gemini-nano', name: 'Chrome on-device model' }] });
+    });
+
+    it('says when to come back when the listing is rate limited', async () => {
+      seed([conn('l')], 'l');
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"Too many requests"}}', { status: 429, headers: { 'retry-after': '4' } })));
+      expect(await list({ id: 'l', kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1' })).toEqual({ ok: false, error: 'HTTP 429: Too many requests', retryAfterMs: 4000 });
     });
 
     it('tries a key typed in the form as a plain Bearer, not under the saved OpenCode organization', async () => {

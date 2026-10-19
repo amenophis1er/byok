@@ -15,7 +15,8 @@ export { chat, protocolCandidates, TIMED_OUT, type ChatOptions, type ChatRequest
 export type { ChatEvent, ChatEventSink } from './events.js';
 export { listModels } from './models.js';
 export { protocolOf, type Connection } from './connection.js';
-export { apiRoot, type Authorizer, type ConnectionCredential } from './http.js';
+export { apiRoot, HttpError, type Authorizer, type ConnectionCredential } from './http.js';
+export { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
 export { OPENCODE_BASE, opencodeHeaders } from './opencode-oauth.js';
 export { CODEX_MODELS, CODEX_CLIENT_VERSION } from './openai-oauth.js';
 export { signRequest, OLLAMA_BASE } from './ollama-device.js';

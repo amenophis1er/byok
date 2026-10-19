@@ -18,6 +18,8 @@
  * call 404s without it).
  */
 
+import { httpFailure } from './http.js';
+
 const ISSUER = 'https://auth.openai.com';
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const JWT_CLAIM_PATH = 'https://api.openai.com/auth';
@@ -80,7 +82,7 @@ export async function codexModels(input: { accessToken: string; accountId?: stri
       accept: 'application/json',
     },
   });
-  if (!res.ok) throw new Error(`Codex model catalog failed (HTTP ${res.status})`);
+  if (!res.ok) throw await httpFailure(res, `Codex model catalog failed (HTTP ${res.status})`);
   const models = codexCatalogModels(await res.json().catch(() => null));
   if (models.length === 0) throw new Error('Codex model catalog listed no models');
   return models;
