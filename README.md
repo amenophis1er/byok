@@ -275,8 +275,9 @@ const result = await chat(conn, key, request, {
 
 A listed model carries what is known about it — `contextWindow`,
 `maxOutputTokens`, `capabilities: { tools?, images?, pdf? }` — from the
-listing where it says (Gemini, OpenRouter, vLLM, Workers AI) or a built-in
-table of the Anthropic and OpenAI families, and nothing where nothing is
+listing where it says (Anthropic since the Claude 5 generation, Gemini,
+OpenRouter, vLLM, Workers AI) or a built-in table of the Anthropic and OpenAI
+families, and nothing where nothing is
 known. Ask about one model without listing them all:
 
 ```ts

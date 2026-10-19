@@ -3,6 +3,18 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.8
+
+- **The Claude 5 generation in the model table** (#29): `claude-fable-5-1`,
+  `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` and the legacy
+  `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5` (and Mythos) answer
+  1M / 128K with tools and images, as Anthropic's model pages say; Opus
+  4.6–4.8 and Sonnet 4.6 likewise (they were tabled at 200k / 64k before).
+  Whether a 5 model takes PDFs is left to the listing.
+- **Anthropic's `/v1/models` is read for what it says** — `max_input_tokens`,
+  `max_tokens`, `capabilities.image_input` / `pdf_input` — and wins over the
+  table, so a Claude newer than this release is known once listed.
+
 ## 0.1.7
 
 - **A rate limit says when to come back** (#22). A failed `chat()` result
