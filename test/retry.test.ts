@@ -93,10 +93,10 @@ describe('withRetry', () => {
     const pending = withRetry(attempt, { sleep, signal: controller.signal });
     await vi.waitFor(() => expect(attempt).toHaveBeenCalledTimes(1));
     controller.abort();
-    expect(await pending).toEqual({ ok: false, error: 'Stopped.' });
+    expect(await pending).toMatchObject({ ok: false, error: 'Stopped.' });
     expect(attempt).toHaveBeenCalledTimes(1);
     // Already aborted: no attempt at all.
-    expect(await withRetry(attempt, { signal: controller.signal })).toEqual({ ok: false, error: 'Stopped.' });
+    expect(await withRetry(attempt, { signal: controller.signal })).toMatchObject({ ok: false, error: 'Stopped.' });
     expect(attempt).toHaveBeenCalledTimes(1);
   });
 
@@ -108,7 +108,7 @@ describe('withRetry', () => {
     const controller = new AbortController();
     const slow = withRetry(async () => ({ ...server, retryAfterMs: 10_000 }), { signal: controller.signal });
     setTimeout(() => controller.abort(), 5);
-    expect(await slow).toEqual({ ok: false, error: 'Stopped.' });
+    expect(await slow).toMatchObject({ ok: false, error: 'Stopped.' });
   });
 
   it('lets an exception from the attempt through', async () => {

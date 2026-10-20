@@ -5,6 +5,7 @@
 
 import { normalizeBaseUrl } from '../types.js';
 import { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
+import { providerCodeOf, requestIdOf } from './failure.js';
 
 export const ANTHROPIC_BASE = 'https://api.anthropic.com';
 export const ANTHROPIC_VERSION = '2023-06-01';
@@ -95,20 +96,33 @@ export class HttpError extends Error {
   readonly resetAt?: number;
   /** Which rate-limit window ran out, when the server said. */
   readonly quota?: RateLimitWindow;
-  constructor(status: number, message: string, rateLimit: RateLimit = {}) {
+  /** The provider's own code, when the body carried one (`rate_limit_error`, `insufficient_quota`, …). */
+  readonly providerCode?: string;
+  /** The provider's request id, when a header carried one. */
+  readonly requestId?: string;
+  constructor(status: number, message: string, rateLimit: RateLimit = {}, source: { providerCode?: string; requestId?: string } = {}) {
     super(message);
     this.name = 'HttpError';
     this.status = status;
     if (rateLimit.retryAfterMs !== undefined) this.retryAfterMs = rateLimit.retryAfterMs;
     if (rateLimit.resetAt !== undefined) this.resetAt = rateLimit.resetAt;
     if (rateLimit.quota !== undefined) this.quota = rateLimit.quota;
+    if (source.providerCode !== undefined) this.providerCode = source.providerCode;
+    if (source.requestId !== undefined) this.requestId = source.requestId;
   }
 }
 
-/** A failed response as an `HttpError`: the status and body in words, and what it said about coming back. */
+/** The provider's code and request id of a failed response, for an `HttpError`. */
+export function failureSource(res: Response, body: string): { providerCode?: string; requestId?: string } {
+  const providerCode = providerCodeOf(body);
+  const requestId = requestIdOf(res.headers);
+  return { ...(providerCode ? { providerCode } : {}), ...(requestId ? { requestId } : {}) };
+}
+
+/** A failed response as an `HttpError`: the status and body in words, what it said about coming back, its code and request id. */
 export async function httpFailure(res: Response, message?: string): Promise<HttpError> {
   const text = await res.text();
-  return new HttpError(res.status, message ?? describeHttpText(res.status, text), rateLimitOf(res.status, res.headers, text));
+  return new HttpError(res.status, message ?? describeHttpText(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text));
 }
 
 /** The rate-limit fields of a failure, only those it carries, for spreading into a result. */

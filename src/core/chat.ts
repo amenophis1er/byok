@@ -8,7 +8,7 @@
  * with HTTP 400, and the next candidate is tried.
  */
 
-import type { AIChatRequest, AIChatResult, Protocol } from '../types.js';
+import type { AIChatRequest, AIChatResult, AIFailure, Protocol } from '../types.js';
 import { anthropicBody, anthropicResult } from './chat-anthropic.js';
 import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
 import { geminiBody, geminiResult } from './chat-gemini.js';
@@ -16,7 +16,7 @@ import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResu
 import { readSse } from './sse.js';
 import { withClaudeCodeSystem } from './anthropic-oauth.js';
 import { CODEX_ORIGINATOR } from './openai-oauth.js';
-import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot, describeHttpText, errMessage, fetchOf, rateLimitFields, shortRateLimit, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
+import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot, describeHttpText, errMessage, failureSource, fetchOf, rateLimitFields, shortRateLimit, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
 import { rateLimitOf } from './rate-limit.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
 import type { ChatEventSink } from './events.js';
@@ -29,10 +29,13 @@ class SinkError extends Error {
   constructor(public readonly cause: unknown) { super(cause instanceof Error ? cause.message : String(cause)); }
 }
 
-/** The caller's sink, with its exceptions told apart from the provider's. */
-function guarded(onEvent: ChatEventSink | undefined): ChatEventSink | undefined {
-  if (!onEvent) return undefined;
-  return (event) => { try { onEvent(event); } catch (error) { throw new SinkError(error); } };
+/** The caller's sink, with its exceptions told apart from the provider's, and `seen()` called once output has streamed. */
+function guarded(onEvent: ChatEventSink | undefined, seen: () => void): ChatEventSink {
+  return (event) => {
+    if (event.type !== 'usage') seen();
+    if (!onEvent) return;
+    try { onEvent(event); } catch (error) { throw new SinkError(error); }
+  };
 }
 
 export interface ChatOptions extends RequestOptions {
@@ -82,12 +85,18 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
   const onAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
   const hint = options.settingsHint ? ` ${options.settingsHint}` : '';
+  let streamed = false;
+  /** A failed result with its failure as data; never `retryable` once output has streamed. */
+  const failed = (error: string, failure: Omit<AIFailure, 'streamed'>, extra: Partial<AIChatResult> = {}): AIChatResult => {
+    const { retryable, ...rest } = extra;
+    return { ok: false, error, ...rest, ...(retryable && !streamed ? { retryable: true } : {}), failure: { ...failure, streamed } };
+  };
   try {
     if (options.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     if (conn.kind === 'chrome-builtin') throw new Error('The on-device model has no tool calling.');
     const model = req.model ?? conn.model;
     if (!model) throw new Error(`The AI connection has no model selected.${hint}`);
-    const onEvent = guarded(options.onEvent);
+    const onEvent = guarded(options.onEvent, () => { streamed = true; });
     const ctx: Turn = { conn, credential, model, req, signal: controller.signal, fetch: fetchOf(options), idle, debug: options.debug, hint, onEvent };
 
     const candidates = protocolCandidates(conn, model);
@@ -96,9 +105,12 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
       try {
         const result = await turn(protocol, ctx);
         if (candidates.length > 1) learnedProtocols.set(learnKey(conn, model), protocol);
-        if (result.ok && result.usage) onEvent?.({ type: 'usage', usage: { ...result.usage } });
+        if (result.ok && result.usage) onEvent({ type: 'usage', usage: { ...result.usage } });
         options.debug?.('chat result', result);
-        return transient(result);
+        if (result.ok) return result;
+        // A failure from inside the stream: the module said what it knows; whether output had streamed is known here.
+        const { failure, ...rest } = transient(result);
+        return failed(result.error ?? 'The turn failed.', { kind: 'stream', ...failure }, rest);
       } catch (error) {
         if (!(error instanceof ProtocolMismatch)) throw error;
         mismatch = error;
@@ -108,18 +120,21 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
       ? `OpenCode serves ${model} on a protocol this library does not speak (${mismatch?.message}).`
       : mismatch?.message);
   } catch (error) {
-    if (options.signal?.aborted) return { ok: false, error: 'Stopped.' };
-    if (controller.signal.aborted) return { ok: false, error: TIMED_OUT };
-    if (error instanceof SinkError) return { ok: false, error: error.message };
-    // A dropped connection or a server-side failure: nothing was acted on, so the caller may send the same request again.
-    if (error instanceof TypeError) return { ok: false, error: networkError(conn), retryable: true };
+    if (options.signal?.aborted) return failed('Stopped.', { kind: 'stopped', ...cause(options.signal.reason) });
+    if (controller.signal.aborted) return failed(TIMED_OUT, { kind: 'timeout' });
+    if (error instanceof SinkError) return failed(error.message, { kind: 'sink', cause: error.message });
+    // A dropped connection: nothing was acted on, so the caller may send the same request again — unless output had streamed.
+    if (error instanceof TypeError) return failed(networkError(conn), { kind: 'network', cause: error.message }, { retryable: true });
     // The server refused: a 5xx (or an overloaded one) is worth another try, and so is a rate limit that lifts within the minute. It says when.
     if (error instanceof HttpError) {
       const retryable = error.status >= 500 || shortRateLimit(error) || /overloaded|backend failed/i.test(error.message);
-      return { ok: false, error: error.message, ...rateLimitFields(error), ...(retryable ? { retryable: true } : {}) };
+      return failed(error.message, {
+        kind: 'http', status: error.status,
+        ...(error.providerCode ? { providerCode: error.providerCode } : {}), ...(error.requestId ? { requestId: error.requestId } : {}),
+      }, { ...rateLimitFields(error), ...(retryable ? { retryable: true } : {}) });
     }
     const message = errMessage(error);
-    return { ok: false, error: message, ...(/^HTTP (5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {}) };
+    return failed(message, { kind: 'request' }, /^HTTP (5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {});
   } finally {
     clearTimeout(timer);
     idle.stop();
@@ -205,7 +220,7 @@ class ProtocolMismatch extends Error {}
 function httpError(res: Response, text: string): Error {
   const message = describeHttpText(res.status, text);
   const mismatch = res.status === 400 && (/does not support this protocol/i.test(text) || /use \/v1\/responses/i.test(text));
-  return mismatch ? new ProtocolMismatch(message) : new HttpError(res.status, message, rateLimitOf(res.status, res.headers, text));
+  return mismatch ? new ProtocolMismatch(message) : new HttpError(res.status, message, rateLimitOf(res.status, res.headers, text), failureSource(res, text));
 }
 
 /** A failure event in a Responses stream from a server other than ChatGPT, in its own words. */
@@ -308,7 +323,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
   if (!res.ok) {
     const text = await res.text();
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
-    throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text)) : httpError(res, text);
+    throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text)) : httpError(res, text);
   }
   return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent);
 }
@@ -335,6 +350,12 @@ async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
 }
 
 /* ── failures ────────────────────────────────────────────────────── */
+
+/** `{ cause }` for an abort reason that says something, else nothing. */
+function cause(reason: unknown): Pick<AIFailure, 'cause'> {
+  const text = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : '';
+  return text ? { cause: text } : {};
+}
 
 /** A stream cut short or an overloaded provider mid-answer: worth one more try, like a dropped connection. */
 function transient(result: AIChatResult): AIChatResult {

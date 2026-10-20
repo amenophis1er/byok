@@ -110,7 +110,7 @@ describe('saved connections', () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
     const saved = await send<Result>({ type: 't:ai-save-connection', kind: 'openai-compatible', label: '', model: 'm', apiKeyMode: 'clear', baseUrl: workersAi });
-    expect(saved).toEqual({ ok: false, error: 'Replace {account_id} in the base URL with your own value.' });
+    expect(saved).toMatchObject({ ok: false, error: 'Replace {account_id} in the base URL with your own value.' });
     const listed = await send<Result>({ type: 't:ai-list-models', kind: 'openai-compatible', baseUrl: workersAi, apiKey: 'k' });
     expect(listed).toMatchObject({ ok: false, error: expect.stringContaining('{account_id}') });
     expect(fetch).not.toHaveBeenCalled();

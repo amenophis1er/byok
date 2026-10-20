@@ -56,7 +56,7 @@ describe('the whole-request limit', () => {
 
   it('still cuts a slow stream when set', async () => {
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => new Response(slowBody(30, init.signal), { status: 200 })));
-    expect(await chat(conn, 'k', req, { timeoutMs: 40 })).toEqual({ ok: false, error: TIMED_OUT });
+    expect(await chat(conn, 'k', req, { timeoutMs: 40 })).toMatchObject({ ok: false, error: TIMED_OUT });
   });
 });
 
@@ -70,7 +70,7 @@ describe('the idle limit', () => {
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => new Response(slowBody(5, init.signal, true), { status: 200 })));
     const seen: string[] = [];
     expect(await chat(conn, 'k', req, { timeoutMs: 0, idleTimeoutMs: 40, onEvent: (e) => { if (e.type === 'text') seen.push(e.delta); } }))
-      .toEqual({ ok: false, error: TIMED_OUT });
+      .toMatchObject({ ok: false, error: TIMED_OUT });
     expect(seen).toEqual(['Hello.']);
   });
 
@@ -78,7 +78,7 @@ describe('the idle limit', () => {
     vi.stubGlobal('fetch', vi.fn((_url: unknown, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
     })));
-    expect(await chat(conn, 'k', { ...req, idleTimeoutMs: 30 }, { timeoutMs: 0 })).toEqual({ ok: false, error: TIMED_OUT });
+    expect(await chat(conn, 'k', { ...req, idleTimeoutMs: 30 }, { timeoutMs: 0 })).toMatchObject({ ok: false, error: TIMED_OUT });
   });
 
   it('does not re-arm after the turn: a body still open at [DONE] is cancelled, not left pending', async () => {

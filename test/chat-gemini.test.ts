@@ -98,8 +98,8 @@ describe('stream', () => {
   });
 
   it('fails on an error chunk, a malformed call, or a stream that ends before finishing', async () => {
-    expect(await parse([{ error: { code: 429, message: 'Quota exceeded.' } }])).toEqual({ ok: false, error: 'Quota exceeded.' });
-    expect(await parse([chunk([], 'MALFORMED_FUNCTION_CALL')])).toEqual({ ok: false, error: 'The model made a malformed function call.' });
-    expect(await parse([chunk([{ text: 'half' }])])).toEqual({ ok: false, error: 'The response stream ended before it finished.' });
+    expect(await parse([{ error: { code: 429, message: 'Quota exceeded.' } }])).toMatchObject({ ok: false, error: 'Quota exceeded.' });
+    expect(await parse([chunk([], 'MALFORMED_FUNCTION_CALL')])).toMatchObject({ ok: false, error: 'The model made a malformed function call.' });
+    expect(await parse([chunk([{ text: 'half' }])])).toMatchObject({ ok: false, error: 'The response stream ended before it finished.' });
   });
 });

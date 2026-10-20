@@ -94,6 +94,7 @@ export interface AIChatRequest {
 export interface AIChatResult {
     // (undocumented)
     error?: string;
+    failure?: AIFailure;
     model?: string;
     // (undocumented)
     ok: boolean;
@@ -215,6 +216,20 @@ export interface AIDeleteConnectionRequest {
     // (undocumented)
     type: string;
 }
+
+// @public
+export interface AIFailure {
+    cause?: string;
+    // (undocumented)
+    kind: AIFailureKind;
+    providerCode?: string;
+    requestId?: string;
+    status?: number;
+    streamed: boolean;
+}
+
+// @public
+export type AIFailureKind = 'request' | 'network' | 'http' | 'stream' | 'timeout' | 'stopped' | 'sink';
 
 // @public (undocumented)
 export interface AIGetRequest {

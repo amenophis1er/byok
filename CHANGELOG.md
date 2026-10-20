@@ -29,6 +29,19 @@ while on 0.x, a breaking change bumps the minor version.
   never do). `stripProviderState(messages)` is exported from the core for a
   host moving a conversation. A Gemini placeholder signature for a call that
   has none is not sent: the current Gemini docs document none.
+- **A failure as data** (#34). Every failed `chat()` result carries
+  `failure: { kind, status?, providerCode?, requestId?, cause?, streamed }`
+  beside the sentence: the kind (`request`, `network`, `http`, `stream`,
+  `timeout`, `stopped`, `sink`), the HTTP status, the provider's own code
+  (`rate_limit_error`, `insufficient_quota`, `usage_limit_reached`,
+  `RESOURCE_EXHAUSTED`, …) and request id (`request-id`, `x-request-id`)
+  when given, what the transport or the sink said, and whether text or a
+  tool call had streamed to `onEvent` before the failure. **Once output has
+  streamed, a failure is never `retryable`** — a cut-off stream after half
+  an answer was marked so before — and `withRetry` leaves it alone. An
+  `HttpError` from `listModels()` carries `providerCode` and `requestId` too.
+  The worker's own refusals (a stopped call, a gone connection, a token
+  refresh that failed) carry it as well, with nothing streamed.
 - **An idle limit, and the whole-request limit's off switch** (#39).
   `idleTimeoutMs` (on the request or in `ChatOptions`) fails the turn with
   `Timed out waiting for the model.` only when nothing arrives from the

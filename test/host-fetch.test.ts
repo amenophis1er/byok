@@ -67,7 +67,7 @@ describe('chat() with the host fetch', () => {
   it('reports a transport that throws as the usual dropped connection, when it throws a TypeError', async () => {
     const fetch = vi.fn<Fetch>(async () => { throw new TypeError('socket hang up'); });
     expect(await chat({ kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-5-5' }, 'sk', req, { fetch }))
-      .toEqual({ ok: false, error: 'The connection to Anthropic dropped (network error).', retryable: true });
+      .toMatchObject({ ok: false, error: 'The connection to Anthropic dropped (network error).', retryable: true });
   });
 });
 

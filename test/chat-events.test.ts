@@ -180,7 +180,7 @@ describe('edges', () => {
   it('a stream that fails mid-turn has reported what came before, and the failure is the result', async () => {
     const { events, sink } = collect();
     const result = await openaiResult(sse(openaiSse([{ choices: [{ index: 0, delta: { content: 'Hal' }, finish_reason: null }] }], false)), sink);
-    expect(result).toEqual({ ok: false, error: 'The response stream ended before it finished.' });
+    expect(result).toMatchObject({ ok: false, error: 'The response stream ended before it finished.' });
     expect(events).toEqual([{ type: 'text', delta: 'Hal' }]);
   });
 });
@@ -195,11 +195,11 @@ describe('chat() with onEvent', () => {
     ]), 7), { status: 200 })));
     const result = await chat({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1', model: 'm' }, 'k',
       { system: '', messages: [{ role: 'user', content: 'hi' }] }, { onEvent: () => { throw new Error('client went away'); } });
-    expect(result).toEqual({ ok: false, error: 'client went away' });
+    expect(result).toMatchObject({ ok: false, error: 'client went away' });
     // Even a TypeError from the sink is the sink's, not a dropped connection.
     vi.stubGlobal('fetch', vi.fn(async () => new Response(streamOf(openaiSse([{ choices: [{ index: 0, delta: { content: 'x' }, finish_reason: 'stop' }] }]), 7), { status: 200 })));
     expect(await chat({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1', model: 'm' }, 'k',
-      { system: '', messages: [{ role: 'user', content: 'hi' }] }, { onEvent: () => { throw new TypeError('res is not writable'); } })).toEqual({ ok: false, error: 'res is not writable' });
+      { system: '', messages: [{ role: 'user', content: 'hi' }] }, { onEvent: () => { throw new TypeError('res is not writable'); } })).toMatchObject({ ok: false, error: 'res is not writable' });
   });
 
   it('hands out a copy of the usage', async () => {

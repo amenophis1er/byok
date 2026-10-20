@@ -85,8 +85,13 @@ export function getModelInfo(conn: Connection, credential: ConnectionCredential,
 
 // @public
 export class HttpError extends Error {
-    constructor(status: number, message: string, rateLimit?: RateLimit);
+    constructor(status: number, message: string, rateLimit?: RateLimit, source?: {
+        providerCode?: string;
+        requestId?: string;
+    });
+    readonly providerCode?: string;
     readonly quota?: RateLimitWindow;
+    readonly requestId?: string;
     readonly resetAt?: number;
     readonly retryAfterMs?: number;
     readonly status: number;

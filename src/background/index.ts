@@ -767,7 +767,7 @@ async function complete(req: AICompleteRequest): Promise<AIResult<string>> {
  * itself is the core's `chat()`, with the connection's credential.
  */
 export async function chat(req: AIChatRequest, options: { signal?: AbortSignal } = {}): Promise<AIChatResult> {
-  if (options.signal?.aborted) return { ok: false, error: 'Stopped.' };
+  if (options.signal?.aborted) return { ok: false, error: 'Stopped.', failure: { kind: 'stopped', streamed: false } };
   try {
     const cfg = await load();
     const id = req.connectionId ?? cfg.activeId;
@@ -792,12 +792,14 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
       debug: debug ? dlog : undefined, settingsHint: opts.settingsHint,
     });
   } catch (error) {
-    if (options.signal?.aborted) return { ok: false, error: 'Stopped.' };
-    if (error === TIMEOUT) return { ok: false, error: TIMED_OUT };
+    // The worker's own failures, before the turn went out: as data too, with nothing streamed.
+    if (options.signal?.aborted) return { ok: false, error: 'Stopped.', failure: { kind: 'stopped', streamed: false } };
+    if (error === TIMEOUT) return { ok: false, error: TIMED_OUT, failure: { kind: 'timeout', streamed: false } };
     // The token refresh could not reach its server, or its server failed: nothing was acted on.
-    if (error instanceof TypeError) return { ok: false, error: errMessage(error), retryable: true };
+    if (error instanceof TypeError) return { ok: false, error: errMessage(error), retryable: true, failure: { kind: 'network', cause: error.message, streamed: false } };
     const message = errMessage(error);
-    return { ok: false, error: message, ...(/\b(5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {}) };
+    const server = /\b(5\d\d|529)\b|overloaded|backend failed/i.test(message);
+    return { ok: false, error: message, ...(server ? { retryable: true } : {}), failure: { kind: server ? 'http' : 'request', streamed: false } };
   }
 }
 
