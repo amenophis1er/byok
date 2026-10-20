@@ -106,11 +106,13 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   let announced = 0;
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
+  let model: string | undefined;
 
   for await (const { data } of events) {
     let chunk: Record<string, any>;
     try { chunk = JSON.parse(data) as Record<string, any>; } catch { return { ok: false, error: 'Malformed stream chunk.' }; }
     if (chunk['error']) return { ok: false, error: String(chunk['error']['message'] ?? 'the stream reported an error') };
+    if (typeof chunk['modelVersion'] === 'string' && chunk['modelVersion']) model = chunk['modelVersion'];
     const meta = chunk['usageMetadata'];
     if (meta && typeof meta['promptTokenCount'] === 'number') {
       usage = {
@@ -170,6 +172,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     // The parts come back as sent, signatures included; thought summaries without one are left out.
     ...(runnable && parts.length > 0 ? { providerState: parts.filter((p) => !p['thought'] || p['thoughtSignature']) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
+    ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),
   };
 }

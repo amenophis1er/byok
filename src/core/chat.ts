@@ -304,7 +304,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
         originator: conn.originator || CODEX_ORIGINATOR, 'openai-beta': 'responses=experimental',
       }
     : await authorizerFor(conn, credential)('POST', url);
-  const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex }));
+  const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex, cacheKey: !codex && isOpenAi(conn.baseUrl) }));
   if (!res.ok) {
     const text = await res.text();
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.

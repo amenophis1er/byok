@@ -27,6 +27,18 @@ while on 0.x, a breaking change bumps the minor version.
   the core (the caller's `signal` remains). The pair for a long thinking
   turn: `{ timeoutMs: 0, idleTimeoutMs: 120_000 }`. The worker passes both
   through; its token refresh keeps the 120 s default.
+- **Usage that means the same thing everywhere; cache controls; the model
+  that answered** (#38). `usage.inputTokens` is the whole prompt on every
+  provider, cached tokens included — Anthropic's `input_tokens` left them
+  out, so its count rises by `cacheReadTokens + cacheWriteTokens` — and
+  `cacheReadTokens` is read from OpenAI's and the Responses API's
+  `cached_tokens` details too. `ChatRequest.cacheConversation` puts an
+  Anthropic `cache_control` breakpoint on the last message, so each turn
+  reads the one before from the cache; `ChatRequest.cacheKey` is OpenAI's
+  `prompt_cache_key`, sent to OpenAI itself on Chat Completions and the
+  Responses API and to no other server (a Chat Completions server that
+  refuses it gets the request again without it). `AIChatResult.model` is the
+  model that answered, as the provider named it.
 - **Small fixes** (#41): the Anthropic model list is read across its pages
   (`has_more` / `after_id`); the Codex catalog's `context_window` and
   `input_modalities` are kept as `contextWindow` and `capabilities.images`;

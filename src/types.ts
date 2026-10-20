@@ -321,6 +321,15 @@ export interface AIChatRequest {
   connectionRevision?: number;
   /** The model to use; default the connection's. */
   model?: string;
+  /**
+   * Cache the conversation's prefix, not only the system prompt and tools:
+   * Anthropic gets a `cache_control` breakpoint on the last message, so each
+   * turn reads the one before from the cache (a write costs 25% more there;
+   * reads 90% less). The other providers cache the prefix on their own.
+   */
+  cacheConversation?: boolean;
+  /** OpenAI's `prompt_cache_key`: routes requests with the same key to the same cache. Sent on Chat Completions and Responses to OpenAI; left out elsewhere. */
+  cacheKey?: string;
   /** Whole-request timeout, default 120000 ms; `0` turns it off in the core (the worker keeps 120 s for the token refresh, and none for the turn). */
   timeoutMs?: number;
   /** The longest silence allowed, ms: the turn times out when nothing arrives from the server for this long. Off by default. */
@@ -335,6 +344,14 @@ export interface AIChatResult {
   toolCalls?: AIToolCall[];
   providerState?: unknown;
   stopReason?: AIStopReason;
+  /** The model that answered, as the provider named it (an alias resolved, a `-latest` pinned), when it said. */
+  model?: string;
+  /**
+   * Token counts, the same meaning on every provider: `inputTokens` is the
+   * whole prompt, cached tokens included; `cacheReadTokens` the part of it
+   * read from the cache and `cacheWriteTokens` the part written to it, when
+   * the provider says.
+   */
   usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
   error?: string;
   /**

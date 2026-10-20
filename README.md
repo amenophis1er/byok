@@ -288,6 +288,14 @@ out and between chunks. Either is `Timed out waiting for the model.`
 ```ts
 const result = await chat(conn, key, request, { timeoutMs: 0, idleTimeoutMs: 120_000, signal });
 ```
+Token counts mean the same thing on every provider: `usage.inputTokens` is
+the whole prompt, cached tokens included, with `cacheReadTokens` and
+`cacheWriteTokens` the parts the cache served and took when the provider
+says. `result.model` is the model that answered, as the provider named it.
+To cache the conversation rather than only the system prompt and tools, set
+`cacheConversation: true` on the request (Anthropic puts a breakpoint on the
+last message; the others cache the prefix on their own), and `cacheKey` to
+route OpenAI requests with the same key to the same cache.
 
 A listed model carries what is known about it — `contextWindow`,
 `maxOutputTokens`, `capabilities: { tools?, images?, pdf? }` — from the
