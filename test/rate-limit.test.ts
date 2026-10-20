@@ -184,6 +184,9 @@ describe('rateLimitOf', () => {
     // Malformed details say nothing, and never throw.
     const malformed = JSON.stringify({ error: { details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [null, 7, 'x'] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: 20 }, null] } });
     expect(rateLimitOf(429, undefined, malformed, NOW)).toEqual({});
+    // A list of violations too long to spread into a call is read all the same.
+    const many = JSON.stringify({ error: { details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [...Array(200_000).fill({}), { quotaId: 'PerMinute' }] }] } });
+    expect(rateLimitOf(429, undefined, many, NOW)).toEqual({ quota: 'minute' });
   });
 
   it('reads the words of the message only, the window named first, and a spaced duration whole', () => {

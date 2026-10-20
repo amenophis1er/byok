@@ -92,7 +92,7 @@ export class HttpError extends Error {
   readonly status: number;
   /** How long the server asked us to wait, when it said. */
   readonly retryAfterMs?: number;
-  /** When that wait ends, epoch ms. */
+  /** When that wait ends, epoch ms; on a day window, the day's end where the server documents it (Gemini: midnight Pacific), else unset. */
   readonly resetAt?: number;
   /** Which rate-limit window ran out, when the server said. */
   readonly quota?: RateLimitWindow;

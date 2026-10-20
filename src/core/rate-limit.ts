@@ -44,7 +44,7 @@ export type RateLimitQuota = NonNullable<AIChatResult['limit']>;
 export interface RateLimit {
   /** How long the provider asked us to wait, when it said. */
   retryAfterMs?: number;
-  /** When that wait ends, epoch ms (`now + retryAfterMs`, or the instant the provider named). */
+  /** When that wait ends, epoch ms (`now + retryAfterMs`, or the instant the provider named); on a day window, the day's end where the provider documents it (Gemini: midnight Pacific), else unset. */
   resetAt?: number;
   /** Which window ran out, when the provider said. */
   quota?: RateLimitWindow;
@@ -193,7 +193,8 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Na
   const violations: Array<Record<string, unknown>> = [];
   for (const detail of details(json)) {
     if (typeof detail['@type'] === 'string' && /QuotaFailure$/.test(detail['@type']) && Array.isArray(detail['violations'])) {
-      violations.push(...(detail['violations'].filter((v) => v && typeof v === 'object' && !Array.isArray(v)) as Array<Record<string, unknown>>));
+      // One by one: a list too long to spread into a call must not throw.
+      for (const v of detail['violations']) if (v && typeof v === 'object' && !Array.isArray(v)) violations.push(v as Record<string, unknown>);
     }
   }
   const named = violations.find((v) => DAY.test(quotaNames(v))) ?? violations.find((v) => MINUTE.test(quotaNames(v)));
