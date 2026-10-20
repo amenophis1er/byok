@@ -14,23 +14,34 @@ const chunks = openaiSse([
   { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
 ]).split('\n\n').filter(Boolean).map((c) => `${c}\n\n`);
 
-/** A stream that sends each chunk after `gapMs`, honouring the fetch signal as a real body does. */
+/**
+ * A stream that sends each chunk after `gapMs`, honouring the fetch signal as
+ * a real body does. A pull still pending when the stream is cancelled (the
+ * reader stops at `[DONE]`) is dropped, as a real body's would be: its timer
+ * is cleared, and a late one never touches a closed controller.
+ */
 function slowBody(gapMs: number, signal: AbortSignal | null | undefined, stall = false): ReadableStream<Uint8Array> {
   let i = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
   const encoder = new TextEncoder();
   return new ReadableStream({
     pull(controller) {
       return new Promise<void>((resolve, reject) => {
         const onAbort = () => { clearTimeout(timer); reject(new DOMException('aborted', 'AbortError')); };
-        const timer = setTimeout(() => {
+        timer = setTimeout(() => {
           signal?.removeEventListener('abort', onAbort);
-          if (i >= chunks.length) { controller.close(); resolve(); return; }
-          controller.enqueue(encoder.encode(chunks[i++]!));
+          if (cancelled) { resolve(); return; }
+          try {
+            if (i >= chunks.length) controller.close();
+            else controller.enqueue(encoder.encode(chunks[i++]!));
+          } catch { /* closed or errored meanwhile */ }
           resolve();
         }, stall && i === 1 ? 10 * 60_000 : gapMs);
         signal?.addEventListener('abort', onAbort, { once: true });
       });
     },
+    cancel() { cancelled = true; clearTimeout(timer); },
   });
 }
 
