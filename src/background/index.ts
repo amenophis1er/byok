@@ -34,7 +34,7 @@ import {
   getSigningKey,
   type EncBlob,
 } from './crypto.js';
-import { chat as coreChat, TIMED_OUT } from '../core/chat.js';
+import { chat as coreChat, networkCause, TIMED_OUT } from '../core/chat.js';
 import { listModels as coreListModels } from '../core/models.js';
 import { protocolOf, type Connection } from '../core/connection.js';
 import { HttpError, apiRoot, rateLimitFields, type ConnectionCredential } from '../core/http.js';
@@ -796,7 +796,7 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     if (options.signal?.aborted) return { ok: false, error: 'Stopped.', failure: { kind: 'stopped', streamed: false } };
     if (error === TIMEOUT) return { ok: false, error: TIMED_OUT, failure: { kind: 'timeout', streamed: false } };
     // The token refresh could not reach its server, or its server failed: nothing was acted on.
-    if (error instanceof TypeError) return { ok: false, error: errMessage(error), retryable: true, failure: { kind: 'network', cause: error.message, streamed: false } };
+    if (error instanceof TypeError) return { ok: false, error: errMessage(error), retryable: true, failure: { kind: 'network', cause: networkCause(error), streamed: false } };
     const message = errMessage(error);
     const server = /\b(5\d\d|529)\b|overloaded|backend failed/i.test(message);
     return { ok: false, error: message, ...(server ? { retryable: true } : {}), failure: { kind: server ? 'http' : 'request', streamed: false } };

@@ -20,6 +20,7 @@
 
 import type { ModelInfo } from '../types.js';
 import { fetchOf, httpFailure, type RequestOptions } from './http.js';
+import { authFailure } from './auth-error.js';
 
 const ISSUER = 'https://auth.openai.com';
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -202,11 +203,19 @@ export type DevicePoll =
 
 /** One poll. 403/404 and `deviceauth_authorization_pending` mean keep going. */
 export async function pollDevice(deviceAuthId: string, userCode: string, options: RequestOptions = {}): Promise<DevicePoll> {
-  const res = await fetchOf(options)(`${ISSUER}/api/accounts/deviceauth/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ device_auth_id: deviceAuthId, user_code: userCode }),
-  });
+  let res: Response;
+  try {
+    res = await fetchOf(options)(`${ISSUER}/api/accounts/deviceauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ device_auth_id: deviceAuthId, user_code: userCode }),
+    });
+  } catch {
+    // The network, not the user: the approval may be under way. Keep polling.
+    return { status: 'pending' };
+  }
+  // The server, not the user: likewise.
+  if (res.status >= 500) return { status: 'pending' };
   if (res.ok) {
     const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     const authorizationCode = typeof j.authorization_code === 'string' ? j.authorization_code : '';
@@ -248,7 +257,7 @@ export async function exchangeDeviceCode(input: {
       redirect_uri: `${ISSUER}/deviceauth/callback`,
     }).toString(),
   });
-  if (!res.ok) throw new Error(`Code exchange failed (${res.status}): ${await res.text()}`);
+  if (!res.ok) throw authFailure('ChatGPT', 'Code exchange', res.status, await res.text());
   return parseTokens(await res.json());
 }
 
@@ -264,14 +273,8 @@ export async function refreshOpenAiTokens(refreshToken: string, options: Request
       refresh_token: refreshToken,
     }).toString(),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    // A refresh token that was revoked, rotated elsewhere or expired: only a new sign-in recovers, not a retry.
-    if ((res.status === 400 || res.status === 401) && /invalid_grant|revoked|expired/i.test(text)) {
-      throw new Error('Your ChatGPT sign-in was revoked or expired — remove the connection and sign in again.');
-    }
-    throw new Error(`Token refresh failed (${res.status}): ${text}`);
-  }
+  // A refresh token that was revoked, rotated elsewhere or expired: only a new sign-in recovers (`reconnect`), not a retry.
+  if (!res.ok) throw authFailure('ChatGPT', 'Token refresh', res.status, await res.text());
   const tokens = parseTokens(await res.json());
   if (!tokens.refreshToken) tokens.refreshToken = refreshToken;
   return tokens;

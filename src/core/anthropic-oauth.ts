@@ -15,6 +15,7 @@
  */
 
 import { fetchOf, type RequestOptions } from './http.js';
+import { AuthError, authFailure } from './auth-error.js';
 
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize';
@@ -139,7 +140,7 @@ export async function exchangeCode(input: {
       code_verifier: input.verifier,
     }),
   });
-  if (!res.ok) throw new Error(await httpError('Token exchange', res));
+  if (!res.ok) throw await authError('Token exchange', res);
   return tokensFromResponse(await res.json());
 }
 
@@ -154,25 +155,18 @@ export async function refreshTokens(refreshToken: string, options: RequestOption
       refresh_token: refreshToken,
     }),
   });
-  if (!res.ok) throw new Error(await httpError('Token refresh', res));
+  if (!res.ok) throw await authError('Token refresh', res);
   return tokensFromResponse(await res.json());
 }
 
-async function httpError(what: string, res: Response): Promise<string> {
-  let detail = '';
-  try {
-    detail = (await res.text()).slice(0, 300);
-  } catch {
-    /* ignore */
+/** The token endpoint's refusal as an `AuthError`: a rate limit in words, a revoked grant as `reconnect`, else the status and code. The body is never quoted. */
+async function authError(what: string, res: Response): Promise<AuthError> {
+  let body = '';
+  try { body = await res.text(); } catch { /* ignore */ }
+  if (res.status === 429 || /rate.?limit/i.test(body)) {
+    return new AuthError("Anthropic is rate-limiting sign-in (usually from repeated tries). Wait a few minutes, then do it ONCE with a fresh code — or use 'Paste a setup-token instead', which skips this step.", { status: res.status, code: 'rate_limit' });
   }
-  if (res.status === 429 || /rate.?limit/i.test(detail)) {
-    return "Anthropic is rate-limiting sign-in (usually from repeated tries). Wait a few minutes, then do it ONCE with a fresh code — or use 'Paste a setup-token instead', which skips this step.";
-  }
-  // A refresh token that was revoked, rotated elsewhere or expired: only a new sign-in recovers, not a retry.
-  if (what === 'Token refresh' && (res.status === 400 || res.status === 401) && /invalid_grant|revoked|expired/i.test(detail)) {
-    return 'Your Claude sign-in was revoked or expired — remove the connection and sign in again.';
-  }
-  return `${what} failed (${res.status})${detail ? `: ${detail}` : ''}`;
+  return authFailure('Claude', what, res.status, body);
 }
 
 /** Ensure the request body's system prompt leads with the Claude Code sentinel. */

@@ -112,7 +112,7 @@ describe('refreshOpencodeTokens', () => {
     mockFetch(json({ access_token: 'acc2', expires_in: 100 }), json({ error: 'invalid_grant' }, 400), new Response('down', { status: 503 }));
     expect((await refreshOpencodeTokens('ref1')).refreshToken).toBe('ref1');
     await expect(refreshOpencodeTokens('ref1')).rejects.toThrow('revoked or expired');
-    await expect(refreshOpencodeTokens('ref1')).rejects.toThrow('OpenCode token refresh failed (503): down');
+    await expect(refreshOpencodeTokens('ref1')).rejects.toThrow('Token refresh failed (HTTP 503).');
   });
 });
 

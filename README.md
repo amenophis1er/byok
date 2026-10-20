@@ -195,7 +195,8 @@ What it guarantees:
   and nothing had streamed. A rate-limited result also carries what
   the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
   headers, Anthropic's reset instants, Gemini's `RetryInfo`, ChatGPT's
-  `resets_in_seconds` and `x-codex-*-reset-at`) with `resetAt` (epoch ms), and
+  `resets_in_seconds` and `x-codex-*-reset-at`) with `resetAt` (epoch ms,
+  except on a day window, whose end the provider does not say), and
   `quota: 'minute' | 'day' | 'plan'` (the window that ran out; `plan` is a
   subscription's usage window, hours to a week). Show "Rate limited, retrying
   in 20 s", "Daily quota reached for this key" or "Plan limit reached, resets
@@ -382,8 +383,10 @@ storage and UI: the Claude subscription PKCE flow (`startLogin`,
 `pollDevice`, `exchangeDeviceCode`, `refreshOpenAiTokens`), the OpenCode device
 grant (`startOpencodeLogin`, `pollOpencode`, `refreshOpencodeTokens`) and the
 Ollama pairing (`publicKeyLine`, `connectUrl`, `whoami`, `disconnect`,
-`signRequest`). The same warning applies as in the extension: the Claude and
-ChatGPT flows are unofficial.
+`signRequest`). A call the provider refused throws an `AuthError` with
+`status`, `code` and `reconnect`: true when only a new sign-in recovers.
+The same warning applies as in the extension: the Claude and ChatGPT flows
+are unofficial.
 
 Every request goes through the global `fetch` unless you pass your own:
 `chat(conn, key, request, { fetch })`, `listModels(conn, key, { fetch })`,

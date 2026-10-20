@@ -12,6 +12,7 @@
  */
 
 export type { Fetch, RequestOptions } from './http.js';
+export { AuthError } from './auth-error.js';
 
 export {
   CLAUDE_CODE_SENTINEL,

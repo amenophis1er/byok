@@ -51,7 +51,8 @@ export function rateLimitOf(status: number, headers: Headers | undefined, body: 
     ?? (status === 429 ? bodyWait(json, body) ?? codexReset(get, now) ?? resetWindows(get, now) : undefined);
   if (wait !== undefined) {
     out.retryAfterMs = wait;
-    out.resetAt = now + wait;
+    // A day window ends when the day does, which the provider does not say: no instant is claimed for it. The wait stays its words.
+    if (quota !== 'day') out.resetAt = now + wait;
   }
   if (quota) out.quota = quota;
   return out;
@@ -172,6 +173,9 @@ function codexReset(get: (name: string) => string | null, now: number): number |
   const named = given && /^[a-z0-9_-]{1,64}$/.test(given) ? given : undefined;
   const windows = ['primary', 'secondary', ...(named && !['primary', 'secondary'].includes(named) ? [named] : [])];
   const resetOf = (name: string): number | undefined => {
+    // The wait in seconds where given, else the instant.
+    const after = get(`x-codex-${name}-reset-after-seconds`);
+    if (after !== null && /^\d{1,9}(\.\d+)?$/.test(after.trim())) return Math.ceil(Number(after) * 1000);
     const at = get(`x-codex-${name}-reset-at`);
     if (at === null || !/^\d{1,15}$/.test(at.trim())) return undefined;
     const wait = Number(at) * 1000 - now;

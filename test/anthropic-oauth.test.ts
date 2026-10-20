@@ -125,7 +125,9 @@ describe('exchangeCode', () => {
   it('reports other failures with the status and a trimmed body', async () => {
     mockFetch(new Response('x'.repeat(1000), { status: 400 }));
     const error = await exchangeCode({ pasted: 'c#s', expectedState: 's', verifier: 'v' }).catch((e: Error) => e);
-    expect((error as Error).message).toBe(`Token exchange failed (400): ${'x'.repeat(300)}`);
+    // The body is never quoted: it can carry token material.
+    expect((error as Error).message).toBe('Token exchange failed (HTTP 400).');
+    expect(error).toMatchObject({ name: 'AuthError', status: 400, reconnect: false });
   });
 });
 
@@ -144,7 +146,7 @@ describe('refreshTokens', () => {
 
   it('labels its failures as a refresh, and a revoked sign-in as one to redo', async () => {
     mockFetch(new Response('server down', { status: 503 }), new Response('{"error":"invalid_grant"}', { status: 400 }));
-    await expect(refreshTokens('rt1')).rejects.toThrow('Token refresh failed (503): server down');
+    await expect(refreshTokens('rt1')).rejects.toThrow('Token refresh failed (HTTP 503).');
     await expect(refreshTokens('rt1')).rejects.toThrow('Your Claude sign-in was revoked or expired — remove the connection and sign in again.');
   });
 });

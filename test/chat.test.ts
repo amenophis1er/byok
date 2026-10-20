@@ -234,7 +234,7 @@ describe('chat()', () => {
     seed([conn('o', { auth: 'oauth', issuer: 'opencode', baseUrl: 'https://opencode.ai/inference/v1', model: 'glm',
       apiKeyEnc: { plain: 'old' }, refreshTokenEnc: { plain: 'r' }, expiresAt: Date.now() - 1 })], 'o');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('down', { status: 503 })));
-    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: expect.stringMatching(/refresh failed \(503\)/), retryable: true });
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: expect.stringMatching(/refresh failed \(HTTP 503\)/), retryable: true });
   });
 
   describe('listing models', () => {

@@ -27,8 +27,24 @@ while on 0.x, a breaking change bumps the minor version.
   text and tool calls. State written before the tag is read when it looks
   like the protocol's own (Anthropic blocks all carry a `type`, Gemini parts
   never do). `stripProviderState(messages)` is exported from the core for a
-  host moving a conversation. A Gemini placeholder signature for a call that
-  has none is not sent: the current Gemini docs document none.
+  host moving a conversation. (A Gemini placeholder signature for a rebuilt
+  call is sent since the follow-up below.)
+- **Follow-up gaps** (#60, the rest). A sign-in call the provider refused
+  throws an `AuthError` (`@amenophis1er/byok/core/auth`) with `status`,
+  `code` and `reconnect` — true when only a new sign-in recovers
+  (`invalid_grant`, a revoked or expired grant) — and a message that never
+  quotes the body; the ChatGPT device poll keeps going through a 5xx or a
+  dropped connection instead of ending the sign-in; a network failure's
+  `failure.cause` keeps the transport's code ("fetch failed (ECONNRESET:
+  …)", `networkCause()` exported); `providerCodeOf` reads an array-wrapped
+  body; ChatGPT's `x-codex-*-reset-after-seconds` headers are read; a day
+  window claims no `resetAt` (its end is not known), only the provider's
+  wait; a function call replayed to Gemini 3 without a thought signature
+  gets Google's placeholder `skip_thought_signature_validator`; a function
+  tool named `web_search` beside the server tool is refused as a `request`
+  failure (Anthropic would answer 400). Not done: Ollama's `think` field
+  and the gpt-oss analysis channel (reasoning in their own fields is read
+  already; the inline split covers `<think>` tags).
 - **Follow-up fixes** (#60, the bugs): `timeoutMs: Infinity` (and any
   non-finite or oversized limit, idle too) is off or clamped, not an abort
   after a millisecond; the Responses API is always asked for the reasoning's
