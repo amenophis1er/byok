@@ -30,6 +30,17 @@ describe('inputTokens is the whole prompt, the cached part beside it', () => {
     expect(result).toMatchObject({ ok: true, model: 'claude-sonnet-5-5-20260301', usage: { inputTokens: 150, outputTokens: 3, cacheReadTokens: 100, cacheWriteTokens: 30 } });
   });
 
+  it('Anthropic: the counts grow after message_start (a server tool, a pause), and the latest wins', async () => {
+    const result = await anthropicResult(sse(anthropicSse([
+      { type: 'message_start', message: { id: 'm', usage: { input_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Hi.' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { input_tokens: 6000, cache_read_input_tokens: 100, output_tokens: 900, server_tool_use: { web_search_requests: 2 } } },
+      { type: 'message_stop' },
+    ])));
+    expect(result.usage).toEqual({ inputTokens: 6100, outputTokens: 900, cacheReadTokens: 100, cacheWriteTokens: 0, webSearchRequests: 2 });
+  });
+
   it('Chat Completions: prompt_tokens as is, the cached part from its details, the model from the chunks', async () => {
     const result = await openaiResult(sse(openaiSse([
       { model: 'gpt-5.5-2026-02-01', choices: [{ index: 0, delta: { content: 'Hi.' }, finish_reason: null }] },

@@ -29,6 +29,17 @@ while on 0.x, a breaking change bumps the minor version.
   never do). `stripProviderState(messages)` is exported from the core for a
   host moving a conversation. A Gemini placeholder signature for a call that
   has none is not sent: the current Gemini docs document none.
+- **Follow-up fixes** (#60, the bugs): `timeoutMs: Infinity` (and any
+  non-finite or oversized limit, idle too) is off or clamped, not an abort
+  after a millisecond; the Responses API is always asked for the reasoning's
+  encrypted content, and a reasoning item that came without it is left out
+  of the replay (it cannot be found again under `store: false`); Gemini's
+  Pro models, which cannot stop thinking, get nothing for `off` (2.5 Pro)
+  or `LOW` (3 Pro, which takes `LOW` and `HIGH` only); the Anthropic retry
+  after a refused thinking block turns thinking off for that one request on
+  a manual-mode model, whose latest turn would otherwise have to open with
+  the block; Anthropic's token counts take the latest value from
+  `message_delta` too, so a server-tool or paused turn is not under-counted.
 - **The provider's web search** (#37). `tools` takes `{ type: 'web_search',
   maxUses?, allowedDomains?, blockedDomains?, userLocation? }` beside the
   function tools: Anthropic's `web_search` server tool, the Responses API's

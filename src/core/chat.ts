@@ -9,7 +9,7 @@
  */
 
 import type { AIChatRequest, AIChatResult, AIFailure, Protocol } from '../types.js';
-import { anthropicBody, anthropicMessages, anthropicResult } from './chat-anthropic.js';
+import { anthropicBody, anthropicMessages, anthropicResult, claudeThinking } from './chat-anthropic.js';
 import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
 import { geminiBody, geminiResult } from './chat-gemini.js';
 import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
@@ -80,9 +80,9 @@ export const TIMED_OUT = 'Timed out waiting for the model.';
 export async function chat(conn: Connection, credential: ConnectionCredential, req: ChatRequest, options: ChatOptions = {}): Promise<AIChatResult> {
   const controller = new AbortController();
   const timeout = () => controller.abort(new DOMException('timeout', 'TimeoutError'));
-  const limit = req.timeoutMs ?? options.timeoutMs ?? CHAT_TIMEOUT_MS;
+  const limit = delayMs(req.timeoutMs ?? options.timeoutMs ?? CHAT_TIMEOUT_MS);
   const timer = limit > 0 ? setTimeout(timeout, limit) : undefined;
-  const idle = new Idle(req.idleTimeoutMs ?? options.idleTimeoutMs ?? 0, timeout);
+  const idle = new Idle(delayMs(req.idleTimeoutMs ?? options.idleTimeoutMs ?? 0), timeout);
   const onAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
   const hint = options.settingsHint ? ` ${options.settingsHint}` : '';
@@ -141,6 +141,12 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     idle.stop();
     options.signal?.removeEventListener('abort', onAbort);
   }
+}
+
+/** A limit as `setTimeout` takes it: `Infinity`, `NaN` and anything else not finite is off (0), the rest clamped to its ceiling (it reads more as 1 ms). */
+const MAX_DELAY_MS = 2 ** 31 - 1;
+function delayMs(ms: number): number {
+  return Number.isFinite(ms) && ms > 0 ? Math.min(ms, MAX_DELAY_MS) : 0;
 }
 
 /** The silence watchdog: armed when a request goes out, reset by every chunk, and `onTimeout` when the limit passes. Nothing when the limit is 0. */
@@ -313,7 +319,10 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
         n += 1;
         return n >= from && m.providerState !== undefined ? { ...m, providerState: withoutThinking(m.providerState) } : m;
       }) };
-      res = await post(t, url, headers, anthropicBody(stripped, t.model, system));
+      // In manual (extended) thinking mode the latest assistant turn must open with a thinking block; stripped of it, the retry
+      // runs with thinking off for this one request. Adaptive mode has no such rule.
+      const manual = claudeThinking(t.model) === 'enabled' && req.reasoning !== undefined && req.reasoning !== 'off';
+      res = await post(t, url, headers, anthropicBody(manual ? { ...stripped, reasoning: undefined } : stripped, t.model, system));
       if (!res.ok) throw httpError(res, await res.text());
     } else {
       throw httpError(res, text);
@@ -367,7 +376,7 @@ function refusedThinkingFrom(text: string, messages: ChatRequest['messages']): n
   const api = anthropicMessages(messages);
   const named = Number(invalid[1]);
   const before = api.slice(0, named).filter((m) => m.role === 'assistant').length;
-  return api[named]?.role === 'assistant' ? Math.min(before, assistants - 1) : Math.min(before, assistants - 1);
+  return Math.min(before, assistants - 1);
 }
 
 /** Chat Completions at `${baseUrl}/chat/completions`. */

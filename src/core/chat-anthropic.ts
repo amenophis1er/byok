@@ -199,6 +199,19 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   let model: string | undefined;
   const usage: NonNullable<AIChatResult['usage']> = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let finished = false;
+  // The counts are cumulative and may grow after message_start (a server tool's results, a paused turn): the latest value of each wins.
+  // Anthropic's input_tokens leaves the cached tokens out; the whole prompt is the three together, as the other providers count it.
+  let input: number | undefined;
+  const readUsage = (u: Record<string, any> | undefined) => {
+    if (!u || typeof u !== 'object') return;
+    if (typeof u['input_tokens'] === 'number') input = u['input_tokens'];
+    if (typeof u['cache_read_input_tokens'] === 'number') usage.cacheReadTokens = u['cache_read_input_tokens'];
+    if (typeof u['cache_creation_input_tokens'] === 'number') usage.cacheWriteTokens = u['cache_creation_input_tokens'];
+    usage.inputTokens = (input ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+    if (typeof u['output_tokens'] === 'number') usage.outputTokens = u['output_tokens'];
+    if (typeof u['output_tokens_details']?.['thinking_tokens'] === 'number') usage.reasoningTokens = u['output_tokens_details']['thinking_tokens'];
+    if (typeof u['server_tool_use']?.['web_search_requests'] === 'number') usage.webSearchRequests = u['server_tool_use']['web_search_requests'];
+  };
 
   for await (const { event, data } of events) {
     if (event === 'ping') continue;
@@ -206,13 +219,8 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
     try { payload = JSON.parse(data) as Record<string, any>; } catch { return streamFailure(`Malformed stream event (${event}).`); }
     switch (payload['type']) {
       case 'message_start': {
-        const u = payload['message']?.['usage'] ?? {};
         if (typeof payload['message']?.['model'] === 'string') model = payload['message']['model'];
-        // Anthropic's input_tokens leaves the cached tokens out; the whole prompt is the three together, as the other providers count it.
-        usage.cacheReadTokens = u['cache_read_input_tokens'] ?? 0;
-        usage.cacheWriteTokens = u['cache_creation_input_tokens'] ?? 0;
-        usage.inputTokens = (u['input_tokens'] ?? 0) + usage.cacheReadTokens + usage.cacheWriteTokens;
-        usage.outputTokens = u['output_tokens'] ?? 0;
+        readUsage(payload['message']?.['usage']);
         break;
       }
       case 'content_block_start': {
@@ -262,9 +270,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
       }
       case 'message_delta':
         stopReason = payload['delta']?.['stop_reason'] ?? stopReason;
-        if (typeof payload['usage']?.['output_tokens'] === 'number') usage.outputTokens = payload['usage']['output_tokens'];
-        if (typeof payload['usage']?.['output_tokens_details']?.['thinking_tokens'] === 'number') usage.reasoningTokens = payload['usage']['output_tokens_details']['thinking_tokens'];
-        if (typeof payload['usage']?.['server_tool_use']?.['web_search_requests'] === 'number') usage.webSearchRequests = payload['usage']['server_tool_use']['web_search_requests'];
+        readUsage(payload['usage']);
         break;
       case 'message_stop':
         finished = true;

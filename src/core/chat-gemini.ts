@@ -93,14 +93,20 @@ const BUDGETS: Record<AIReasoning, number> = { off: 0, low: 1024, medium: 8192, 
 
 /**
  * Gemini's thinking config for a level: `thinkingLevel` on Gemini 3 and
- * later (`MINIMAL` for off), a `thinkingBudget` before that (0 for off), with
- * the thought summaries asked for when thinking is on. Nothing for a model
- * that is not a Gemini (Gemma, another family), which rejects the field.
+ * later, a `thinkingBudget` before that, with the thought summaries asked
+ * for when thinking is on. The Pro models cannot stop thinking: a 3 Pro takes
+ * `LOW` and `HIGH` only (off and low are `LOW`, medium and high `HIGH`), a
+ * 2.5 Pro refuses a zero budget, so `off` sends it nothing. Nothing for a
+ * model that is not a Gemini (Gemma, another family), which rejects the field.
  */
 export function geminiThinking(reasoning: AIReasoning | undefined, model: string): Record<string, unknown> {
   if (!reasoning || !/^gemini-/.test(model)) return {};
   const third = /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model);
-  const level = third ? { thinkingLevel: reasoning === 'off' ? 'MINIMAL' : reasoning.toUpperCase() } : { thinkingBudget: BUDGETS[reasoning] };
+  const pro = /-pro(?:-|$)/.test(model);
+  let level: Record<string, unknown>;
+  if (third) level = { thinkingLevel: pro ? (reasoning === 'off' || reasoning === 'low' ? 'LOW' : 'HIGH') : reasoning === 'off' ? 'MINIMAL' : reasoning.toUpperCase() };
+  else if (reasoning === 'off' && pro) return {};
+  else level = { thinkingBudget: BUDGETS[reasoning] };
   return { thinkingConfig: { ...level, ...(reasoning !== 'off' ? { includeThoughts: true } : {}) } };
 }
 
