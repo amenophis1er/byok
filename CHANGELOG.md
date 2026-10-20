@@ -29,6 +29,11 @@ while on 0.x, a breaking change bumps the minor version.
   never do). `stripProviderState(messages)` is exported from the core for a
   host moving a conversation. (A Gemini placeholder signature for a rebuilt
   call is sent since the follow-up below.)
+- Two notes on the follow-up: the Gemini placeholder signature goes on
+  replayed history too when none of its parts carries one (a 2.5 turn sent
+  to a 3); a Chat Completions server asked for the web search tool now fails
+  the turn before any request (`request`), instead of dropping the tool in
+  silence.
 - **Follow-up gaps** (#60, the rest). A sign-in call the provider refused
   throws an `AuthError` (`@amenophis1er/byok/core/auth`) with `status`,
   `code` and `reconnect` — true when only a new sign-in recovers

@@ -76,8 +76,13 @@ describe('Gemini thought signatures', () => {
     ]);
     expect(geminiContents(messages, 'gemini-2.5-flash')[1]!.parts[0]).not.toHaveProperty('thoughtSignature');
     expect(geminiContents(messages)[1]!.parts[0]).not.toHaveProperty('thoughtSignature');
-    const own = [{ functionCall: { name: 'a', args: {} } }];
-    expect(geminiContents([messages[0]!, { ...messages[1]!, providerState: { protocol: 'gemini', parts: own } }], 'gemini-3-pro')[1]!.parts).toEqual(own);
+    // Replayed history too, when none of its parts carries a signature (a 2.5 turn sent to a 3); signed history is left alone.
+    const unsigned = [{ text: 'Looking.' }, { functionCall: { name: 'a', args: {} } }, { functionCall: { name: 'b', args: {} } }];
+    expect(geminiContents([messages[0]!, { ...messages[1]!, providerState: { protocol: 'gemini', parts: unsigned } }], 'gemini-3-pro')[1]!.parts)
+      .toEqual([{ text: 'Looking.' }, { functionCall: { name: 'a', args: {} }, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER }, { functionCall: { name: 'b', args: {} } }]);
+    const signed = [{ functionCall: { name: 'a', args: {} }, thoughtSignature: 'real' }, { functionCall: { name: 'b', args: {} } }];
+    expect(geminiContents([messages[0]!, { ...messages[1]!, providerState: { protocol: 'gemini', parts: signed } }], 'gemini-3-pro')[1]!.parts).toEqual(signed);
+    expect(geminiContents([messages[0]!, { ...messages[1]!, providerState: { protocol: 'gemini', parts: unsigned } }], 'gemini-2.5-flash')[1]!.parts).toEqual(unsigned);
   });
 });
 

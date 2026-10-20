@@ -287,7 +287,7 @@ export interface AIToolSpec {
 /**
  * A tool the provider runs itself: web search. Anthropic's `web_search`
  * server tool, the Responses API's `web_search` tool and Gemini's Google
- * Search grounding; a Chat Completions server has none and is sent nothing.
+ * Search grounding; a Chat Completions server has none, and a turn that asks it for one fails before any request.
  * The results stay with the provider (and in `providerState`); the turn
  * reports the queries and sources it used in `webSearch`.
  */

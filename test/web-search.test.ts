@@ -31,7 +31,7 @@ describe('the tool in the request', () => {
     expect(anthropicBody({ ...req, tools: [TOOL] }, 'm', [])['tools']).toHaveLength(1);
   });
 
-  it('Responses: the web_search tool with its filters and location; Gemini: Google Search grounding; Chat Completions: nothing', () => {
+  it('Responses: the web_search tool with its filters and location; Gemini: Google Search grounding; Chat Completions: a refusal before any request', () => {
     const tools = codexBody(req, 'gpt-5.5')['tools'] as Array<Record<string, unknown>>;
     expect(tools).toEqual([
       { type: 'function', name: 'browser', description: 'Control a page.', parameters: { type: 'object' }, strict: false },
@@ -41,8 +41,8 @@ describe('the tool in the request', () => {
     expect(gemini['tools']).toEqual([{ functionDeclarations: [{ name: 'browser', description: 'Control a page.', parametersJsonSchema: { type: 'object' } }] }, { googleSearch: {} }]);
     expect(geminiBody({ ...req, tools: [SEARCH] }, 'gemini-3-pro')).toMatchObject({ tools: [{ googleSearch: {} }] });
     expect(geminiBody({ ...req, tools: [SEARCH] }, 'gemini-3-pro')).not.toHaveProperty('toolConfig');
-    const chat = openaiBody(req, 'gpt-5', 'https://api.openai.com/v1');
-    expect(chat['tools']).toEqual([{ type: 'function', function: { name: 'browser', description: 'Control a page.', parameters: { type: 'object' } } }]);
+    expect(() => openaiBody(req, 'gpt-5', 'https://api.openai.com/v1')).toThrow(/no web search tool/);
+    expect(openaiBody({ ...req, tools: [TOOL] }, 'gpt-5', 'https://api.openai.com/v1')['tools']).toEqual([{ type: 'function', function: { name: 'browser', description: 'Control a page.', parameters: { type: 'object' } } }]);
   });
 });
 

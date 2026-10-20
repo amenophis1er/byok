@@ -49,10 +49,19 @@ export const GEMINI_SIGNATURE_PLACEHOLDER = 'skip_thought_signature_validator';
 /** Whether the model checks thought signatures on replayed function calls: Gemini 3 and later. */
 export const checksSignatures = (model: string): boolean => /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model);
 
-/** The model turn's parts: the API's own when we have them (written under this protocol), else rebuilt — with the placeholder signature on the first call where the model checks. */
+/**
+ * The model turn's parts: the API's own when we have them (written under this
+ * protocol), else rebuilt — with the placeholder signature on the first call
+ * where the model checks, replayed history included (a 2.5 turn, which
+ * carried no signatures, sent to a 3).
+ */
 function modelParts(message: Extract<AIMessage, { role: 'assistant' }>, placeholder: boolean): Part[] {
   const own = geminiState(message.providerState);
-  if (own) return own as Part[];
+  if (own) {
+    if (!placeholder || own.some((p) => typeof p['thoughtSignature'] === 'string')) return own as Part[];
+    const first = own.findIndex((p) => p['functionCall']);
+    return first === -1 ? (own as Part[]) : own.map((p, i) => (i === first ? { ...p, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER } : p)) as Part[];
+  }
   const parts: Part[] = [];
   if (message.content) parts.push({ text: message.content });
   (message.toolCalls ?? []).forEach((call, i) => parts.push({ functionCall: { name: call.name, args: call.args ?? {} }, ...(placeholder && i === 0 ? { thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER } : {}) }));
