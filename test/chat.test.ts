@@ -68,6 +68,18 @@ describe('chat()', () => {
     expect(String((fetch.mock.calls[0] as unknown[])[0])).toBe('http://127.0.0.1:1234/v1/chat/completions');
   });
 
+  it('carries the failure as data for its own refusals: a stopped call, a gone connection, a failed refresh', async () => {
+    seed([conn('a', { kind: 'anthropic', baseUrl: '', model: 'claude', auth: 'oauth', apiKeyEnc: { plain: 'old' }, refreshTokenEnc: { plain: 'rt' }, expiresAt: 1 })], 'a');
+    const stopped = new AbortController();
+    stopped.abort();
+    expect(await chat({ system: '', messages: [] }, { signal: stopped.signal })).toMatchObject({ error: 'Stopped.', failure: { kind: 'stopped', streamed: false } });
+    expect(await chat({ system: '', messages: [], connectionId: 'gone' })).toMatchObject({ failure: { kind: 'request', streamed: false } });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'Failed to fetch', streamed: false } });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('down', { status: 503 })));
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ retryable: true, failure: { kind: 'http', streamed: false } });
+  });
+
   it('refuses a pinned connection that is gone, or whose settings changed since the run started', async () => {
     seed([conn('a', { revision: 2 })], 'a');
     vi.stubGlobal('fetch', vi.fn());

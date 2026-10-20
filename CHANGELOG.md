@@ -40,6 +40,8 @@ while on 0.x, a breaking change bumps the minor version.
   streamed, a failure is never `retryable`** — a cut-off stream after half
   an answer was marked so before — and `withRetry` leaves it alone. An
   `HttpError` from `listModels()` carries `providerCode` and `requestId` too.
+  The worker's own refusals (a stopped call, a gone connection, a token
+  refresh that failed) carry it as well, with nothing streamed.
 - **An idle limit, and the whole-request limit's off switch** (#39).
   `idleTimeoutMs` (on the request or in `ChatOptions`) fails the turn with
   `Timed out waiting for the model.` only when nothing arrives from the
