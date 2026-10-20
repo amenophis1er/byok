@@ -29,6 +29,19 @@ while on 0.x, a breaking change bumps the minor version.
   never do). `stripProviderState(messages)` is exported from the core for a
   host moving a conversation. A Gemini placeholder signature for a call that
   has none is not sent: the current Gemini docs document none.
+- **The provider's web search** (#37). `tools` takes `{ type: 'web_search',
+  maxUses?, allowedDomains?, blockedDomains?, userLocation? }` beside the
+  function tools: Anthropic's `web_search` server tool, the Responses API's
+  `web_search` tool (domains and location; `maxUses` has no equivalent) and
+  Gemini's Google Search grounding (no options). A Chat Completions server
+  has none and is sent nothing. The turn reports what it searched —
+  `AIChatResult.webSearch: { queries, sources }`, a `search` event per
+  query as it runs, `usage.webSearchRequests` — and the provider's own
+  blocks and items stay in `providerState` (Anthropic's results with their
+  `encrypted_content`), so the next turn replays them. **A new stop reason,
+  `pause`**: Anthropic's `pause_turn` was reported as `end`; a paused turn
+  now says so, keeps every block, and continues when the assistant message
+  is sent back as it came (no conversation breakpoint lands on it).
 - **Reasoning** (#35). `ChatRequest.reasoning: 'off' | 'low' | 'medium' | 'high'`
   is mapped per provider: Anthropic's adaptive thinking with
   `output_config.effort` on the models that take it (the 4.6 generation and

@@ -22,6 +22,8 @@ export type ChatEvent =
   | { type: 'text'; delta: string }
   /** Reasoning as the provider shows it (a summary, or a model's inline `<think>` text), before the text it leads to. */
   | { type: 'reasoning'; delta: string }
+  /** The provider ran a web search for this query (a server tool). */
+  | { type: 'search'; query: string }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; argsDelta: string }
   | { type: 'tool_call_end'; id: string }

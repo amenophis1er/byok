@@ -284,6 +284,31 @@ export interface AIToolSpec {
   inputSchema: object;
 }
 
+/**
+ * A tool the provider runs itself: web search. Anthropic's `web_search`
+ * server tool, the Responses API's `web_search` tool and Gemini's Google
+ * Search grounding; a Chat Completions server has none and is sent nothing.
+ * The results stay with the provider (and in `providerState`); the turn
+ * reports the queries and sources it used in `webSearch`.
+ */
+export interface AIServerTool {
+  type: 'web_search';
+  /** The most searches one turn may run (Anthropic). */
+  maxUses?: number;
+  /** Only results from these domains (Anthropic, OpenAI). One of the two lists, not both. */
+  allowedDomains?: string[];
+  /** Never results from these domains (Anthropic, OpenAI). */
+  blockedDomains?: string[];
+  /** Where the user is, to localize results (Anthropic, OpenAI): any of city, region, a two-letter country code, an IANA timezone. */
+  userLocation?: { city?: string; region?: string; country?: string; timezone?: string };
+}
+
+/** What a turn's web searches used: the queries run and the sources read, each once. */
+export interface AIWebSearch {
+  queries: string[];
+  sources: Array<{ url: string; title?: string }>;
+}
+
 /** One tool call the model made. Arguments that were not valid JSON arrive as `argsError`. */
 export interface AIToolCall {
   id: string;
@@ -313,7 +338,8 @@ export type AIMessage =
 export interface AIChatRequest {
   system: string;
   messages: AIMessage[];
-  tools?: AIToolSpec[];
+  /** The caller's function tools, and the provider's server tools (`{ type: 'web_search' }`). */
+  tools?: Array<AIToolSpec | AIServerTool>;
   /** Default 16000. */
   maxTokens?: number;
   /** Default false: at most one tool call per response where the provider supports it. */
@@ -349,7 +375,8 @@ export interface AIChatRequest {
   idleTimeoutMs?: number;
 }
 
-export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal';
+/** Why the turn stopped. `pause`: the provider paused a long server-tool turn (Anthropic's `pause_turn`); send the assistant message back as it is, with its `providerState`, and call again to continue. */
+export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal' | 'pause';
 
 /** How much the model reasons before answering: off, or a level. */
 export type AIReasoning = 'off' | 'low' | 'medium' | 'high';
@@ -386,6 +413,8 @@ export interface AIChatResult {
   stopReason?: AIStopReason;
   /** The model that answered, as the provider named it (an alias resolved, a `-latest` pinned), when it said. */
   model?: string;
+  /** The web searches the provider ran for this turn, when it ran any. */
+  webSearch?: AIWebSearch;
   /** The reasoning the provider showed — Anthropic's summarized thinking, a Responses reasoning summary, Gemini's thought summaries, a model's inline `<think>` text — when it showed any. Never the raw chain of thought. */
   reasoning?: string;
   /**
@@ -394,7 +423,7 @@ export interface AIChatResult {
    * read from the cache and `cacheWriteTokens` the part written to it, when
    * the provider says.
    */
-  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; /** The part of `outputTokens` spent reasoning, when the provider says. */ reasoningTokens?: number };
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; /** The part of `outputTokens` spent reasoning, when the provider says. */ reasoningTokens?: number; /** Web searches the provider ran and bills, when it says. */ webSearchRequests?: number };
   error?: string;
   /** The failure as data: its kind, the provider's code and request id, whether output had streamed. On every `ok: false` result from `chat()`. */
   failure?: AIFailure;
