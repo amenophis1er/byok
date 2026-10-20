@@ -38,8 +38,17 @@ function guarded(onEvent: ChatEventSink | undefined): ChatEventSink | undefined 
 export interface ChatOptions extends RequestOptions {
   /** Stops the turn; the result is then `Stopped.`. */
   signal?: AbortSignal;
-  /** Whole-request limit. Default 120 s. `req.timeoutMs` takes precedence. */
+  /** Whole-request limit. Default 120 s; `0` turns it off (the caller's `signal` remains). `req.timeoutMs` takes precedence. */
   timeoutMs?: number;
+  /**
+   * The longest silence allowed: the turn fails (`Timed out waiting for the
+   * model.`) when nothing arrives from the server for this long, from the
+   * request going out and between stream chunks. Off by default, as is `0`.
+   * For a long thinking turn, `timeoutMs: 0` with an idle limit is the usual
+   * pair: a healthy stream runs as long as it needs, a hung one is cut.
+   * `req.idleTimeoutMs` takes precedence.
+   */
+  idleTimeoutMs?: number;
   /** Gets each request (URL and body, image bytes redacted) and result. Off when absent. */
   debug?: (label: string, data: unknown) => void;
   /** Appended to "no model / no key" errors: tell users where to fix it. */
@@ -66,7 +75,10 @@ export const TIMED_OUT = 'Timed out waiting for the model.';
  */
 export async function chat(conn: Connection, credential: ConnectionCredential, req: ChatRequest, options: ChatOptions = {}): Promise<AIChatResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new DOMException('timeout', 'TimeoutError')), req.timeoutMs ?? options.timeoutMs ?? CHAT_TIMEOUT_MS);
+  const timeout = () => controller.abort(new DOMException('timeout', 'TimeoutError'));
+  const limit = req.timeoutMs ?? options.timeoutMs ?? CHAT_TIMEOUT_MS;
+  const timer = limit > 0 ? setTimeout(timeout, limit) : undefined;
+  const idle = new Idle(req.idleTimeoutMs ?? options.idleTimeoutMs ?? 0, timeout);
   const onAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
   const hint = options.settingsHint ? ` ${options.settingsHint}` : '';
@@ -76,7 +88,7 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     const model = req.model ?? conn.model;
     if (!model) throw new Error(`The AI connection has no model selected.${hint}`);
     const onEvent = guarded(options.onEvent);
-    const ctx: Turn = { conn, credential, model, req, signal: controller.signal, fetch: fetchOf(options), debug: options.debug, hint, onEvent };
+    const ctx: Turn = { conn, credential, model, req, signal: controller.signal, fetch: fetchOf(options), idle, debug: options.debug, hint, onEvent };
 
     const candidates = protocolCandidates(conn, model);
     let mismatch: ProtocolMismatch | undefined;
@@ -110,7 +122,41 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     return { ok: false, error: message, ...(/^HTTP (5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {}) };
   } finally {
     clearTimeout(timer);
+    idle.stop();
     options.signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** The silence watchdog: armed when a request goes out, reset by every chunk, and `onTimeout` when the limit passes. Nothing when the limit is 0. */
+class Idle {
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private done = false;
+  constructor(private readonly ms: number, private readonly onTimeout: () => void) {}
+  touch(): void {
+    if (this.ms <= 0 || this.done) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(this.onTimeout, this.ms);
+  }
+  /** Disarms for good: a read still pending when the turn ends cannot arm it again. */
+  stop(): void {
+    this.done = true;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+  /** The body with the watchdog on it: every chunk read resets the clock, and the end of the stream stops it. */
+  watch(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+    if (this.ms <= 0) return body;
+    const reader = body.getReader();
+    this.touch();
+    return new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        const { done, value } = await reader.read();
+        if (done) { clearTimeout(this.timer); controller.close(); return; }
+        this.touch();
+        controller.enqueue(value);
+      },
+      cancel: async (reason) => { clearTimeout(this.timer); await reader.cancel(reason); },
+    });
   }
 }
 
@@ -172,6 +218,7 @@ interface Turn {
   req: ChatRequest;
   signal: AbortSignal;
   fetch: Fetch;
+  idle: Idle;
   debug?: (label: string, data: unknown) => void;
   hint: string;
   onEvent?: ChatEventSink;
@@ -186,6 +233,7 @@ function redactImages(body: unknown): unknown {
 
 async function post(t: Turn, url: URL, headers: Record<string, string>, body: unknown): Promise<Response> {
   t.debug?.('chat request', { connection: t.conn.label, url: url.origin + url.pathname, body: redactImages(body) });
+  t.idle.touch();
   return t.fetch(url, {
     method: 'POST', signal: t.signal,
     headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
@@ -193,9 +241,9 @@ async function post(t: Turn, url: URL, headers: Record<string, string>, body: un
   });
 }
 
-function bodyOf(res: Response): ReadableStream<Uint8Array> {
+function bodyOf(t: Turn, res: Response): ReadableStream<Uint8Array> {
   if (!res.body) throw new Error('The provider sent no response body.');
-  return res.body;
+  return t.idle.watch(res.body);
 }
 
 /** One model turn in `protocol`, against the connection's server with its credentials. */
@@ -220,7 +268,7 @@ async function geminiTurn(t: Turn): Promise<AIChatResult> {
     : token ? { 'x-goog-api-key': token } : {};
   const res = await post(t, url, headers, geminiBody(t.req));
   if (!res.ok) throw httpError(res, await res.text());
-  return geminiResult(readSse(bodyOf(res)), t.onEvent);
+  return geminiResult(readSse(bodyOf(t, res)), t.onEvent);
 }
 
 /** Messages API: Anthropic itself (key or subscription), or another server serving it, such as OpenCode. */
@@ -238,7 +286,7 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
     : { ...(await authorizerFor(conn, credential)('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
   const res = await post(t, url, headers, anthropicBody(req, t.model, system));
   if (!res.ok) throw httpError(res, await res.text());
-  return anthropicResult(readSse(bodyOf(res)), t.onEvent);
+  return anthropicResult(readSse(bodyOf(t, res)), t.onEvent);
 }
 
 /** Responses API: the Codex backend for a ChatGPT sign-in, else `${baseUrl}/responses`. */
@@ -262,7 +310,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
     throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text)) : httpError(res, text);
   }
-  return codexResult(readSse(bodyOf(res)), codex ? codexFailure : providerFailure, t.onEvent);
+  return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent);
 }
 
 /** Chat Completions at `${baseUrl}/chat/completions`. */
@@ -283,7 +331,7 @@ async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
     omit.add(field);
     res = await send();
   }
-  return openaiResult(readSse(bodyOf(res)), t.onEvent);
+  return openaiResult(readSse(bodyOf(t, res)), t.onEvent);
 }
 
 /* ── failures ────────────────────────────────────────────────────── */

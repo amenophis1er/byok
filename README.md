@@ -278,6 +278,17 @@ const result = await chat(conn, key, request, {
 });
 ```
 
+Two limits bound a turn. The whole-request one (`timeoutMs`, 120 s) cuts the
+turn whatever the stream is doing; `0` turns it off, and your `signal` still
+stops it. The idle one (`idleTimeoutMs`, off by default) fails the turn only
+when nothing arrives from the server for that long, from the request going
+out and between chunks. Either is `Timed out waiting for the model.`
+(`TIMED_OUT`). For a long thinking turn, pair them:
+
+```ts
+const result = await chat(conn, key, request, { timeoutMs: 0, idleTimeoutMs: 120_000, signal });
+```
+
 A listed model carries what is known about it — `contextWindow`,
 `maxOutputTokens`, `capabilities: { tools?, images?, pdf? }` — from the
 listing where it says (Anthropic since the Claude 5 generation, Gemini,

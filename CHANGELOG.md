@@ -19,6 +19,14 @@ while on 0.x, a breaking change bumps the minor version.
   `codex_cli_rs` as before (`CODEX_ORIGINATOR`, exported). The worker takes
   it as `AiHandlerOptions.codexOriginator`. The device-flow and refresh calls
   never carried one, and still do not.
+- **An idle limit, and the whole-request limit's off switch** (#39).
+  `idleTimeoutMs` (on the request or in `ChatOptions`) fails the turn with
+  `Timed out waiting for the model.` only when nothing arrives from the
+  server for that long, from the request going out and between stream
+  chunks; off by default. `timeoutMs: 0` turns the whole-request limit off in
+  the core (the caller's `signal` remains). The pair for a long thinking
+  turn: `{ timeoutMs: 0, idleTimeoutMs: 120_000 }`. The worker passes both
+  through; its token refresh keeps the 120 s default.
 - **Small fixes** (#41): the Anthropic model list is read across its pages
   (`has_more` / `after_id`); the Codex catalog's `context_window` and
   `input_modalities` are kept as `contextWindow` and `capabilities.images`;

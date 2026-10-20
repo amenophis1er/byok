@@ -783,11 +783,12 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
     if (conn.kind === 'chrome-builtin') throw new Error('The on-device model has no tool calling.');
     // The limit covers the token refresh as well as the turn.
     const started = Date.now();
-    const limit = req.timeoutMs ?? CHAT_TIMEOUT_MS;
+    // `timeoutMs: 0` leaves the turn unlimited; the refresh keeps the default limit.
+    const limit = req.timeoutMs || CHAT_TIMEOUT_MS;
     const credential = await withTimeout(credentialFor(conn), limit);
     const debug = await debugOn();
     return await coreChat({ ...conn, originator: opts.codexOriginator }, credential, req, {
-      signal: options.signal, timeoutMs: Math.max(1, limit - (Date.now() - started)),
+      signal: options.signal, timeoutMs: req.timeoutMs === 0 ? 0 : Math.max(1, limit - (Date.now() - started)),
       debug: debug ? dlog : undefined, settingsHint: opts.settingsHint,
     });
   } catch (error) {
