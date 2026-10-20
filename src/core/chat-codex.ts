@@ -18,11 +18,12 @@
  * Provider error text is never copied into an error: it can echo the request.
  */
 
-import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIToolCall } from '../types.js';
+import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIServerTool, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { streamFailure } from './failure.js';
 import { responsesState, tagged } from './provider-state.js';
+import { approximateLocation, functionTools, webSearchTool } from './tools.js';
 
 export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
 
@@ -83,10 +84,23 @@ export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens =
     // A level asks for the effort and a summary, and for the encrypted reasoning to replay (store is false).
     ...(req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' }, include: ['reasoning.encrypted_content'] } : {}),
     ...(req.tools?.length ? {
-      tools: req.tools.map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
+      tools: [
+        ...functionTools(req).map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
+        ...(webSearchTool(req) ? [webSearchItem(webSearchTool(req)!)] : []),
+      ],
       tool_choice: 'auto',
       parallel_tool_calls: req.parallelToolCalls === true,
     } : {}),
+  };
+}
+
+/** The Responses API's web search tool, with the domain list and location given. */
+function webSearchItem(tool: AIServerTool): Item {
+  const location = approximateLocation(tool);
+  return {
+    type: 'web_search',
+    ...(tool.allowedDomains?.length ? { filters: { allowed_domains: tool.allowedDomains } } : tool.blockedDomains?.length ? { filters: { blocked_domains: tool.blockedDomains } } : {}),
+    ...(location ? { user_location: { type: 'approximate', ...location } } : {}),
   };
 }
 
@@ -136,6 +150,9 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const items: Array<Record<string, unknown>> = [];
   const thoughts: string[] = [];
   let thought = '';
+  const queries: string[] = [];
+  let searchCalls = 0;
+  const sources = new Map<string, { url: string; title?: string }>();
 
   const call = (item: Record<string, unknown>) => {
     const id = typeof item['id'] === 'string' ? item['id'] : String(item['call_id'] ?? '');
@@ -188,6 +205,24 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
       case 'response.output_item.done': {
         const item = event['item'] ?? {};
         if (item && typeof item === 'object' && typeof item.type === 'string') items.push(item as Record<string, unknown>);
+        if (item.type === 'web_search_call') {
+          // One billed call; its action names the queries (`queries`, or the older `query`). The sources read come as the message's citations.
+          searchCalls += 1;
+          const action = item.action ?? {};
+          const named = Array.isArray(action.queries) ? action.queries : [action.query];
+          for (const query of named) {
+            if (typeof query === 'string' && query) { queries.push(query); onEvent?.({ type: 'search', query }); }
+          }
+        }
+        if (item.type === 'message' && Array.isArray(item.content)) {
+          for (const part of item.content) {
+            for (const note of Array.isArray(part?.annotations) ? part.annotations : []) {
+              if (note?.type === 'url_citation' && typeof note.url === 'string' && !sources.has(note.url)) {
+                sources.set(note.url, { url: note.url, ...(typeof note.title === 'string' ? { title: note.title } : {}) });
+              }
+            }
+          }
+        }
         if (item.type !== 'function_call') break;
         const entry = call(item);
         if (entry.ended) break; // a repeated `done` changes nothing
@@ -211,6 +246,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
           const cached = u.input_tokens_details?.cached_tokens;
           const reasoned = u.output_tokens_details?.reasoning_tokens;
           usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens, ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}), ...(typeof reasoned === 'number' ? { reasoningTokens: reasoned } : {}) };
+          if (searchCalls > 0) usage.webSearchRequests = searchCalls;
         }
         incomplete = event['type'] === 'response.incomplete' || response.status === 'incomplete';
         completed = true;
@@ -240,12 +276,14 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const text = [...texts.values()].join('\n\n').trim();
   if (thought) thoughts.push(thought);
   const reasoning = thoughts.join('\n\n').trim();
+  const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
   // A turn cut off by the limit may carry a truncated call: never hand one out.
-  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
+  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
   return {
     ok: true,
     ...(text ? { text } : {}),
     ...(reasoning ? { reasoning } : {}),
+    ...(webSearch ? { webSearch } : {}),
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
     // The turn's items come back as sent, the reasoning's encrypted content included, to be the next input.
     ...(items.length > 0 ? { providerState: tagged.responses(items) } : {}),

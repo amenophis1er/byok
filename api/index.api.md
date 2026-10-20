@@ -87,8 +87,7 @@ export interface AIChatRequest {
     // (undocumented)
     system: string;
     timeoutMs?: number;
-    // (undocumented)
-    tools?: AIToolSpec[];
+    tools?: Array<AIToolSpec | AIServerTool>;
 }
 
 // @public (undocumented)
@@ -117,8 +116,10 @@ export interface AIChatResult {
         outputTokens: number;
         cacheReadTokens?: number;
         cacheWriteTokens?: number; /** The part of `outputTokens` spent reasoning, when the provider says. */
-        reasoningTokens?: number;
+        reasoningTokens?: number; /** Web searches the provider ran and bills, when it says. */
+        webSearchRequests?: number;
     };
+    webSearch?: AIWebSearch;
 }
 
 // @public
@@ -368,6 +369,21 @@ export interface AISaveConnectionRequest {
     type: string;
 }
 
+// @public
+export interface AIServerTool {
+    allowedDomains?: string[];
+    blockedDomains?: string[];
+    maxUses?: number;
+    // (undocumented)
+    type: 'web_search';
+    userLocation?: {
+        city?: string;
+        region?: string;
+        country?: string;
+        timezone?: string;
+    };
+}
+
 // @public (undocumented)
 export interface AISetActiveRequest {
     // (undocumented)
@@ -376,8 +392,8 @@ export interface AISetActiveRequest {
     type: string;
 }
 
-// @public (undocumented)
-export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal';
+// @public
+export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal' | 'pause';
 
 // @public
 export interface AIToolCall {
@@ -402,6 +418,17 @@ export interface AIToolSpec {
     inputSchema: object;
     // (undocumented)
     name: string;
+}
+
+// @public
+export interface AIWebSearch {
+    // (undocumented)
+    queries: string[];
+    // (undocumented)
+    sources: Array<{
+        url: string;
+        title?: string;
+    }>;
 }
 
 // @public

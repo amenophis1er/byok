@@ -26,6 +26,7 @@ import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { chatCompletionsState, tagged } from './provider-state.js';
 import { streamFailure } from './failure.js';
+import { functionTools } from './tools.js';
 
 /** What an assistant turn carries back: each tool call's `extra_content`, by call id. */
 interface OpenAiState {
@@ -103,7 +104,8 @@ export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_c
 
 /** The request body, without the `omit`ted fields. */
 export function openaiBody(req: AIChatRequest, model: string, base: string, omit: ReadonlySet<OptionalField> = new Set()): Record<string, unknown> {
-  const tools = (req.tools ?? []).map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }));
+  // A Chat Completions server has no web search of its own: the caller's function tools only.
+  const tools = functionTools(req).map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }));
   const openai = /(^|\.)openai\.com$/i.test(safeHost(base));
   return {
     model,

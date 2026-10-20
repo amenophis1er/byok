@@ -298,6 +298,21 @@ out and between chunks. Either is `Timed out waiting for the model.`
 ```ts
 const result = await chat(conn, key, request, { timeoutMs: 0, idleTimeoutMs: 120_000, signal });
 ```
+Let the provider search the web, where it can:
+
+```ts
+const result = await chat(conn, key, { ...request, tools: [...tools, { type: 'web_search', maxUses: 3 }] }, {
+  onEvent: (e) => { if (e.type === 'search') status(`Searching: ${e.query}`); },
+});
+result.webSearch;                // { queries, sources: [{ url, title }] }, when it searched
+if (result.stopReason === 'pause') { /* Anthropic paused a long search turn: push the assistant message, providerState and all, and call again */ }
+```
+
+Anthropic runs its `web_search` server tool, the Responses API its
+`web_search` tool, Gemini its Google Search grounding; a Chat Completions
+server has none and is sent nothing. The results stay with the provider and
+in `providerState`; the turn reports the queries and sources it used.
+
 Ask for reasoning where the model can, and watch it:
 
 ```ts

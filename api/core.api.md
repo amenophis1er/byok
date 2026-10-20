@@ -22,6 +22,11 @@ export type ChatEvent = {
 | {
     type: 'reasoning';
     delta: string;
+}
+/** The provider ran a web search for this query (a server tool). */
+| {
+    type: 'search';
+    query: string;
 } | {
     type: 'tool_call_start';
     id: string;

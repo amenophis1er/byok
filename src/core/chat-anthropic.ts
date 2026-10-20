@@ -21,6 +21,7 @@ import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { anthropicState, tagged } from './provider-state.js';
 import { streamFailure } from './failure.js';
+import { approximateLocation, functionTools, webSearchTool } from './tools.js';
 
 type Block = Record<string, unknown> & { type: string };
 
@@ -84,7 +85,8 @@ export function anthropicMessages(messages: AIMessage[]): Array<{ role: 'user' |
  */
 function withConversationBreakpoint(messages: ReturnType<typeof anthropicMessages>): ReturnType<typeof anthropicMessages> {
   const last = messages[messages.length - 1];
-  if (!last) return messages;
+  // A paused assistant turn goes back exactly as it came; the breakpoint waits for the next user turn.
+  if (!last || last.role !== 'user') return messages;
   const blocks: Block[] = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content.map((b) => ({ ...b }));
   const eligible = (block: Block) => block.type !== 'thinking' && block.type !== 'redacted_thinking' && !(block.type === 'text' && !block['text']);
   const block = [...blocks].reverse().find(eligible);
@@ -135,7 +137,18 @@ export function anthropicBody(req: AIChatRequest, model: string, system: Array<{
   const systemBlocks: Block[] = system.map((block) => ({ ...block }));
   const lastSystem = systemBlocks[systemBlocks.length - 1];
   if (lastSystem) lastSystem['cache_control'] = { type: 'ephemeral' };
-  const tools: Array<Record<string, unknown>> = (req.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
+  const tools: Array<Record<string, unknown>> = functionTools(req).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
+  const search = webSearchTool(req);
+  if (search) {
+    const location = approximateLocation(search);
+    tools.push({
+      type: 'web_search_20250305', name: 'web_search',
+      ...(search.maxUses !== undefined ? { max_uses: search.maxUses } : {}),
+      ...(search.allowedDomains?.length ? { allowed_domains: search.allowedDomains } : search.blockedDomains?.length ? { blocked_domains: search.blockedDomains } : {}),
+      ...(location ? { user_location: { type: 'approximate', ...location } } : {}),
+    });
+  }
+  // The last tool, server tool included, closes the cached prefix.
   const lastTool = tools[tools.length - 1];
   if (lastTool) lastTool['cache_control'] = { type: 'ephemeral' };
   const messages = anthropicMessages(req.messages);
@@ -152,9 +165,30 @@ export function anthropicBody(req: AIChatRequest, model: string, system: Array<{
 }
 
 const STOP: Record<string, AIStopReason> = {
-  end_turn: 'end', stop_sequence: 'end', pause_turn: 'end',
+  end_turn: 'end', stop_sequence: 'end', pause_turn: 'pause',
   tool_use: 'tool_use', max_tokens: 'length', model_context_window_exceeded: 'length', refusal: 'refusal',
 };
+
+/** The web searches in a turn's blocks: each `server_tool_use` query, and the sources its `web_search_tool_result` lists. */
+function searchesOf(blocks: Block[]): AIChatResult['webSearch'] {
+  const queries: string[] = [];
+  const sources = new Map<string, { url: string; title?: string }>();
+  for (const block of blocks) {
+    if (!block) continue;
+    if (block.type === 'server_tool_use' && block['name'] === 'web_search') {
+      const query = (block['input'] as Record<string, unknown> | undefined)?.['query'];
+      if (typeof query === 'string' && query) queries.push(query);
+    }
+    if (block.type === 'web_search_tool_result' && Array.isArray(block['content'])) {
+      for (const result of block['content'] as Array<Record<string, unknown>>) {
+        if (result && typeof result['url'] === 'string' && !sources.has(result['url'])) {
+          sources.set(result['url'], { url: result['url'], ...(typeof result['title'] === 'string' ? { title: result['title'] } : {}) });
+        }
+      }
+    }
+  }
+  return queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
+}
 
 /** Rebuild the response from its SSE events. Anything short of a clean `message_stop` is a failure. */
 export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
@@ -187,6 +221,8 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
           partialJson.set(payload['index'], '');
           onEvent?.({ type: 'tool_call_start', id: String(block['id']), name: String(block['name']) });
         }
+        // A server tool's input streams the same way, but it is the provider's call, not the caller's.
+        if (block.type === 'server_tool_use') partialJson.set(payload['index'], '');
         if (block.type === 'text' && typeof block['text'] === 'string' && block['text']) onEvent?.({ type: 'text', delta: block['text'] });
         blocks[payload['index']] = block;
         break;
@@ -206,7 +242,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
         else if (delta['type'] === 'signature_delta') block['signature'] = `${block['signature'] ?? ''}${delta['signature']}`;
         else if (delta['type'] === 'input_json_delta') {
           partialJson.set(payload['index'], `${partialJson.get(payload['index']) ?? ''}${delta['partial_json']}`);
-          if (delta['partial_json']) onEvent?.({ type: 'tool_call_delta', id: String(block['id']), argsDelta: String(delta['partial_json']) });
+          if (delta['partial_json'] && block.type === 'tool_use') onEvent?.({ type: 'tool_call_delta', id: String(block['id']), argsDelta: String(delta['partial_json']) });
         }
         break;
       }
@@ -216,12 +252,19 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
           ended.add(payload['index']);
           onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
         }
+        if (block?.type === 'server_tool_use') {
+          const raw = partialJson.get(payload['index']) ?? '';
+          try { block['input'] = raw.trim() ? JSON.parse(raw) : {}; } catch { block['input'] = {}; }
+          const query = (block['input'] as Record<string, unknown>)['query'];
+          if (block['name'] === 'web_search' && typeof query === 'string' && query) onEvent?.({ type: 'search', query });
+        }
         break;
       }
       case 'message_delta':
         stopReason = payload['delta']?.['stop_reason'] ?? stopReason;
         if (typeof payload['usage']?.['output_tokens'] === 'number') usage.outputTokens = payload['usage']['output_tokens'];
         if (typeof payload['usage']?.['output_tokens_details']?.['thinking_tokens'] === 'number') usage.reasoningTokens = payload['usage']['output_tokens_details']['thinking_tokens'];
+        if (typeof payload['usage']?.['server_tool_use']?.['web_search_requests'] === 'number') usage.webSearchRequests = payload['usage']['server_tool_use']['web_search_requests'];
         break;
       case 'message_stop':
         finished = true;
@@ -263,15 +306,17 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
 
   const mapped = STOP[stopReason ?? ''] ?? 'end';
   // A turn cut off by max_tokens or a refusal may carry a truncated tool call:
-  // never hand one out, and drop it from what gets replayed.
+  // never hand one out, and drop it from what gets replayed. A paused turn goes back whole.
   const runnable = mapped === 'tool_use' || mapped === 'end';
-  const state = runnable ? blocks.filter(Boolean) : blocks.filter((block) => block && block.type !== 'tool_use');
+  const state = runnable || mapped === 'pause' ? blocks.filter(Boolean) : blocks.filter((block) => block && block.type !== 'tool_use');
   const text = texts.join('');
   const reasoning = thoughts.join('\n\n');
+  const webSearch = searchesOf(blocks);
   return {
     ok: true,
     ...(text ? { text } : {}),
     ...(reasoning ? { reasoning } : {}),
+    ...(webSearch ? { webSearch } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     providerState: tagged.anthropic(state),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,

@@ -80,15 +80,15 @@ describe('the conversation breakpoint', () => {
     expect((empty['messages'] as Array<{ content: unknown }>)[0]!.content).toBe('');
   });
 
-  it('never lands on a thinking block: the nearest eligible block before it carries it, and the caller\'s blocks are not edited', () => {
+  it('waits for a user turn: a paused or trailing assistant turn goes back as it came, thinking blocks and all', () => {
     const state = [{ type: 'text', text: 'Thought it over.' }, { type: 'thinking', thinking: '…', signature: 'sig' }];
-    const body = anthropicBody({ ...req, messages: [{ role: 'user', content: 'Go' }, { role: 'assistant', content: 'Thought it over.', providerState: state }], cacheConversation: true }, 'm', []);
-    const content = (body['messages'] as Array<{ content: Block[] }>)[1]!.content;
-    expect(content[0]).toMatchObject({ type: 'text', cache_control: { type: 'ephemeral' } });
-    expect(content[1]).not.toHaveProperty('cache_control');
+    const trailing = anthropicBody({ ...req, messages: [{ role: 'user', content: 'Go' }, { role: 'assistant', content: 'Thought it over.', providerState: state }], cacheConversation: true }, 'm', []);
+    expect(JSON.stringify(trailing['messages'])).not.toContain('cache_control');
     expect(state[0]).not.toHaveProperty('cache_control');
-    const onlyThinking = anthropicBody({ ...req, messages: [{ role: 'assistant', providerState: [{ type: 'redacted_thinking', data: 'x' }] }], cacheConversation: true }, 'm', []);
-    expect(JSON.stringify(onlyThinking['messages'])).not.toContain('cache_control');
+    const followed = anthropicBody({ ...req, messages: [{ role: 'user', content: 'Go' }, { role: 'assistant', content: 'Thought it over.', providerState: state }, { role: 'user', content: 'And?' }], cacheConversation: true }, 'm', []);
+    const messages = followed['messages'] as Array<{ content: Block[] }>;
+    expect(messages[2]!.content).toEqual([{ type: 'text', text: 'And?', cache_control: { type: 'ephemeral' } }]);
+    expect(JSON.stringify(messages[1])).not.toContain('cache_control');
   });
 });
 

@@ -30,6 +30,7 @@ import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { geminiState, tagged } from './provider-state.js';
 import { streamFailure } from './failure.js';
+import { functionTools, webSearchTool } from './tools.js';
 
 type Part = Record<string, unknown>;
 interface Content { role: 'user' | 'model'; parts: Part[] }
@@ -104,11 +105,14 @@ export function geminiThinking(reasoning: AIReasoning | undefined, model: string
 }
 
 export function geminiBody(req: AIChatRequest, model = ''): Record<string, unknown> {
-  const declarations = (req.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.inputSchema }));
+  const declarations = functionTools(req).map((tool) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.inputSchema }));
+  // Google Search grounding is Gemini's web search; it takes no domain list or location.
+  const tools = [...(declarations.length > 0 ? [{ functionDeclarations: declarations }] : []), ...(webSearchTool(req) ? [{ googleSearch: {} }] : [])];
   return {
     ...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
     contents: geminiContents(req.messages),
-    ...(declarations.length > 0 ? { tools: [{ functionDeclarations: declarations }], toolConfig: { functionCallingConfig: { mode: 'AUTO' } } } : {}),
+    ...(tools.length > 0 ? { tools } : {}),
+    ...(declarations.length > 0 ? { toolConfig: { functionCallingConfig: { mode: 'AUTO' } } } : {}),
     generationConfig: { maxOutputTokens: req.maxTokens ?? GEMINI_DEFAULT_MAX_TOKENS, ...geminiThinking(req.reasoning, model) },
   };
 }
@@ -125,6 +129,8 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
   let model: string | undefined;
+  const queries: string[] = [];
+  const sources = new Map<string, { url: string; title?: string }>();
 
   for await (const { data } of events) {
     let chunk: Record<string, any>;
@@ -142,6 +148,15 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     }
     const candidate = chunk['candidates']?.[0];
     if (!candidate) continue;
+    // Grounding: the queries run and the web sources read, in whichever chunk carries them.
+    const grounding = candidate['groundingMetadata'];
+    for (const query of Array.isArray(grounding?.['webSearchQueries']) ? grounding['webSearchQueries'] : []) {
+      if (typeof query === 'string' && query && !queries.includes(query)) { queries.push(query); onEvent?.({ type: 'search', query }); }
+    }
+    for (const chunkRef of Array.isArray(grounding?.['groundingChunks']) ? grounding['groundingChunks'] : []) {
+      const web = chunkRef?.['web'];
+      if (web && typeof web['uri'] === 'string' && !sources.has(web['uri'])) sources.set(web['uri'], { url: web['uri'], ...(typeof web['title'] === 'string' ? { title: web['title'] } : {}) });
+    }
     for (const part of candidate['content']?.['parts'] ?? []) {
       if (onEvent) {
         if (typeof part['text'] === 'string' && part['text']) onEvent({ type: part['thought'] ? 'reasoning' : 'text', delta: part['text'] });
@@ -185,10 +200,14 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   const mapped = STOP[finishReason] ?? 'end';
   // A turn cut off by the limit or a filter may carry a truncated call: never hand one out.
   const runnable = mapped === 'end';
+  const webSearch = queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
+  // Gemini 3 and later bill each query; before that, grounding is billed once per prompt. Unknown model, no count.
+  if (webSearch && usage && model) usage.webSearchRequests = /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model) ? queries.length : 1;
   return {
     ok: true,
     ...(text ? { text } : {}),
     ...(reasoning ? { reasoning } : {}),
+    ...(webSearch ? { webSearch } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     // The parts come back as sent, signatures included; thought summaries without one are left out.
     ...(runnable && parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
