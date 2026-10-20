@@ -9,7 +9,7 @@
  */
 
 import type { AIChatRequest, AIChatResult, AIFailure, Protocol } from '../types.js';
-import { anthropicBody, anthropicResult } from './chat-anthropic.js';
+import { anthropicBody, anthropicMessages, anthropicResult } from './chat-anthropic.js';
 import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
 import { geminiBody, geminiResult } from './chat-gemini.js';
 import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
@@ -303,9 +303,16 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
   let res = await post(t, url, headers, anthropicBody(req, t.model, system));
   if (!res.ok) {
     const text = await res.text();
-    // The API refused the thinking blocks it had itself signed (an edited prefix, a block bound to another conversation): once more without them.
-    if (res.status === 400 && /thinking.{0,120}(cannot be modified|signature)|signature.{0,60}thinking/i.test(text) && hasThinking(req.messages)) {
-      const stripped = { ...req, messages: req.messages.map((m) => (m.role === 'assistant' && m.providerState !== undefined ? { ...m, providerState: withoutThinking(m.providerState) } : m)) };
+    // The API refused the thinking blocks it had itself signed (an edited prefix, a block bound to another conversation): once more
+    // without them, from the turn it named onward — the turns before keep theirs, as the docs ask.
+    const from = res.status === 400 ? refusedThinkingFrom(text, req.messages) : undefined;
+    if (from !== undefined) {
+      let n = -1;
+      const stripped = { ...req, messages: req.messages.map((m) => {
+        if (m.role !== 'assistant') return m;
+        n += 1;
+        return n >= from && m.providerState !== undefined ? { ...m, providerState: withoutThinking(m.providerState) } : m;
+      }) };
       res = await post(t, url, headers, anthropicBody(stripped, t.model, system));
       if (!res.ok) throw httpError(res, await res.text());
     } else {
@@ -339,9 +346,28 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
   return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent);
 }
 
-/** Whether any assistant turn replays Anthropic thinking blocks. */
-function hasThinking(messages: ChatRequest['messages']): boolean {
-  return messages.some((m) => m.role === 'assistant' && (anthropicState(m.providerState) ?? []).some((b) => b['type'] === 'thinking' || b['type'] === 'redacted_thinking'));
+/**
+ * The assistant turn (0-based, counting assistant turns) from which to drop
+ * replayed thinking after Anthropic refused it, or undefined when the 400 is
+ * about something else or no turn replays thinking. The two documented
+ * refusals: "`thinking` or `redacted_thinking` blocks in the latest assistant
+ * message cannot be modified" (the latest turn) and "messages.{i}.content.{j}:
+ * Invalid `signature` in `thinking` block" (that turn, in the API's numbering
+ * of messages, where consecutive tool results share one).
+ */
+function refusedThinkingFrom(text: string, messages: ChatRequest['messages']): number | undefined {
+  const thinking = (m: ChatRequest['messages'][number]) => m.role === 'assistant' && (anthropicState(m.providerState) ?? []).some((b) => b['type'] === 'thinking' || b['type'] === 'redacted_thinking');
+  if (!messages.some(thinking)) return undefined;
+  const invalid = /messages\.(\d+)\.content\.\d+:[^\n]{0,40}Invalid `signature` in `thinking` block/i.exec(text);
+  const modified = /(?:`thinking`|redacted_thinking)[^\n]{0,80}cannot be modified/i.test(text);
+  if (!invalid && !modified) return undefined;
+  const assistants = messages.filter((m) => m.role === 'assistant').length;
+  if (!invalid) return assistants - 1;
+  // The API's message index to the assistant turn it names: assistants map one to one, tool results merge.
+  const api = anthropicMessages(messages);
+  const named = Number(invalid[1]);
+  const before = api.slice(0, named).filter((m) => m.role === 'assistant').length;
+  return api[named]?.role === 'assistant' ? Math.min(before, assistants - 1) : Math.min(before, assistants - 1);
 }
 
 /** Chat Completions at `${baseUrl}/chat/completions`. */

@@ -133,6 +133,11 @@ describe('reasoning reported as it streams and on the result', () => {
     const s = new ThinkSplitter((kind, delta) => out.push(`${kind}:${delta}`));
     s.push('a <'); s.push('b </think> c <reasoning>'); s.push('deep</reas'); s.push('oning> d <'); s.end();
     expect(out.join('|')).toBe('text:a |text:<b </think>|text: c |reasoning:deep|text: d |text:<');
+    // Only the tag that opened the reasoning closes it; the other tag's close inside is reasoning text.
+    const mixed: string[] = [];
+    const m = new ThinkSplitter((kind, delta) => mixed.push(`${kind}:${delta}`));
+    m.push('<think>A</reasoning>B</think>C'); m.end();
+    expect(mixed.join('|')).toBe('reasoning:A</reasoning>|reasoning:B|text:C');
   });
 
   it('Responses: summary deltas, the reasoning tokens, and the turn\'s items kept to replay', async () => {
@@ -196,10 +201,47 @@ describe('when Anthropic refuses the thinking blocks it signed', () => {
     expect(twice).toHaveBeenCalledTimes(2);
   });
 
+  it('strips from the turn the API named onward, keeping the earlier turns\' thinking', async () => {
+    const thinking = (sig: string) => ({ protocol: 'anthropic', blocks: [{ type: 'thinking', thinking: '…', signature: sig }, { type: 'tool_use', id: `t-${sig}`, name: 'browser', input: {} }] });
+    const long: AIMessage[] = [
+      { role: 'user', content: 'a' },
+      { role: 'assistant', toolCalls: [{ id: 't-one', name: 'browser', args: {} }], providerState: thinking('one') },
+      { role: 'tool', toolCallId: 't-one', name: 'browser', content: 'r1' },
+      { role: 'tool', toolCallId: 't-one-b', name: 'browser', content: 'r2' },
+      { role: 'assistant', toolCalls: [{ id: 't-two', name: 'browser', args: {} }], providerState: thinking('two') },
+      { role: 'tool', toolCallId: 't-two', name: 'browser', content: 'r3' },
+      { role: 'assistant', toolCalls: [{ id: 't-three', name: 'browser', args: {} }], providerState: thinking('three') },
+      { role: 'tool', toolCallId: 't-three', name: 'browser', content: 'r4' },
+    ];
+    // The API numbers the merged messages: user 0, assistant 1, tool results 2, assistant 3, results 4, assistant 5, results 6.
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn<Fetch>(async (_url, init) => { bodies.push(JSON.parse(init!.body as string)); return bodies.length === 1
+      ? new Response(JSON.stringify({ error: { type: 'invalid_request_error', message: 'messages.3.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.' } }), { status: 400 })
+      : ok(); });
+    expect(await chat(conn, 'sk', { ...req, messages: long }, { fetch })).toMatchObject({ ok: true });
+    const replayed = bodies[1]!['messages'] as Array<{ role: string; content: Array<{ type: string }> }>;
+    expect(replayed[1]!.content.map((b) => b.type)).toEqual(['thinking', 'tool_use']);
+    expect(replayed[3]!.content.map((b) => b.type)).toEqual(['tool_use']);
+    expect(replayed[5]!.content.map((b) => b.type)).toEqual(['tool_use']);
+    // "cannot be modified" is about the latest assistant turn: only that one is stripped.
+    const latest: Array<Record<string, unknown>> = [];
+    const modified = vi.fn<Fetch>(async (_url, init) => { latest.push(JSON.parse(init!.body as string)); return latest.length === 1
+      ? new Response(JSON.stringify({ error: { message: '`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified.' } }), { status: 400 }) : ok(); });
+    expect(await chat(conn, 'sk', { ...req, messages: long }, { fetch: modified })).toMatchObject({ ok: true });
+    const again = latest[1]!['messages'] as Array<{ content: Array<{ type: string }> }>;
+    expect(again[1]!.content.map((b) => b.type)).toEqual(['thinking', 'tool_use']);
+    expect(again[3]!.content.map((b) => b.type)).toEqual(['thinking', 'tool_use']);
+    expect(again[5]!.content.map((b) => b.type)).toEqual(['tool_use']);
+  });
+
   it('does not retry another 400, or one with no thinking to drop', async () => {
     const other = vi.fn<Fetch>(async () => new Response(JSON.stringify({ error: { type: 'invalid_request_error', message: 'max_tokens: must be positive' } }), { status: 400 }));
     expect(await chat(conn, 'sk', { ...req, messages: history }, { fetch: other })).toMatchObject({ ok: false });
     expect(other).toHaveBeenCalledTimes(1);
+    // Keywords near each other are not the refusal.
+    const schema = vi.fn<Fetch>(async () => new Response(JSON.stringify({ error: { message: "Invalid tool schema: property 'thinking_signature' must have a type" } }), { status: 400 }));
+    expect(await chat(conn, 'sk', { ...req, messages: history }, { fetch: schema })).toMatchObject({ ok: false });
+    expect(schema).toHaveBeenCalledTimes(1);
     const bare = vi.fn<Fetch>(async () => new Response(JSON.stringify({ error: { message: 'Invalid `signature` in `thinking` block.' } }), { status: 400 }));
     expect(await chat(conn, 'sk', req, { fetch: bare })).toMatchObject({ ok: false });
     expect(bare).toHaveBeenCalledTimes(1);

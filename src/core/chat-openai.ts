@@ -145,6 +145,8 @@ const STOP: Record<string, AIStopReason> = {
  */
 export class ThinkSplitter {
   private inside = false;
+  /** The tag that opened the reasoning; only its own close ends it. */
+  private opened = '';
   private held = '';
   constructor(private readonly emit: (kind: 'text' | 'reasoning', delta: string) => void) {}
 
@@ -155,13 +157,16 @@ export class ThinkSplitter {
       const tag = /<(\/?)(think|reasoning)>/i.exec(s);
       if (!tag) break;
       const closing = tag[1] === '/';
-      if (closing !== this.inside) { // a close outside or an open inside is just text
+      const name = tag[2]!.toLowerCase();
+      // A close outside, an open inside, or a close of the other tag inside: literal text of whatever is current.
+      if (closing !== this.inside || (closing && name !== this.opened)) {
         this.out(s.slice(0, tag.index + tag[0].length));
         s = s.slice(tag.index + tag[0].length);
         continue;
       }
       this.out(s.slice(0, tag.index));
       this.inside = !closing;
+      this.opened = closing ? '' : name;
       s = s.slice(tag.index + tag[0].length);
     }
     // Hold back a tail that may be the start of a tag ("<", "</thi"), up to a tag's length.
