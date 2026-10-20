@@ -18,6 +18,8 @@
  * Bearer key. Ported from ollama's auth.Sign / api.Client.do / signinURL.
  */
 
+import { fetchOf, type RequestOptions } from './http.js';
+
 export const OLLAMA_BASE = 'https://ollama.com';
 /** Bounds the poll loop; the connect page itself has no expiry we can read. */
 export const CONNECT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -79,11 +81,12 @@ const NO_USER = '00000000-0000-0000-0000-000000000000';
 /**
  * The account the key is paired with, or null while it is not. An unknown
  * key is not a 401 here: /api/me answers 200 with an all-zero user ID and
- * empty fields, so "paired" means a real ID.
+ * empty fields, so "paired" means a real ID. Takes the host's `fetch` in
+ * `options`, else the global one.
  */
-export async function whoami(pair: CryptoKeyPair): Promise<{ name: string } | null> {
+export async function whoami(pair: CryptoKeyPair, options: RequestOptions = {}): Promise<{ name: string } | null> {
   const url = new URL('/api/me', OLLAMA_BASE);
-  const res = await fetch(url, { method: 'POST', headers: await signRequest(pair, 'POST', url) });
+  const res = await fetchOf(options)(url, { method: 'POST', headers: await signRequest(pair, 'POST', url) });
   if (res.status === 401 || res.status === 403) return null;
   if (!res.ok) throw new Error(`Ollama sign-in check failed (${res.status}): ${await res.text()}`);
   const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -93,7 +96,7 @@ export async function whoami(pair: CryptoKeyPair): Promise<{ name: string } | nu
 }
 
 /** Un-pair the device from the account. Best effort: the key is dropped locally either way. */
-export async function disconnect(pair: CryptoKeyPair): Promise<void> {
+export async function disconnect(pair: CryptoKeyPair, options: RequestOptions = {}): Promise<void> {
   const url = new URL(`/api/user/keys/${encodedKey(await publicKeyLine(pair))}`, OLLAMA_BASE);
-  await fetch(url, { method: 'DELETE', headers: await signRequest(pair, 'DELETE', url) });
+  await fetchOf(options)(url, { method: 'DELETE', headers: await signRequest(pair, 'DELETE', url) });
 }

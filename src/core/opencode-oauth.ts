@@ -17,6 +17,8 @@
  * only: OpenCode's free tier answers 403 to any client but its own.
  */
 
+import { fetchOf, type RequestOptions } from './http.js';
+
 export const OPENCODE_CONSOLE = 'https://opencode.ai/console';
 /** The API root for chat and the model list (the `opencode` provider in models.dev). */
 export const OPENCODE_BASE = 'https://opencode.ai/inference/v1';
@@ -44,8 +46,8 @@ export interface OpencodeTokens {
   orgId?: string;
 }
 
-async function post(path: string, body: Record<string, unknown>): Promise<Response> {
-  return fetch(`${OPENCODE_CONSOLE}${path}`, {
+async function post(path: string, body: Record<string, unknown>, options: RequestOptions): Promise<Response> {
+  return fetchOf(options)(`${OPENCODE_CONSOLE}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),
@@ -66,9 +68,9 @@ function parseTokens(raw: unknown): OpencodeTokens {
   };
 }
 
-/** Start the device grant: a code for the user and the page to enter it on (it is pre-filled there). */
-export async function startOpencodeLogin(clientId = DEFAULT_CLIENT_ID): Promise<OpencodeDeviceStart> {
-  const res = await post('/auth/device/code', { client_id: clientId, supports_org_scope: true });
+/** Start the device grant: a code for the user and the page to enter it on (it is pre-filled there). Every call here takes the host's `fetch` in `options`, else the global one. */
+export async function startOpencodeLogin(clientId = DEFAULT_CLIENT_ID, options: RequestOptions = {}): Promise<OpencodeDeviceStart> {
+  const res = await post('/auth/device/code', { client_id: clientId, supports_org_scope: true }, options);
   if (!res.ok) throw new Error(`OpenCode sign-in start failed (${res.status}): ${await res.text()}`);
   const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const deviceCode = typeof j.device_code === 'string' ? j.device_code : '';
@@ -90,12 +92,12 @@ export type OpencodePoll =
   | { status: 'denied'; error: string };
 
 /** One poll of the token endpoint. `authorization_pending` and `slow_down` mean keep going. */
-export async function pollOpencode(deviceCode: string, clientId = DEFAULT_CLIENT_ID): Promise<OpencodePoll> {
+export async function pollOpencode(deviceCode: string, clientId = DEFAULT_CLIENT_ID, options: RequestOptions = {}): Promise<OpencodePoll> {
   const res = await post('/auth/device/token', {
     grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
     device_code: deviceCode,
     client_id: clientId,
-  });
+  }, options);
   const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (typeof j.access_token === 'string') return { status: 'authorized', tokens: parseTokens(j) };
   const error = typeof j.error === 'string' ? j.error : '';
@@ -109,8 +111,8 @@ export async function pollOpencode(deviceCode: string, clientId = DEFAULT_CLIENT
 }
 
 /** Rotate the token pair. The Console answers `invalid_grant` once the session was revoked: only a new sign-in recovers. */
-export async function refreshOpencodeTokens(refreshToken: string, clientId = DEFAULT_CLIENT_ID): Promise<OpencodeTokens> {
-  const res = await post('/auth/device/token', { grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId });
+export async function refreshOpencodeTokens(refreshToken: string, clientId = DEFAULT_CLIENT_ID, options: RequestOptions = {}): Promise<OpencodeTokens> {
+  const res = await post('/auth/device/token', { grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId }, options);
   if (!res.ok) {
     const text = await res.text();
     if (/invalid_grant/.test(text)) throw new Error('Your OpenCode sign-in was revoked or expired — remove the connection and sign in again.');
@@ -122,8 +124,8 @@ export async function refreshOpencodeTokens(refreshToken: string, clientId = DEF
 }
 
 /** The signed-in user's email, for the connection's label; empty when the Console will not say. */
-export async function opencodeAccount(tokens: OpencodeTokens): Promise<string> {
-  const res = await fetch(`${OPENCODE_CONSOLE}/api/user`, { headers: opencodeHeaders(tokens.accessToken, tokens.orgId) }).catch(() => null);
+export async function opencodeAccount(tokens: OpencodeTokens, options: RequestOptions = {}): Promise<string> {
+  const res = await fetchOf(options)(`${OPENCODE_CONSOLE}/api/user`, { headers: opencodeHeaders(tokens.accessToken, tokens.orgId) }).catch(() => null);
   if (!res?.ok) return '';
   const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return typeof j.email === 'string' ? j.email : '';

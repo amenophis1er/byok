@@ -6,7 +6,7 @@
 
 import type { ModelInfo } from '../types.js';
 import { codexModels } from './openai-oauth.js';
-import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, httpFailure, type Authorizer, type ConnectionCredential } from './http.js';
+import { ANTHROPIC_BASE, anthropicHeaders, apiRoot, fetchOf, httpFailure, type Authorizer, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
 import { authorizerFor, tokenOf, type Connection } from './connection.js';
 import { anthropicFacts, geminiFacts, knownModelInfo, mergeFacts, openaiListingFacts, workersAiFacts } from './model-info.js';
 
@@ -15,28 +15,30 @@ import { anthropicFacts, geminiFacts, knownModelInfo, mergeFacts, openaiListingF
  * about it (`contextWindow`, `maxOutputTokens`, `capabilities`: from the
  * listing where it says, else the built-in tables, else absent). Throws on
  * an HTTP failure, in words: an `HttpError` with the status and, on a rate
- * limit, `retryAfterMs` and `quota` when the server said.
+ * limit, `retryAfterMs` and `quota` when the server said. Requests go through
+ * `options.fetch` when given, else the global one.
  */
-export async function listModels(conn: Connection, credential: ConnectionCredential): Promise<ModelInfo[]> {
+export async function listModels(conn: Connection, credential: ConnectionCredential, options: RequestOptions = {}): Promise<ModelInfo[]> {
   if (conn.kind === 'chrome-builtin') return [{ id: 'gemini-nano', name: 'Chrome on-device model' }];
   const token = tokenOf(credential);
+  const fetch = fetchOf(options);
   const signer = typeof credential === 'function';
   if (conn.kind === 'chatgpt') {
     if (signer) throw new Error('ChatGPT takes a token, not a request signer.');
-    return withKnown(conn, await codexModels({ accessToken: token, accountId: conn.accountId }));
+    return withKnown(conn, await codexModels({ accessToken: token, accountId: conn.accountId }, options));
   }
   if (conn.kind === 'anthropic') {
     if (signer) throw new Error('Anthropic takes a key or token, not a request signer.');
     if (!token) throw new Error('Enter an API key first.');
-    return withKnown(conn, await anthropicModels(token, conn.auth === 'oauth' || conn.auth === 'setup-token'));
+    return withKnown(conn, await anthropicModels(fetch, token, conn.auth === 'oauth' || conn.auth === 'setup-token'));
   }
   const base = apiRoot(conn.baseUrl);
   const authorize = authorizerFor(conn, credential);
   // Google and Cloudflare take the key in their own header; a signer, or another server's token, goes as its headers.
-  if (isGemini(base)) return geminiModels(signer || conn.issuer ? authorize : keyHeader('x-goog-api-key', token), new URL(base).origin);
+  if (isGemini(base)) return geminiModels(fetch, signer || conn.issuer ? authorize : keyHeader('x-goog-api-key', token), new URL(base).origin);
   const account = workersAiAccount(base);
-  if (account) return workersAiModels(signer ? authorize : keyHeader('Authorization', token && `Bearer ${token}`), account);
-  return withKnown(conn, await openaiModels(authorize, base));
+  if (account) return workersAiModels(fetch, signer ? authorize : keyHeader('Authorization', token && `Bearer ${token}`), account);
+  return withKnown(conn, await openaiModels(fetch, authorize, base));
 }
 
 /**
@@ -46,11 +48,11 @@ export async function listModels(conn: Connection, credential: ConnectionCredent
  * listing does not carry comes back as its id with what the tables say, which
  * may be nothing.
  */
-export async function getModelInfo(conn: Connection, credential: ConnectionCredential, modelId: string | undefined = conn.model): Promise<ModelInfo> {
+export async function getModelInfo(conn: Connection, credential: ConnectionCredential, modelId: string | undefined = conn.model, options: RequestOptions = {}): Promise<ModelInfo> {
   if (!modelId) throw new Error('No model given, and the connection has none selected.');
   const known = knownModelInfo(conn, modelId);
   if (known.contextWindow !== undefined) return { id: modelId, name: modelId, ...known };
-  const listed = (await listModels(conn, credential)).find((m) => m.id === modelId);
+  const listed = (await listModels(conn, credential, options)).find((m) => m.id === modelId);
   return listed ?? { id: modelId, name: modelId, ...known };
 }
 
@@ -64,7 +66,7 @@ function keyHeader(name: string, value: string): Authorizer | undefined {
   return value ? async () => ({ [name]: value }) : undefined;
 }
 
-async function anthropicModels(token: string, subscription: boolean): Promise<ModelInfo[]> {
+async function anthropicModels(fetch: Fetch, token: string, subscription: boolean): Promise<ModelInfo[]> {
   const res = await fetch(`${ANTHROPIC_BASE}/v1/models?limit=100`, {
     headers: anthropicHeaders(token, subscription),
   });
@@ -83,7 +85,7 @@ export const isGemini = (base: string): boolean => {
  * embedding, image and agent models included, which 404 on chat. Its own
  * API says what each supports: keep the generateContent ones.
  */
-async function geminiModels(authorize: Authorizer | undefined, origin: string): Promise<ModelInfo[]> {
+async function geminiModels(fetch: Fetch, authorize: Authorizer | undefined, origin: string): Promise<ModelInfo[]> {
   if (!authorize) throw new Error('Enter an API key first.');
   const models: ModelInfo[] = [];
   let pageToken = '';
@@ -122,7 +124,7 @@ export function workersAiAccount(base: string): string | undefined {
  * Workers AI has no OpenAI-style /models (405): its own model search lists
  * the account's catalog. Keep the Text Generation models, across pages.
  */
-async function workersAiModels(authorize: Authorizer | undefined, account: string): Promise<ModelInfo[]> {
+async function workersAiModels(fetch: Fetch, authorize: Authorizer | undefined, account: string): Promise<ModelInfo[]> {
   if (!authorize) throw new Error('Enter an API token first.');
   const models: ModelInfo[] = [];
   const perPage = 100;
@@ -147,7 +149,7 @@ async function workersAiModels(authorize: Authorizer | undefined, account: strin
   return models.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-async function openaiModels(authorize: Authorizer, base: string): Promise<ModelInfo[]> {
+async function openaiModels(fetch: Fetch, authorize: Authorizer, base: string): Promise<ModelInfo[]> {
   const url = new URL(`${base}/models`);
   const res = await fetch(url, { headers: await authorize('GET', url) });
   if (!res.ok) throw await httpFailure(res);

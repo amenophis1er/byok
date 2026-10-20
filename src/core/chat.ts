@@ -15,7 +15,7 @@ import { geminiBody, geminiResult } from './chat-gemini.js';
 import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
 import { readSse } from './sse.js';
 import { withClaudeCodeSystem } from './anthropic-oauth.js';
-import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot, describeHttpText, errMessage, rateLimitFields, shortRateLimit, type ConnectionCredential } from './http.js';
+import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot, describeHttpText, errMessage, fetchOf, rateLimitFields, shortRateLimit, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
 import { rateLimitOf } from './rate-limit.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
 import type { ChatEventSink } from './events.js';
@@ -34,7 +34,7 @@ function guarded(onEvent: ChatEventSink | undefined): ChatEventSink | undefined 
   return (event) => { try { onEvent(event); } catch (error) { throw new SinkError(error); } };
 }
 
-export interface ChatOptions {
+export interface ChatOptions extends RequestOptions {
   /** Stops the turn; the result is then `Stopped.`. */
   signal?: AbortSignal;
   /** Whole-request limit. Default 120 s. `req.timeoutMs` takes precedence. */
@@ -75,7 +75,7 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     const model = req.model ?? conn.model;
     if (!model) throw new Error(`The AI connection has no model selected.${hint}`);
     const onEvent = guarded(options.onEvent);
-    const ctx: Turn = { conn, credential, model, req, signal: controller.signal, debug: options.debug, hint, onEvent };
+    const ctx: Turn = { conn, credential, model, req, signal: controller.signal, fetch: fetchOf(options), debug: options.debug, hint, onEvent };
 
     const candidates = protocolCandidates(conn, model);
     let mismatch: ProtocolMismatch | undefined;
@@ -170,6 +170,7 @@ interface Turn {
   model: string;
   req: ChatRequest;
   signal: AbortSignal;
+  fetch: Fetch;
   debug?: (label: string, data: unknown) => void;
   hint: string;
   onEvent?: ChatEventSink;
@@ -184,7 +185,7 @@ function redactImages(body: unknown): unknown {
 
 async function post(t: Turn, url: URL, headers: Record<string, string>, body: unknown): Promise<Response> {
   t.debug?.('chat request', { connection: t.conn.label, url: url.origin + url.pathname, body: redactImages(body) });
-  return fetch(url, {
+  return t.fetch(url, {
     method: 'POST', signal: t.signal,
     headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
     body: JSON.stringify(body),

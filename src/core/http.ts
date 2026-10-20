@@ -26,6 +26,26 @@ export type Authorizer = (method: string, url: URL) => Promise<Record<string, st
 /** What a connection authenticates with: a key or token, or a signer for each request (an Ollama device key). */
 export type ConnectionCredential = string | Authorizer;
 
+/**
+ * `fetch` as the core calls it: a URL or string and the standard init,
+ * answering a `Response` whose `body` is a `ReadableStream` and honouring
+ * `init.signal`. The global one by default; a host that owns its transport
+ * (a proxy, a custom CA, a fresh connection per request, a test double)
+ * passes its own.
+ */
+export type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+/** What every request-making function takes: the host's `fetch`, else the global one. */
+export interface RequestOptions {
+  /** Makes every request of this call. Default `globalThis.fetch`. */
+  fetch?: Fetch;
+}
+
+/** The fetch to call: the host's, else the global one, looked up at call time. */
+export function fetchOf(options?: RequestOptions): Fetch {
+  return options?.fetch ?? ((input, init) => fetch(input, init));
+}
+
 export function bearer(apiKey: string): Record<string, string> {
   return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 }

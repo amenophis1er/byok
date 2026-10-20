@@ -59,7 +59,7 @@ export interface DeviceStart {
 }
 
 // @public
-export function disconnect(pair: CryptoKeyPair): Promise<void>;
+export function disconnect(pair: CryptoKeyPair, options?: RequestOptions): Promise<void>;
 
 // @public
 export function encodedKey(keyLine: string): string;
@@ -69,13 +69,16 @@ export function exchangeCode(input: {
     pasted: string;
     expectedState: string;
     verifier: string;
-}): Promise<AnthropicTokens>;
+}, options?: RequestOptions): Promise<AnthropicTokens>;
 
 // @public
 export function exchangeDeviceCode(input: {
     authorizationCode: string;
     codeVerifier: string;
-}): Promise<OpenAiTokens>;
+}, options?: RequestOptions): Promise<OpenAiTokens>;
+
+// @public
+export type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 // @public
 export function isSetupToken(token: string): boolean;
@@ -93,7 +96,7 @@ export interface LoginStart {
 // @public
 export function nextPollDelayMs(intervalSec: number, slowDowns: number): number;
 
-// @public
+// @public (undocumented)
 export const OLLAMA_BASE = "https://ollama.com";
 
 // @public (undocumented)
@@ -110,7 +113,7 @@ export interface OpenAiTokens {
 // @public
 export const OPENCODE_BASE = "https://opencode.ai/inference/v1";
 
-// @public
+// @public (undocumented)
 export const OPENCODE_CONSOLE = "https://opencode.ai/console";
 
 // @public
@@ -120,7 +123,7 @@ export const OPENCODE_DEFAULT_CLIENT_ID = "byok";
 export const OPENCODE_ORG_HEADER = "x-opencode-org-id";
 
 // @public
-export function opencodeAccount(tokens: OpencodeTokens): Promise<string>;
+export function opencodeAccount(tokens: OpencodeTokens, options?: RequestOptions): Promise<string>;
 
 // @public (undocumented)
 export interface OpencodeDeviceStart {
@@ -172,37 +175,42 @@ export function parsePaste(input: string): {
 };
 
 // @public
-export function pollDevice(deviceAuthId: string, userCode: string): Promise<DevicePoll>;
+export function pollDevice(deviceAuthId: string, userCode: string, options?: RequestOptions): Promise<DevicePoll>;
 
 // @public
-export function pollOpencode(deviceCode: string, clientId?: string): Promise<OpencodePoll>;
+export function pollOpencode(deviceCode: string, clientId?: string, options?: RequestOptions): Promise<OpencodePoll>;
 
 // @public
 export function publicKeyLine(pair: CryptoKeyPair): Promise<string>;
 
 // @public
-export function refreshOpenAiTokens(refreshToken: string): Promise<OpenAiTokens>;
+export function refreshOpenAiTokens(refreshToken: string, options?: RequestOptions): Promise<OpenAiTokens>;
 
 // @public
-export function refreshOpencodeTokens(refreshToken: string, clientId?: string): Promise<OpencodeTokens>;
+export function refreshOpencodeTokens(refreshToken: string, clientId?: string, options?: RequestOptions): Promise<OpencodeTokens>;
 
 // @public
-export function refreshTokens(refreshToken: string): Promise<AnthropicTokens>;
+export function refreshTokens(refreshToken: string, options?: RequestOptions): Promise<AnthropicTokens>;
+
+// @public
+export interface RequestOptions {
+    fetch?: Fetch;
+}
 
 // @public
 export function signRequest(pair: CryptoKeyPair, method: string, url: URL): Promise<Record<string, string>>;
 
-// @public (undocumented)
-export function startDeviceLogin(): Promise<DeviceStart>;
+// @public
+export function startDeviceLogin(options?: RequestOptions): Promise<DeviceStart>;
 
 // @public (undocumented)
 export function startLogin(): Promise<LoginStart>;
 
 // @public
-export function startOpencodeLogin(clientId?: string): Promise<OpencodeDeviceStart>;
+export function startOpencodeLogin(clientId?: string, options?: RequestOptions): Promise<OpencodeDeviceStart>;
 
 // @public
-export function whoami(pair: CryptoKeyPair): Promise<{
+export function whoami(pair: CryptoKeyPair, options?: RequestOptions): Promise<{
     name: string;
 } | null>;
 
