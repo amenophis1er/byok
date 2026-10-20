@@ -152,7 +152,7 @@ describe('chat()', () => {
   it('passes on when the provider said to come back after a rate limit', async () => {
     seed([conn('l')], 'l');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"Rate limit reached on tokens per minute (TPM). Please try again in 1.5s."}}', { status: 429 })));
-    expect(await chat({ system: '', messages: [] })).toEqual({ ok: false, error: expect.stringContaining('HTTP 429'), retryable: true, retryAfterMs: 1500, quota: 'minute' });
+    expect(await chat({ system: '', messages: [] })).toEqual({ ok: false, error: expect.stringContaining('HTTP 429'), retryable: true, retryAfterMs: 1500, resetAt: expect.any(Number), quota: 'minute' });
   });
 
   it('declines the on-device model, which has no tool calling', async () => {
@@ -232,7 +232,7 @@ describe('chat()', () => {
     it('says when to come back when the listing is rate limited', async () => {
       seed([conn('l')], 'l');
       vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"Too many requests"}}', { status: 429, headers: { 'retry-after': '4' } })));
-      expect(await list({ id: 'l', kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1' })).toEqual({ ok: false, error: 'HTTP 429: Too many requests', retryAfterMs: 4000 });
+      expect(await list({ id: 'l', kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1' })).toEqual({ ok: false, error: 'HTTP 429: Too many requests', retryAfterMs: 4000, resetAt: expect.any(Number) });
     });
 
     it('tries a key typed in the form as a plain Bearer, not under the saved OpenCode organization', async () => {

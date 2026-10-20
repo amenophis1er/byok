@@ -10,25 +10,33 @@
  *   for the window whose `-remaining` is 0;
  * - Gemini's body: a `RetryInfo` detail (`"retryDelay": "20s"`) and a
  *   `QuotaFailure` naming the quota (`…PerDay…` / `…PerMinute…`);
- * - ChatGPT's body: `resets_in_seconds`;
+ * - ChatGPT's body: `resets_in_seconds`, and `usage_limit_reached` naming the
+ *   plan's window; its headers `x-codex-*-reset-at` (epoch seconds) for the
+ *   window at 100%, or the one `x-codex-rate-limit-reached-type` names;
  * - and the words of the error message: "Please try again in 1h2m3s",
  *   "requests per day (RPD)", "tokens per minute".
  *
  * The wait is read from every failure; the window only from a 429. Neither is
- * inferred: a failure that said nothing carries nothing. A malformed answer
- * (a violation that is not an object, a Retry-After that is neither a number
- * nor a date) says nothing either, and never throws.
+ * inferred: a failure that said nothing carries nothing. On a day window the
+ * wait is what the provider said, which may be the day's end (OpenAI's
+ * "7h12m3s") or a polite pause that is not (Gemini's "20s"): the window is
+ * the authority, and `shortRateLimit` and `withRetry` read it first. A
+ * malformed answer (a violation that is not an object, a Retry-After that is
+ * neither a number nor a date) says nothing either, and never throws. A body
+ * wrapped in an array (Gemini, at times) is read as its first object.
  */
 
 import type { AIChatResult } from '../types.js';
 
-/** A rate-limit window: a minute window heals by itself, a day window not before tomorrow. */
+/** A rate-limit window: a minute window heals by itself, a day window not before tomorrow, a plan window (a subscription's usage limit, hours to a week) at its reset. */
 export type RateLimitWindow = NonNullable<AIChatResult['quota']>;
 
 /** What a failed response said about coming back: each field only when the provider said. */
 export interface RateLimit {
   /** How long the provider asked us to wait, when it said. */
   retryAfterMs?: number;
+  /** When that wait ends, epoch ms (`now + retryAfterMs`, or the instant the provider named). */
+  resetAt?: number;
   /** Which window ran out, when the provider said. */
   quota?: RateLimitWindow;
 }
@@ -38,13 +46,14 @@ export function rateLimitOf(status: number, headers: Headers | undefined, body: 
   const out: RateLimit = {};
   const get = (name: string) => headers?.get(name) ?? null;
   const json = parseJson(body);
+  const quota = status === 429 ? planWindow(get, json) ?? namedQuota(json, body) : undefined;
   const wait = retryAfterHeader(get, now)
-    ?? (status === 429 ? bodyWait(json, body) ?? resetWindows(get, now) : undefined);
-  if (wait !== undefined) out.retryAfterMs = wait;
-  if (status === 429) {
-    const quota = namedQuota(json, body);
-    if (quota) out.quota = quota;
+    ?? (status === 429 ? bodyWait(json, body) ?? codexReset(get, now) ?? resetWindows(get, now) : undefined);
+  if (wait !== undefined) {
+    out.retryAfterMs = wait;
+    out.resetAt = now + wait;
   }
+  if (quota) out.quota = quota;
   return out;
 }
 
@@ -141,11 +150,47 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Ra
   return minute === undefined || (day !== undefined && day < minute) ? 'day' : 'minute';
 }
 
+/**
+ * ChatGPT's plan window: the body says `usage_limit_reached`, or the headers
+ * say which limit was reached (`x-codex-rate-limit-reached-type`).
+ */
+function planWindow(get: (name: string) => string | null, json: Record<string, unknown> | undefined): RateLimitWindow | undefined {
+  const error = json?.['error'];
+  const type = error && typeof error === 'object' ? (error as Record<string, unknown>)['type'] ?? (error as Record<string, unknown>)['code'] : undefined;
+  if (type === 'usage_limit_reached' || get('x-codex-rate-limit-reached-type') !== null) return 'plan';
+  return undefined;
+}
+
+/**
+ * ChatGPT's reset instants (`x-codex-<window>-reset-at`, epoch seconds) for
+ * the window `x-codex-rate-limit-reached-type` names, else the latest among
+ * the windows used in full (`x-codex-<window>-used-percent` ≥ 100).
+ */
+function codexReset(get: (name: string) => string | null, now: number): number | undefined {
+  const named = get('x-codex-rate-limit-reached-type')?.trim().toLowerCase();
+  const windows = ['primary', 'secondary', ...(named && !['primary', 'secondary'].includes(named) ? [named] : [])];
+  const resetOf = (name: string): number | undefined => {
+    const at = get(`x-codex-${name}-reset-at`);
+    return at !== null && /^\d+$/.test(at.trim()) ? Math.max(0, Number(at) * 1000 - now) : undefined;
+  };
+  if (named) {
+    const wait = resetOf(named);
+    if (wait !== undefined) return wait;
+  }
+  const waits = windows
+    .filter((name) => Number(get(`x-codex-${name}-used-percent`)) >= 100)
+    .map(resetOf)
+    .filter((ms): ms is number => ms !== undefined);
+  return waits.length > 0 ? Math.max(...waits) : undefined;
+}
+
 /* ── pieces ──────────────────────────────────────────────────────── */
 
+/** The body as an object; an array (Gemini wraps a batch's error so) as its first object. */
 function parseJson(body: string): Record<string, unknown> | undefined {
   try {
-    const parsed: unknown = JSON.parse(body);
+    let parsed: unknown = JSON.parse(body);
+    if (Array.isArray(parsed)) parsed = parsed.find((item) => item && typeof item === 'object' && !Array.isArray(item));
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
   } catch {
     return undefined;

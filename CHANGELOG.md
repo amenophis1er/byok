@@ -30,6 +30,17 @@ while on 0.x, a breaking change bumps the minor version.
   a 429 while polling the ChatGPT device flow means slow down, not denied.
   Ollama request signing was checked against ollama's client and already
   matches it (method and path, the query excluded), so it is unchanged.
+- **Rate limits beyond a minute or a day** (#40). A failed result, an
+  `HttpError` and `rateLimitOf()` carry `resetAt` (epoch ms, when the wait
+  ends) beside `retryAfterMs`, and `quota` gains `'plan'`: a subscription's
+  usage window, read from ChatGPT's `usage_limit_reached` and its
+  `x-codex-rate-limit-reached-type` header, with the wait from
+  `resets_in_seconds` or the `x-codex-<window>-reset-at` instants (the window
+  named, else the ones used in full). A plan window is never `retryable` and
+  `withRetry` leaves it alone, as with a day window. A Gemini error body
+  wrapped in an array is read. On a day window the wait stays what the
+  provider said (OpenAI's is the day's end, Gemini's is not): `quota` is the
+  authority.
 
 ## 0.1.8
 

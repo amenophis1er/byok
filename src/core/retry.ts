@@ -89,10 +89,10 @@ export async function withRetry(attempt: (n: number) => Promise<AIChatResult>, o
 
 const STOPPED: AIChatResult = { ok: false, error: 'Stopped.' };
 
-/** Only a failure on which nothing was acted: `retryable`, no output, no day window. */
+/** Only a failure on which nothing was acted: `retryable`, no output, no day or plan window. */
 function shouldRetry(result: AIChatResult): boolean {
   if (result.ok || !result.retryable) return false;
-  if (result.quota === 'day') return false;
+  if (result.quota === 'day' || result.quota === 'plan') return false;
   if (result.text || (result.toolCalls && result.toolCalls.length > 0)) return false;
   return true;
 }

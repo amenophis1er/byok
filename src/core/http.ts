@@ -91,6 +91,8 @@ export class HttpError extends Error {
   readonly status: number;
   /** How long the server asked us to wait, when it said. */
   readonly retryAfterMs?: number;
+  /** When that wait ends, epoch ms. */
+  readonly resetAt?: number;
   /** Which rate-limit window ran out, when the server said. */
   readonly quota?: RateLimitWindow;
   constructor(status: number, message: string, rateLimit: RateLimit = {}) {
@@ -98,6 +100,7 @@ export class HttpError extends Error {
     this.name = 'HttpError';
     this.status = status;
     if (rateLimit.retryAfterMs !== undefined) this.retryAfterMs = rateLimit.retryAfterMs;
+    if (rateLimit.resetAt !== undefined) this.resetAt = rateLimit.resetAt;
     if (rateLimit.quota !== undefined) this.quota = rateLimit.quota;
   }
 }
@@ -110,16 +113,21 @@ export async function httpFailure(res: Response, message?: string): Promise<Http
 
 /** The rate-limit fields of a failure, only those it carries, for spreading into a result. */
 export function rateLimitFields(error: HttpError): RateLimit {
-  return { ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}), ...(error.quota !== undefined ? { quota: error.quota } : {}) };
+  return {
+    ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
+    ...(error.resetAt !== undefined ? { resetAt: error.resetAt } : {}),
+    ...(error.quota !== undefined ? { quota: error.quota } : {}),
+  };
 }
 
 /**
  * A 429 worth one more try: the provider asked for a short wait (a minute at
  * most), or named a minute window, which heals by itself. A day window is
- * gone until tomorrow, a long or unknown wait is the caller's to decide.
+ * gone until tomorrow, a plan window until its reset (hours), and a long or
+ * unknown wait is the caller's to decide.
  */
 export function shortRateLimit(error: HttpError): boolean {
-  if (error.status !== 429 || error.quota === 'day') return false;
+  if (error.status !== 429 || error.quota === 'day' || error.quota === 'plan') return false;
   return error.retryAfterMs !== undefined ? error.retryAfterMs <= 60_000 : error.quota === 'minute';
 }
 

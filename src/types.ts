@@ -341,10 +341,12 @@ export interface AIChatResult {
    * (a 429 with a wait of a minute at most, or on a minute window).
    */
   retryable?: boolean;
-  /** How long the provider asked us to wait before trying again, when it said (`Retry-After`, OpenAI's reset headers, Gemini's `RetryInfo`). */
+  /** How long the provider asked us to wait before trying again, when it said (`Retry-After`, OpenAI's reset headers, Gemini's `RetryInfo`). On a day window it is the provider's words, which may not be the day's end: `quota` is the authority. */
   retryAfterMs?: number;
-  /** Which rate-limit window ran out, when the provider said: a minute window heals by itself, a day window not before tomorrow. */
-  quota?: 'minute' | 'day';
+  /** When the wait ends, epoch ms, whenever `retryAfterMs` is given: for showing "resets at 14:00". */
+  resetAt?: number;
+  /** Which rate-limit window ran out, when the provider said: a minute window heals by itself, a day window not before tomorrow, a plan window (a subscription's hours-to-a-week usage limit) when `resetAt` says. */
+  quota?: 'minute' | 'day' | 'plan';
 }
 
 /** `${prefix}:ai-chat` — the same request as `chat()`, for hosts whose caller is a page. */
@@ -358,8 +360,10 @@ export interface AIResult<T> {
   error?: string;
   /** On a rate-limited `listModels`: how long the provider asked us to wait, when it said. */
   retryAfterMs?: number;
+  /** On a rate-limited `listModels`: when the wait ends, epoch ms. */
+  resetAt?: number;
   /** On a rate-limited `listModels`: which window ran out, when the provider said. */
-  quota?: 'minute' | 'day';
+  quota?: 'minute' | 'day' | 'plan';
 }
 
 /** What a model takes, each when known: tool calling, image parts, PDF `document` parts. */
