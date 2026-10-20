@@ -95,6 +95,12 @@ export interface AIChatResult {
     // (undocumented)
     error?: string;
     failure?: AIFailure;
+    limit?: {
+        value?: number;
+        unit?: 'requests' | 'tokens';
+        freeTier?: boolean;
+        model?: string;
+    };
     model?: string;
     // (undocumented)
     ok: boolean;

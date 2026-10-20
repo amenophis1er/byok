@@ -18,7 +18,7 @@ export { knownModelInfo, knownModelInfoByName, modelName, type ModelFacts } from
 export { protocolOf, type Connection } from './connection.js';
 export { stripProviderState, type ProviderStateProtocol } from './provider-state.js';
 export { apiRoot, HttpError, type Authorizer, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
-export { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
+export { rateLimitOf, type HeaderSource, type RateLimit, type RateLimitQuota, type RateLimitWindow } from './rate-limit.js';
 export { withRetry, isNetworkFailure, type RetryOptions, type RetryNotice } from './retry.js';
 export { OPENCODE_BASE, opencodeHeaders } from './opencode-oauth.js';
 export { CODEX_MODELS, CODEX_CLIENT_VERSION, CODEX_ORIGINATOR } from './openai-oauth.js';

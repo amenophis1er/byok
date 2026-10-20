@@ -195,13 +195,18 @@ What it guarantees:
   and nothing had streamed. A rate-limited result also carries what
   the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
   headers, Anthropic's reset instants, Gemini's `RetryInfo`, ChatGPT's
-  `resets_in_seconds` and `x-codex-*-reset-at`) with `resetAt` (epoch ms,
-  except on a day window, whose end the provider does not say), and
+  `resets_in_seconds` or `resets_at` and `x-codex-*-reset-at`) with `resetAt`
+  (epoch ms; on a day window only where the provider documents the day's
+  end — Gemini's quotas reset at midnight Pacific — else unset),
   `quota: 'minute' | 'day' | 'plan'` (the window that ran out; `plan` is a
-  subscription's usage window, hours to a week). Show "Rate limited, retrying
-  in 20 s", "Daily quota reached for this key" or "Plan limit reached, resets
-  at 14:00" instead of the raw HTTP error; a day or plan window is never
-  `retryable`, whatever wait the provider named beside it.
+  subscription's usage window, hours to a week, or a plan that does not
+  include the model at all — ChatGPT's `usage_not_included`, which carries no
+  wait), and `limit: { value?, unit?, freeTier?, model? }` where the provider
+  named the quota (Gemini: "the free tier allows 50 requests a day on
+  gemini-2.5-pro"). Show "Rate limited, retrying in 20 s", "Daily quota
+  reached for this key" or "Plan limit reached, resets at 14:00" instead of
+  the raw HTTP error; a day or plan window is never `retryable`, whatever
+  wait the provider named beside it.
 - **Nothing half-made is handed out.** Arguments that are not valid JSON come
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
@@ -422,11 +427,13 @@ with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
 default `codex_cli_rs`, the Codex CLI's). The credential is the key or token, or a
 function `(method, url) => headers` that signs each request (an Ollama device
 key: `signRequest` is exported). `chat()` never throws: a failure is an
-`{ ok: false, error, failure, retryable?, retryAfterMs?, resetAt?, quota? }` result —
-the last three when the provider said how long to wait and which rate-limit
-window ran out. `listModels()` throws an `HttpError` with the same `status`,
-`retryAfterMs`, `resetAt` and `quota`; `rateLimitOf(status, headers, body)`
-reads them from any provider response you fetch yourself.
+`{ ok: false, error, failure, retryable?, retryAfterMs?, resetAt?, quota?, limit? }` result —
+the last four when the provider said how long to wait, which rate-limit
+window ran out and what the quota is. `listModels()` throws an `HttpError` with the same `status`,
+`retryAfterMs`, `resetAt`, `quota` and `limit`; `rateLimitOf(status, headers, body)`
+reads them from any provider response you fetch yourself, the headers as a
+`Headers`, a `Map` keyed by lowercase names, or a plain record in any case
+(Node's `IncomingHttpHeaders`).
 
 ## What the host extension must declare
 

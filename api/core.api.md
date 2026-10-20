@@ -94,11 +94,17 @@ export type Fetch = (input: string | URL, init?: RequestInit) => Promise<Respons
 export function getModelInfo(conn: Connection, credential: ConnectionCredential, modelId?: string | undefined, options?: RequestOptions): Promise<ModelInfo>;
 
 // @public
+export type HeaderSource = {
+    get(name: string): string | null | undefined;
+} | Record<string, string | string[] | undefined>;
+
+// @public
 export class HttpError extends Error {
     constructor(status: number, message: string, rateLimit?: RateLimit, source?: {
         providerCode?: string;
         requestId?: string;
     });
+    readonly limit?: RateLimitQuota;
     readonly providerCode?: string;
     readonly quota?: RateLimitWindow;
     readonly requestId?: string;
@@ -151,13 +157,17 @@ export type ProviderStateProtocol = 'anthropic' | 'gemini' | 'chat-completions' 
 
 // @public
 export interface RateLimit {
+    limit?: RateLimitQuota;
     quota?: RateLimitWindow;
     resetAt?: number;
     retryAfterMs?: number;
 }
 
 // @public
-export function rateLimitOf(status: number, headers: Headers | undefined, body: string, now?: number): RateLimit;
+export function rateLimitOf(status: number, headers: HeaderSource | undefined, body: string, now?: number): RateLimit;
+
+// @public
+export type RateLimitQuota = NonNullable<AIChatResult['limit']>;
 
 // @public
 export type RateLimitWindow = NonNullable<AIChatResult['quota']>;

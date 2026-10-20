@@ -3,6 +3,27 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.12
+
+- **The quota Gemini names** (#68): a rate-limited result, an `HttpError`
+  and `rateLimitOf` carry `limit: { value?, unit?, freeTier?, model? }` read
+  from the `QuotaFailure` violation that named the window — "the free tier
+  allows 50 requests a day on gemini-2.5-pro". Each field only when said.
+- **A day window's end where the provider documents it** (#69): on a Gemini
+  API day quota, `resetAt` is the next midnight Pacific (Google: "Requests
+  per day (RPD) quotas reset at midnight Pacific time"), a clock change
+  included; `retryAfterMs` stays the provider's words. Another provider's
+  day window still carries no instant.
+- **ChatGPT's usage limits in full** (#70): `resets_at` (epoch seconds) is
+  read as the wait when `resets_in_seconds` is absent; `usage_limit_reached`
+  names the plan window on any 4xx, not only a 429; `usage_not_included`
+  (the plan does not include the model) is a plan window with no wait, never
+  retryable.
+- **`rateLimitOf` reads headers from any source** (#71): a `Headers`, a
+  `Map` keyed by lowercase names, or a plain record in any case as Node's
+  `IncomingHttpHeaders` gives them, an array value read as its first.
+  `HeaderSource` is exported.
+
 ## 0.1.11
 
 - **More names the tables know** (#66): `knownModelInfoByName` answers for
