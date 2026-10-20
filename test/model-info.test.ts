@@ -91,6 +91,40 @@ describe('the tables', () => {
     expect(modelName('anthropic/claude-opus-4-1@20250805[1m]')).toEqual({ id: 'claude-opus-4-1-20250805', million: true });
   });
 
+  it('read a dotted Claude version as Anthropic spells it, by name and by connection', () => {
+    expect(modelName('claude-opus-5.5')).toEqual({ id: 'claude-opus-5-5', million: false });
+    expect(modelName('anthropic/claude-3.5-sonnet:1m')).toEqual({ id: 'claude-3-5-sonnet', million: true });
+    expect(modelName('claude-opus-4.1-20250805')).toEqual({ id: 'claude-opus-4-1-20250805', million: false });
+    expect(knownModelInfoByName('claude-opus-5.5')).toEqual({ contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: { tools: true, images: true } });
+    expect(knownModelInfoByName('anthropic/claude-3.5-sonnet')).toMatchObject({ maxOutputTokens: 8192 });
+    expect(knownModelInfoByName('openai/claude-opus-4.1')).toMatchObject({ maxOutputTokens: 32_000 });
+    expect(knownModelInfo(anthropic, 'claude-sonnet-4.5')).toMatchObject({ maxOutputTokens: 64_000 });
+    // A dot elsewhere is not a version: nothing is rewritten, nothing is known.
+    expect(modelName('claude-opus.5-5')).toEqual({ id: 'claude-opus.5-5', million: false });
+    expect(knownModelInfoByName('claude-opus-55.5')).toEqual({});
+  });
+
+  it('answer by name for any other Gemini chat model — the -latest aliases, a 4-generation model — and not for the 1.x and 2.0 lines, their exp previews, or a non-chat variant', () => {
+    const shared = { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } };
+    for (const id of ['gemini-flash-latest', 'gemini-pro-latest', 'gemini-flash-lite-latest', 'gemini-4-neon-preview', 'google/gemini-4.2-xenon', 'models/gemini-5-pro']) {
+      expect(knownModelInfoByName(id), id).toEqual(shared);
+    }
+    // The tabled families keep their own rows ahead of the family-wide one.
+    expect(knownModelInfoByName('gemini-2.5-pro')).toMatchObject({ capabilities: ALL });
+    expect(knownModelInfoByName('gemini-2.0-flash-001')).toMatchObject({ maxOutputTokens: 8192 });
+    // gemini-exp-1206 was 2.0 Pro's preview, with that generation's limits: not the family-wide row.
+    for (const id of ['gemini-1.5-pro', 'gemini-1.5-flash-8b', 'gemini-1.0-pro', 'gemini-2.0-pro-exp', 'gemini-exp-1206', 'gemini-exp-image-1206', 'gemini-4-neon-tts', 'gemini-embedding-2', 'gemini-nano-banana-2.1', 'gemini-omni-1.1-flash', 'gemini-3-pro-image-preview']) {
+      expect(knownModelInfoByName(id), id).toEqual({});
+    }
+    // Google's own root does not get the family-wide row: its listing says each model's limits.
+    const google: Connection = { kind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/' };
+    expect(knownModelInfo(google, 'gemini-flash-latest')).toEqual({});
+    expect(knownModelInfo(google, 'gemini-4-neon-preview')).toEqual({});
+    // An OpenCode sign-in lists no limits: by name, the row applies.
+    const opencode: Connection = { kind: 'openai-compatible', issuer: 'opencode', baseUrl: 'https://opencode.ai/inference/v1' };
+    expect(knownModelInfo(opencode, 'gemini-pro-latest')).toEqual(shared);
+  });
+
   it('know the Gemini chat families and GPT-6, and leave the image, speech and live variants to the listing', () => {
     const gemini: Connection = { kind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/' };
     expect(knownModelInfo(gemini, 'gemini-2.5-pro')).toEqual({ contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: ALL });
