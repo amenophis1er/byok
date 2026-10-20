@@ -195,7 +195,8 @@ What it guarantees:
   and nothing had streamed. A rate-limited result also carries what
   the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
   headers, Anthropic's reset instants, Gemini's `RetryInfo`, ChatGPT's
-  `resets_in_seconds` and `x-codex-*-reset-at`) with `resetAt` (epoch ms), and
+  `resets_in_seconds` and `x-codex-*-reset-at`) with `resetAt` (epoch ms,
+  except on a day window, whose end the provider does not say), and
   `quota: 'minute' | 'day' | 'plan'` (the window that ran out; `plan` is a
   subscription's usage window, hours to a week). Show "Rate limited, retrying
   in 20 s", "Daily quota reached for this key" or "Plan limit reached, resets

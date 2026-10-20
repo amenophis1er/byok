@@ -22,6 +22,9 @@ describe('sign-in errors as data', () => {
     const down = authFailure('Claude', 'Token refresh', 503, '{"error":{"type":"overloaded_error","message":"token=abc"}}');
     expect(down).toMatchObject({ status: 503, code: 'overloaded_error', reconnect: false, message: 'Token refresh failed (HTTP 503: overloaded_error).' });
     expect(authCodeOf('invalid_grant')).toBe('invalid_grant');
+    expect(authFailure('OpenCode', 'Token refresh', 403, '{"error":"invalid_grant"}')).toMatchObject({ reconnect: true, status: 403 });
+    expect(authFailure('OpenCode', 'Token refresh', 503, '{"error":"invalid_grant"}')).toMatchObject({ reconnect: true });
+    expect(authFailure('OpenCode', 'Token refresh', 403, 'forbidden')).toMatchObject({ reconnect: false });
     expect(authCodeOf('<html>no</html>')).toBeUndefined();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 401 })));
     const openai = await refreshOpenAiTokens('rt').catch((e: unknown) => e);

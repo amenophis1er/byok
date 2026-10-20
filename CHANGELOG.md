@@ -27,8 +27,8 @@ while on 0.x, a breaking change bumps the minor version.
   text and tool calls. State written before the tag is read when it looks
   like the protocol's own (Anthropic blocks all carry a `type`, Gemini parts
   never do). `stripProviderState(messages)` is exported from the core for a
-  host moving a conversation. A Gemini placeholder signature for a call that
-  has none is not sent: the current Gemini docs document none.
+  host moving a conversation. (A Gemini placeholder signature for a rebuilt
+  call is sent since the follow-up below.)
 - **Follow-up gaps** (#60, the rest). A sign-in call the provider refused
   throws an `AuthError` (`@amenophis1er/byok/core/auth`) with `status`,
   `code` and `reconnect` — true when only a new sign-in recovers

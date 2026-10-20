@@ -46,7 +46,8 @@ export function authCodeOf(body: string): string | undefined {
  */
 export function authFailure(provider: string, what: string, status: number, body: string): AuthError {
   const code = authCodeOf(body);
-  const reconnect = (status === 400 || status === 401) && /invalid_grant|revoked|expired/i.test(body);
+  // A revoked or expired grant, whatever status carries it (400, 401, 403): only a new sign-in recovers.
+  const reconnect = code === 'invalid_grant' || (status >= 400 && status < 500 && /invalid_grant|revoked|expired/i.test(body));
   if (reconnect) return new AuthError(`Your ${provider} sign-in was revoked or expired — remove the connection and sign in again.`, { status, code, reconnect: true });
   return new AuthError(`${what} failed (HTTP ${status}${code ? `: ${code}` : ''}).`, { status, code });
 }
