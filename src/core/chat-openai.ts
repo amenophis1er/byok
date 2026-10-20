@@ -105,7 +105,7 @@ export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_c
 /** The request body, without the `omit`ted fields. */
 export function openaiBody(req: AIChatRequest, model: string, base: string, omit: ReadonlySet<OptionalField> = new Set()): Record<string, unknown> {
   // A Chat Completions server has no web search of its own: asked for one, the turn fails before any request rather than drop it in silence.
-  if (webSearchTool(req)) throw new Error('This server speaks Chat Completions, which has no web search tool: leave the web_search tool out for it.');
+  if (webSearchTool(req)) throw new Error('This server speaks Chat Completions, which has no web search tool: leave the web_search tool out for it.'); // chat() skips the protocol first; this guards a direct caller
   const tools = functionTools(req).map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }));
   const openai = /(^|\.)openai\.com$/i.test(safeHost(base));
   return {
