@@ -14,7 +14,7 @@
 export { chat, protocolCandidates, networkCause, TIMED_OUT, type ChatOptions, type ChatRequest } from './chat.js';
 export type { ChatEvent, ChatEventSink } from './events.js';
 export { listModels, getModelInfo } from './models.js';
-export { knownModelInfo, type ModelFacts } from './model-info.js';
+export { knownModelInfo, knownModelInfoByName, modelName, type ModelFacts } from './model-info.js';
 export { protocolOf, type Connection } from './connection.js';
 export { stripProviderState, type ProviderStateProtocol } from './provider-state.js';
 export { apiRoot, HttpError, type Authorizer, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';

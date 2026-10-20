@@ -1,6 +1,6 @@
 /** What is known about a model before asking it: the tables, each listing's own fields, and getModelInfo. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getModelInfo, knownModelInfo, listModels, type Connection } from '../src/core/index.js';
+import { getModelInfo, knownModelInfo, knownModelInfoByName, listModels, modelName, type Connection } from '../src/core/index.js';
 import { anthropicFacts, geminiFacts, mergeFacts, openaiListingFacts, workersAiFacts } from '../src/core/model-info.js';
 
 const ALL = { tools: true, images: true, pdf: true };
@@ -75,6 +75,40 @@ describe('the tables', () => {
     expect(knownModelInfo(opencode, 'claude-sonnet-4-5')).toMatchObject({ maxOutputTokens: 64_000 });
     expect(knownModelInfo(opencode, 'gpt-5.1')).toMatchObject({ contextWindow: 400_000 });
     expect(knownModelInfo(opencode, 'kimi-k2')).toEqual({});
+  });
+
+  it('answer by name alone, whichever gateway serves the model, the routing prefix and long-context suffix read', () => {
+    expect(knownModelInfoByName('anthropic/claude-sonnet-5-5')).toMatchObject({ contextWindow: 1_000_000, maxOutputTokens: 128_000 });
+    expect(knownModelInfoByName('us.anthropic.claude-opus-5-5-v1:0')).toMatchObject({ contextWindow: 1_000_000 });
+    expect(knownModelInfoByName('claude-sonnet-4-5-1m')).toMatchObject({ contextWindow: 1_000_000, maxOutputTokens: 64_000 });
+    expect(knownModelInfoByName('claude-sonnet-4-5:1m')).toMatchObject({ contextWindow: 1_000_000 });
+    expect(knownModelInfoByName('openai/gpt-5.5')).toMatchObject({ contextWindow: 400_000 });
+    expect(knownModelInfoByName('o3')).toMatchObject({ contextWindow: 200_000 });
+    expect(knownModelInfoByName('google/gemini-2.5-pro')).toEqual({ contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: ALL });
+    expect(knownModelInfoByName('models/gemini-3.1-pro-preview')).toMatchObject({ contextWindow: 1_048_576 });
+    expect(knownModelInfoByName('kimi-k2')).toEqual({});
+    expect(knownModelInfoByName('')).toEqual({});
+    expect(modelName('anthropic/claude-opus-4-1@20250805[1m]')).toEqual({ id: 'claude-opus-4-1-20250805', million: true });
+  });
+
+  it('know the Gemini chat families and GPT-6, and leave the image, speech and live variants to the listing', () => {
+    const gemini: Connection = { kind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/' };
+    expect(knownModelInfo(gemini, 'gemini-2.5-pro')).toEqual({ contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: ALL });
+    expect(knownModelInfo(gemini, 'gemini-2.5-flash')).toEqual({ contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } });
+    expect(knownModelInfo(gemini, 'gemini-2.5-flash-lite')).toMatchObject({ maxOutputTokens: 65_536 });
+    expect(knownModelInfo(gemini, 'gemini-3-flash-preview')).toMatchObject({ contextWindow: 1_048_576, capabilities: ALL });
+    expect(knownModelInfo(gemini, 'gemini-3.8-flash')).toMatchObject({ maxOutputTokens: 65_536 });
+    expect(knownModelInfo(gemini, 'gemini-4-argon')).toMatchObject({ contextWindow: 1_048_576, capabilities: ALL });
+    expect(knownModelInfo(gemini, 'gemini-2.0-flash')).toMatchObject({ maxOutputTokens: 8192 });
+    for (const other of ['gemini-2.5-flash-image', 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-live', 'gemini-embedding-001', 'gemma-3-27b-it', 'gemini-2.5-flash-native-audio-dialog']) {
+      expect(knownModelInfo(gemini, other), other).toEqual({});
+    }
+    expect(knownModelInfo(openai, 'gpt-6-astra')).toEqual({ contextWindow: 1_050_000, maxOutputTokens: 128_000, capabilities: ALL });
+    expect(knownModelInfo(openai, 'gpt-6.1-sol')).toMatchObject({ contextWindow: 1_050_000 });
+    expect(knownModelInfo({ kind: 'chatgpt', baseUrl: '' }, 'gpt-6-luna')).toMatchObject({ contextWindow: 1_050_000 });
+    expect(knownModelInfo(openai, 'gpt-60')).toEqual({});
+    // The by-connection answer stays by connection: another server's Claude is still unknown there.
+    expect(knownModelInfo({ kind: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1' }, 'anthropic/claude-sonnet-5-5')).toEqual({});
   });
 
   it('hand out copies: editing an answer does not edit the table', () => {
@@ -203,10 +237,14 @@ describe('getModelInfo', () => {
   });
 
   it('else asks the listing, and gives the bare id when the listing does not carry it', async () => {
-    const fetch = vi.fn(async () => json({ models: [{ name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', supportedGenerationMethods: ['generateContent'], inputTokenLimit: 1048576, outputTokenLimit: 65536 }] }));
+    // A Gemini the table does not know yet: the listing says.
+    const fetch = vi.fn(async () => json({ models: [{ name: 'models/gemini-9-nova', displayName: 'Gemini 9 Nova', supportedGenerationMethods: ['generateContent'], inputTokenLimit: 2097152, outputTokenLimit: 65536 }] }));
     vi.stubGlobal('fetch', fetch);
-    const gemini: Connection = { kind: 'openai-compatible', protocol: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' };
-    expect(await getModelInfo(gemini, 'g-key')).toEqual({ id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', contextWindow: 1048576, maxOutputTokens: 65536, capabilities: ALL });
+    const gemini: Connection = { kind: 'openai-compatible', protocol: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-9-nova' };
+    expect(await getModelInfo(gemini, 'g-key')).toEqual({ id: 'gemini-9-nova', name: 'Gemini 9 Nova', contextWindow: 2097152, maxOutputTokens: 65536, capabilities: ALL });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    // A tabled Gemini needs no request on Google's OpenAI-compatible root.
+    expect(await getModelInfo(gemini, 'g-key', 'gemini-2.5-pro')).toMatchObject({ contextWindow: 1_048_576, maxOutputTokens: 65_536 });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(await getModelInfo(gemini, 'g-key', 'gemini-9')).toEqual({ id: 'gemini-9', name: 'gemini-9' });
     vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'claude-sonnet-4-5' }] })));

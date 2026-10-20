@@ -3,6 +3,20 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.10
+
+- **Model facts by name** (#64): `knownModelInfoByName(id)` answers from
+  the tables by the model's name alone, whichever gateway serves it — the
+  routing prefix (`anthropic/`, `openai/`, `google/`, `models/`, Bedrock's
+  `us.anthropic.…-v1:0`) and the long-context suffix in every spelling
+  (`[1m]`, `-1m`, `:1m`) read, the family chosen from the name;
+  `modelName(id)` is the normalization. The tables gain Google's chat
+  families (2.0 Flash to 4 Argon, as their model pages say; the image,
+  speech and live variants are left to the listing), which
+  `knownModelInfo` also uses for Google's OpenAI-compatible root, where the
+  listing says no limits; and GPT-6 (Astra, Sol, Luna: 1,050,000 in,
+  128,000 out). `knownModelInfo(conn, id)` keeps its by-connection answer.
+
 ## 0.1.9
 
 - **The host's own `fetch`** (#31, `@amenophis1er/byok/core`): every request

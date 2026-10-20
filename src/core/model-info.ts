@@ -46,8 +46,9 @@ const CLAUDE: Rule[] = [
   [/^claude-3-(?:opus|sonnet|haiku)/, { contextWindow: 200_000, maxOutputTokens: 4096, capabilities: { tools: true, images: true, pdf: false } }],
 ];
 
-/** OpenAI's families, the Codex catalog's slugs included (`gpt-5.x-…`); the variants with their own limits first. */
+/** OpenAI's families, the Codex catalog's slugs included (`gpt-5.x-…`); the variants with their own limits first. GPT-6 (Astra, Sol, Luna) as its model pages say, read 2026-10-20. */
 const GPT: Rule[] = [
+  [/^gpt-6(?:[.-]|$)/, { contextWindow: 1_050_000, maxOutputTokens: 128_000, capabilities: ALL }],
   [/^gpt-5-chat/, { contextWindow: 128_000, maxOutputTokens: 16_384, capabilities: { tools: false, images: true, pdf: true } }],
   [/^gpt-5(?:[.-]|$)/, { contextWindow: 400_000, maxOutputTokens: 128_000, capabilities: ALL }],
   [/^gpt-4\.1(?:-|$)/, { contextWindow: 1_047_576, maxOutputTokens: 32_768, capabilities: ALL }],
@@ -61,6 +62,20 @@ const GPT: Rule[] = [
   [/^gpt-3\.5-turbo(?:-|$)/, { contextWindow: 16_385, maxOutputTokens: 4096, capabilities: TEXT_TOOLS }],
 ];
 
+/**
+ * Google's chat families, as their model pages say (read 2026-10-20): a
+ * 1,048,576-token window and 65,536 out from 2.5 to 4 (Argon), 8,192 out on
+ * 2.0 Flash. 2.5 Flash's page lists no PDF input, so its row says nothing of
+ * it. The image, speech, live, audio and embedding variants are not chat
+ * models and are left out; Google's native listing says their limits.
+ */
+const GEMINI: Rule[] = [
+  [/^gemini-2\.0-flash(?:-|$)/, { contextWindow: 1_048_576, maxOutputTokens: 8192, capabilities: { tools: true, images: true } }],
+  [/^gemini-2\.5-flash(?:-lite)?(?:-|$)/, { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } }],
+  [/^gemini-(?:2\.5-pro|3(?:\.\d+)?-(?:pro|flash(?:-lite)?)|4-argon)(?:-|$)/, { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: ALL }],
+];
+const NOT_CHAT = /image|tts|audio|live|embedding|robotics|computer-use/i;
+
 /** The first rule's facts, as a fresh copy: a caller editing what it got does not edit the table. */
 function first(rules: Rule[], id: string): ModelFacts {
   const facts = rules.find(([pattern]) => pattern.test(id))?.[1];
@@ -68,25 +83,48 @@ function first(rules: Rule[], id: string): ModelFacts {
 }
 
 /**
- * A Claude id as the table spells it: without a Bedrock prefix and version
- * (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`), with a Vertex date
- * joined (`claude-opus-4-1@20250805`), and without the `[1m]` suffix that
- * names the 1M-context variant of a 200k model.
+ * A model id as the tables spell it: without a gateway's routing prefix
+ * (`anthropic/`, `openai/`, `google/`, `models/`), a Bedrock prefix and
+ * version (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`), with a Vertex
+ * date joined (`claude-opus-4-1@20250805`), and without the long-context
+ * suffix in any spelling (`[1m]`, `-1m`, `:1m`), which names the 1M-context
+ * variant of a 200k model.
  */
-function claudeId(id: string): { id: string; million: boolean } {
+export function modelName(id: string): { id: string; million: boolean } {
   let out = id.trim();
-  const million = /\[1m\]$/i.test(out);
-  out = out.replace(/\[1m\]$/i, '');
+  const million = /(?:\[1m\]|-1m|:1m)$/i.test(out);
+  out = out.replace(/(?:\[1m\]|-1m|:1m)$/i, '');
+  out = out.replace(/^(?:anthropic|openai|google|models)\//, '');
   out = out.replace(/^(?:[a-z]{2,6}\.)?anthropic\./, '').replace(/-v\d+(?::\d+)?$/, '');
   out = out.replace(/@(\d{8})$/, '-$1');
   return { id: out, million };
 }
 
-/** The Claude table's facts for `id` in any of its spellings; the `[1m]` variant has the 1M window. */
+/** The Claude table's facts for `id` in any of its spellings; the long-context variant has the 1M window. */
 function claudeFacts(id: string): ModelFacts {
-  const { id: plain, million } = claudeId(id);
+  const { id: plain, million } = modelName(id);
   const facts = first(CLAUDE, plain);
   return million && facts.contextWindow !== undefined ? { ...facts, contextWindow: 1_000_000 } : facts;
+}
+
+/** Google's table's facts for a chat model; nothing for an image, speech or other non-chat variant. */
+function geminiTableFacts(id: string): ModelFacts {
+  const plain = modelName(id).id;
+  return NOT_CHAT.test(plain) ? {} : first(GEMINI, plain);
+}
+
+/**
+ * What the tables know about a model by its name alone, whichever server
+ * serves it: the routing prefix and long-context suffix read, the family
+ * chosen from the name (`claude-`, `gpt-` / `o1`…`o9`, `gemini-`). Nothing
+ * for a name the tables do not know, so a host's own default applies.
+ */
+export function knownModelInfoByName(id: string): ModelFacts {
+  const plain = modelName(id).id;
+  if (/^claude-/.test(plain)) return claudeFacts(id);
+  if (/^(?:gpt-|chatgpt-|o[1-9](?:-|$))/.test(plain)) return first(GPT, plain);
+  if (/^gemini-/.test(plain)) return geminiTableFacts(id);
+  return {};
 }
 
 const hostOf = (baseUrl: string): string => {
@@ -97,14 +135,20 @@ const hostOf = (baseUrl: string): string => {
  * What the tables say about `id` on this connection: Anthropic's for an
  * Anthropic connection, OpenAI's for ChatGPT and api.openai.com, both by id
  * for an OpenCode sign-in (which serves each lab's models under their own
- * ids). Nothing for other servers: their listing is the source, or nothing.
+ * ids), Google's for its OpenAI-compatible root. Nothing for other servers:
+ * their listing is the source, or nothing — `knownModelInfoByName` answers
+ * by the name alone, for a host that knows the model and not the server.
  */
 export function knownModelInfo(conn: Pick<Connection, 'kind' | 'baseUrl' | 'issuer'>, id: string): ModelFacts {
+  const plain = modelName(id).id;
   if (conn.kind === 'anthropic') return claudeFacts(id);
-  if (conn.kind === 'chatgpt') return first(GPT, id);
+  if (conn.kind === 'chatgpt') return first(GPT, plain);
   if (conn.kind === 'openai-compatible') {
-    if (conn.issuer === 'opencode') return /claude-/.test(id) ? claudeFacts(id) : first(GPT, id);
-    if (hostOf(conn.baseUrl) === 'api.openai.com') return first(GPT, id);
+    if (conn.issuer === 'opencode') return knownModelInfoByName(id);
+    const host = hostOf(conn.baseUrl);
+    if (host === 'api.openai.com') return first(GPT, plain);
+    // Google's OpenAI-compatible root lists no limits; the table says them.
+    if (host === 'generativelanguage.googleapis.com') return geminiTableFacts(id);
   }
   return {};
 }
