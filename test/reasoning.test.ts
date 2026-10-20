@@ -55,20 +55,41 @@ describe('the request, per provider', () => {
     expect(rejectedField(400, '{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}')).toBe('reasoning_effort');
   });
 
-  it('Responses: the effort with a summary and the encrypted reasoning asked for; off sends nothing', () => {
+  it('Responses: the effort with a summary; the encrypted reasoning always asked for, since nothing is stored; off sends no effort', () => {
     expect(codexBody({ ...req, reasoning: 'medium' }, 'gpt-5.5')).toMatchObject({ reasoning: { effort: 'medium', summary: 'auto' }, include: ['reasoning.encrypted_content'] });
     expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.5')).not.toHaveProperty('reasoning');
-    expect(codexBody(req, 'gpt-5.5')).not.toHaveProperty('include');
+    expect(codexBody(req, 'gpt-5.5')).toMatchObject({ include: ['reasoning.encrypted_content'] });
+    expect(codexBody(req, 'gpt-5.5')).not.toHaveProperty('reasoning');
+  });
+
+  it('Responses: a reasoning item that came without its encrypted content is left out of the replay', () => {
+    const state = { protocol: 'responses', items: [
+      { id: 'rs_1', type: 'reasoning', summary: [] },
+      { id: 'rs_2', type: 'reasoning', encrypted_content: 'enc', summary: [] },
+      { id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Yes.' }] },
+    ] };
+    const items = codexInput([{ role: 'user', content: 'Why?' }, { role: 'assistant', content: 'Yes.', providerState: state }]).slice(1);
+    expect(items.map((i) => i['id'])).toEqual(['rs_2', 'msg_1']);
   });
 
   it('Gemini: thinkingLevel on 3 and later, a budget before, thoughts asked for when on, nothing for another family', () => {
     expect(geminiThinking('high', 'gemini-3-pro')).toEqual({ thinkingConfig: { thinkingLevel: 'HIGH', includeThoughts: true } });
     expect(geminiThinking('off', 'gemini-3.5-flash')).toEqual({ thinkingConfig: { thinkingLevel: 'MINIMAL' } });
     expect(geminiThinking('low', 'gemini-2.5-flash')).toEqual({ thinkingConfig: { thinkingBudget: 1024, includeThoughts: true } });
-    expect(geminiThinking('off', 'gemini-2.5-pro')).toEqual({ thinkingConfig: { thinkingBudget: 0 } });
+    expect(geminiThinking('off', 'gemini-2.5-flash')).toEqual({ thinkingConfig: { thinkingBudget: 0 } });
+    // The Pro models cannot stop thinking: 2.5 Pro is sent nothing for off, 3 Pro takes LOW and HIGH only.
+    expect(geminiThinking('off', 'gemini-2.5-pro')).toEqual({});
+    expect(geminiThinking('medium', 'gemini-2.5-pro')).toEqual({ thinkingConfig: { thinkingBudget: 8192, includeThoughts: true } });
+    expect(geminiThinking('off', 'gemini-3-pro-preview')).toEqual({ thinkingConfig: { thinkingLevel: 'LOW' } });
+    expect(geminiThinking('medium', 'gemini-3-pro')).toEqual({ thinkingConfig: { thinkingLevel: 'HIGH', includeThoughts: true } });
+    expect(geminiThinking('low', 'gemini-3-pro')).toEqual({ thinkingConfig: { thinkingLevel: 'LOW', includeThoughts: true } });
+    // 3.1 Pro and later take every level; off is still LOW, since a Pro cannot stop thinking.
+    expect(geminiThinking('medium', 'gemini-3.1-pro-preview')).toEqual({ thinkingConfig: { thinkingLevel: 'MEDIUM', includeThoughts: true } });
+    expect(geminiThinking('off', 'gemini-3.1-pro-preview')).toEqual({ thinkingConfig: { thinkingLevel: 'LOW' } });
+    expect(geminiThinking('medium', 'gemini-3.5-flash')).toEqual({ thinkingConfig: { thinkingLevel: 'MEDIUM', includeThoughts: true } });
     expect(geminiThinking('high', 'gemma-3-27b-it')).toEqual({});
     expect(geminiThinking(undefined, 'gemini-3-pro')).toEqual({});
-    expect(geminiBody({ ...req, reasoning: 'medium' }, 'gemini-3-pro')['generationConfig']).toMatchObject({ thinkingConfig: { thinkingLevel: 'MEDIUM' } });
+    expect(geminiBody({ ...req, reasoning: 'medium' }, 'gemini-3-flash')['generationConfig']).toMatchObject({ thinkingConfig: { thinkingLevel: 'MEDIUM' } });
   });
 });
 
@@ -232,6 +253,21 @@ describe('when Anthropic refuses the thinking blocks it signed', () => {
     expect(again[1]!.content.map((b) => b.type)).toEqual(['thinking', 'tool_use']);
     expect(again[3]!.content.map((b) => b.type)).toEqual(['thinking', 'tool_use']);
     expect(again[5]!.content.map((b) => b.type)).toEqual(['tool_use']);
+  });
+
+  it('turns thinking off for the retry on a manual-mode model, whose latest turn would otherwise have to open with the block', async () => {
+    const manual: Connection = { kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-4-5' };
+    const bodies: Array<Record<string, unknown>> = [];
+    const refuse = () => new Response(JSON.stringify({ error: { message: '`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified' } }), { status: 400 });
+    const fetch = vi.fn<Fetch>(async (_url, init) => { bodies.push(JSON.parse(init!.body as string)); return bodies.length === 1 ? refuse() : ok(); });
+    expect(await chat(manual, 'sk', { ...req, messages: history, reasoning: 'medium' }, { fetch })).toMatchObject({ ok: true });
+    expect(bodies[0]).toHaveProperty('thinking');
+    expect(bodies[1]).not.toHaveProperty('thinking');
+    // An adaptive model keeps its setting.
+    const adaptive: Array<Record<string, unknown>> = [];
+    const f2 = vi.fn<Fetch>(async (_url, init) => { adaptive.push(JSON.parse(init!.body as string)); return adaptive.length === 1 ? refuse() : ok(); });
+    expect(await chat(conn, 'sk', { ...req, messages: history, reasoning: 'medium' }, { fetch: f2 })).toMatchObject({ ok: true });
+    expect(adaptive[1]).toMatchObject({ thinking: { type: 'adaptive' } });
   });
 
   it('does not retry another 400, or one with no thinking to drop', async () => {

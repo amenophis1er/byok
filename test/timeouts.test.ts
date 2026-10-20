@@ -54,6 +54,14 @@ describe('the whole-request limit', () => {
     expect(await chat(conn, 'k', { ...req, timeoutMs: 0 }, { timeoutMs: 20 })).toMatchObject({ ok: true, text: 'Hello.' });
   });
 
+  it('treats Infinity and NaN as off, and a limit past what setTimeout takes as its ceiling, not as a millisecond', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => new Response(slowBody(20, init.signal), { status: 200 })));
+    expect(await chat(conn, 'k', req, { timeoutMs: Infinity })).toMatchObject({ ok: true, text: 'Hello.' });
+    expect(await chat(conn, 'k', req, { timeoutMs: 2 ** 40 })).toMatchObject({ ok: true, text: 'Hello.' });
+    expect(await chat(conn, 'k', req, { timeoutMs: 0, idleTimeoutMs: Infinity })).toMatchObject({ ok: true, text: 'Hello.' });
+    expect(await chat(conn, 'k', req, { timeoutMs: NaN, idleTimeoutMs: 2 ** 40 })).toMatchObject({ ok: true, text: 'Hello.' });
+  });
+
   it('still cuts a slow stream when set', async () => {
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => new Response(slowBody(30, init.signal), { status: 200 })));
     expect(await chat(conn, 'k', req, { timeoutMs: 40 })).toMatchObject({ ok: false, error: TIMED_OUT });

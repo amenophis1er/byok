@@ -63,7 +63,8 @@ export function codexInput(messages: AIMessage[]): Item[] {
     }
     // The turn's own output items when we have them (reasoning included), else rebuilt from text and calls.
     const own = responsesState(message.providerState);
-    if (own) { items.push(...own); continue; }
+    // A reasoning item without its encrypted content cannot be found again under store: false; it is left out.
+    if (own) { items.push(...own.filter((item) => item['type'] !== 'reasoning' || typeof item['encrypted_content'] === 'string')); continue; }
     if (message.content) items.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: message.content }] });
     for (const call of message.toolCalls ?? []) {
       items.push({ type: 'function_call', call_id: call.id, name: call.name, arguments: call.argsError ? call.argsError.raw : JSON.stringify(call.args ?? {}) });
@@ -81,8 +82,9 @@ export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens =
     input: codexInput(req.messages),
     ...(maxOutputTokens && req.maxTokens ? { max_output_tokens: req.maxTokens } : {}),
     ...(cacheKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
-    // A level asks for the effort and a summary, and for the encrypted reasoning to replay (store is false).
-    ...(req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' }, include: ['reasoning.encrypted_content'] } : {}),
+    // Nothing is stored server-side, so the reasoning's encrypted content is always asked for, to replay; a level asks for the effort and a summary too.
+    include: ['reasoning.encrypted_content'],
+    ...(req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' } } : {}),
     ...(req.tools?.length ? {
       tools: [
         ...functionTools(req).map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
