@@ -188,10 +188,13 @@ What it guarantees:
   nothing was acted on: the connection dropped, the server failed (5xx), or a
   rate limit lifts within the minute. A rate-limited result also carries what
   the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
-  headers, Anthropic's reset instants, Gemini's `RetryInfo`) and
-  `quota: 'minute' | 'day'` (the window that ran out). Show "Rate limited,
-  retrying in 20 s" or "Daily quota reached for this key" instead of the raw
-  HTTP error; a day window is never `retryable`.
+  headers, Anthropic's reset instants, Gemini's `RetryInfo`, ChatGPT's
+  `resets_in_seconds` and `x-codex-*-reset-at`) with `resetAt` (epoch ms), and
+  `quota: 'minute' | 'day' | 'plan'` (the window that ran out; `plan` is a
+  subscription's usage window, hours to a week). Show "Rate limited, retrying
+  in 20 s", "Daily quota reached for this key" or "Plan limit reached, resets
+  at 14:00" instead of the raw HTTP error; a day or plan window is never
+  `retryable`, whatever wait the provider named beside it.
 - **Nothing half-made is handed out.** Arguments that are not valid JSON come
   back as `argsError` (answer them with an error result). A turn cut off by the
   token limit or a refusal (`stopReason: 'length' | 'refusal'`) carries no tool
@@ -306,7 +309,7 @@ const result = await withRetry((attempt) => chat(conn, key, request, { signal })
 
 It waits as the provider asked (`retryAfterMs`), else exponentially with
 jitter (1 s, 2 s, 4 s, … ×[0.5, 1.5), never over `maxDelayMs`), and never
-retries a day window, a wait over `maxWaitMs` (60 s), or a turn that already
+retries a day or plan window, a wait over `maxWaitMs` (60 s), or a turn that already
 produced text or a tool call. The two budgets are separate, so a mix of
 failures may run to `maxAttempts + maxNetworkAttempts − 1` attempts. `sleep`
 and `random` are injectable for tests.
@@ -351,11 +354,11 @@ with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
 default `codex_cli_rs`, the Codex CLI's). The credential is the key or token, or a
 function `(method, url) => headers` that signs each request (an Ollama device
 key: `signRequest` is exported). `chat()` never throws: a failure is an
-`{ ok: false, error, retryable?, retryAfterMs?, quota? }` result — the last
-two when the provider said how long to wait and which rate-limit window ran
-out. `listModels()` throws an `HttpError` with the same `status`,
-`retryAfterMs` and `quota`; `rateLimitOf(status, headers, body)` reads them
-from any provider response you fetch yourself.
+`{ ok: false, error, retryable?, retryAfterMs?, resetAt?, quota? }` result —
+the last three when the provider said how long to wait and which rate-limit
+window ran out. `listModels()` throws an `HttpError` with the same `status`,
+`retryAfterMs`, `resetAt` and `quota`; `rateLimitOf(status, headers, body)`
+reads them from any provider response you fetch yourself.
 
 ## What the host extension must declare
 

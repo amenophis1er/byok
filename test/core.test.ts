@@ -53,24 +53,24 @@ describe('core chat()', () => {
 
     it('a short wait is worth another try, and the wait comes with the result', async () => {
       vi.stubGlobal('fetch', refused(429, { error: { message: 'Rate limit reached on requests per min (RPM). Please try again in 20s.' } }, { 'retry-after': '20' }));
-      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 429: Rate limit reached on requests per min (RPM). Please try again in 20s.', retryable: true, retryAfterMs: 20_000, quota: 'minute' });
+      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 429: Rate limit reached on requests per min (RPM). Please try again in 20s.', retryable: true, retryAfterMs: 20_000, resetAt: expect.any(Number), quota: 'minute' });
     });
 
     it('a day window is not: the key is out until tomorrow, whatever the wait says', async () => {
       vi.stubGlobal('fetch', refused(429, { error: { message: 'Rate limit reached on requests per day (RPD). Please try again in 2s.' } }));
-      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: expect.stringContaining('HTTP 429'), retryAfterMs: 2000, quota: 'day' });
+      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: expect.stringContaining('HTTP 429'), retryAfterMs: 2000, resetAt: expect.any(Number), quota: 'day' });
     });
 
     it('a long or unknown wait is the caller\'s call: not retryable, the wait given when known', async () => {
       vi.stubGlobal('fetch', refused(429, { error: { message: 'slow down' } }, { 'retry-after': '120' }));
-      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 429: slow down', retryAfterMs: 120_000 });
+      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 429: slow down', retryAfterMs: 120_000, resetAt: expect.any(Number) });
       vi.stubGlobal('fetch', refused(429, { error: { message: 'slow down' } }));
       expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 429: slow down' });
     });
 
     it('a 5xx stays retryable, and carries Retry-After when the server sent one', async () => {
       vi.stubGlobal('fetch', refused(503, { error: { message: 'overloaded' } }, { 'retry-after': '3' }));
-      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 503: overloaded', retryable: true, retryAfterMs: 3000 });
+      expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 503: overloaded', retryable: true, retryAfterMs: 3000, resetAt: expect.any(Number) });
       vi.stubGlobal('fetch', refused(502, { error: { message: 'bad gateway' } }));
       expect(await chat(conn, 'k', req)).toEqual({ ok: false, error: 'HTTP 502: bad gateway', retryable: true });
     });
@@ -84,7 +84,7 @@ describe('core chat()', () => {
       };
       vi.stubGlobal('fetch', refused(429, gemini));
       expect(await chat({ kind: 'openai-compatible', protocol: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' }, 'k', req))
-        .toEqual({ ok: false, error: 'HTTP 429: You exceeded your current quota.', retryAfterMs: 37_000, quota: 'day' });
+        .toEqual({ ok: false, error: 'HTTP 429: You exceeded your current quota.', retryAfterMs: 37_000, resetAt: expect.any(Number), quota: 'day' });
 
       vi.stubGlobal('fetch', refused(429, { type: 'error', error: { type: 'rate_limit_error', message: 'This request would exceed the rate limit for your organization of 50,000 input tokens per minute.' } },
         { 'anthropic-ratelimit-input-tokens-remaining': '0', 'anthropic-ratelimit-input-tokens-reset': new Date(Date.now() + 15_000).toISOString() }));
@@ -95,7 +95,7 @@ describe('core chat()', () => {
 
       vi.stubGlobal('fetch', refused(429, { error: { type: 'usage_limit_reached', message: 'You have hit your usage limit.', resets_in_seconds: 5400 } }));
       expect(await chat({ kind: 'chatgpt', baseUrl: '', model: 'gpt-5-codex' }, 'tok', req))
-        .toEqual({ ok: false, error: 'Your ChatGPT plan’s limit is reached. Wait for it to reset.', retryAfterMs: 5_400_000 });
+        .toEqual({ ok: false, error: 'Your ChatGPT plan’s limit is reached. Wait for it to reset.', retryAfterMs: 5_400_000, resetAt: expect.any(Number), quota: 'plan' });
     });
   });
 

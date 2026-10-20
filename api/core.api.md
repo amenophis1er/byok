@@ -86,6 +86,7 @@ export function getModelInfo(conn: Connection, credential: ConnectionCredential,
 export class HttpError extends Error {
     constructor(status: number, message: string, rateLimit?: RateLimit);
     readonly quota?: RateLimitWindow;
+    readonly resetAt?: number;
     readonly retryAfterMs?: number;
     readonly status: number;
 }
@@ -120,6 +121,7 @@ export function protocolOf(conn: Pick<Connection, 'kind' | 'protocol'>): Protoco
 // @public
 export interface RateLimit {
     quota?: RateLimitWindow;
+    resetAt?: number;
     retryAfterMs?: number;
 }
 
