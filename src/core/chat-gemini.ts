@@ -94,17 +94,22 @@ const BUDGETS: Record<AIReasoning, number> = { off: 0, low: 1024, medium: 8192, 
 /**
  * Gemini's thinking config for a level: `thinkingLevel` on Gemini 3 and
  * later, a `thinkingBudget` before that, with the thought summaries asked
- * for when thinking is on. The Pro models cannot stop thinking: a 3 Pro takes
- * `LOW` and `HIGH` only (off and low are `LOW`, medium and high `HIGH`), a
- * 2.5 Pro refuses a zero budget, so `off` sends it nothing. Nothing for a
- * model that is not a Gemini (Gemma, another family), which rejects the field.
+ * for when thinking is on. The Pro models cannot stop thinking: Gemini 3 Pro
+ * (3.0) takes `LOW` and `HIGH` only (off and low are `LOW`, medium and high
+ * `HIGH`; 3.1 Pro and later take every level, with `off` as `LOW`), a 2.5 Pro
+ * refuses a zero budget, so `off` sends it nothing. Nothing for a model that
+ * is not a Gemini (Gemma, another family), which rejects the field.
  */
 export function geminiThinking(reasoning: AIReasoning | undefined, model: string): Record<string, unknown> {
   if (!reasoning || !/^gemini-/.test(model)) return {};
   const third = /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model);
   const pro = /-pro(?:-|$)/.test(model);
+  const lowHighOnly = /^gemini-3-pro(?:-|$)/.test(model);
   let level: Record<string, unknown>;
-  if (third) level = { thinkingLevel: pro ? (reasoning === 'off' || reasoning === 'low' ? 'LOW' : 'HIGH') : reasoning === 'off' ? 'MINIMAL' : reasoning.toUpperCase() };
+  if (third) {
+    const name = lowHighOnly ? (reasoning === 'off' || reasoning === 'low' ? 'LOW' : 'HIGH') : reasoning === 'off' ? (pro ? 'LOW' : 'MINIMAL') : reasoning.toUpperCase();
+    level = { thinkingLevel: name };
+  }
   else if (reasoning === 'off' && pro) return {};
   else level = { thinkingBudget: BUDGETS[reasoning] };
   return { thinkingConfig: { ...level, ...(reasoning !== 'off' ? { includeThoughts: true } : {}) } };

@@ -83,6 +83,10 @@ describe('the request, per provider', () => {
     expect(geminiThinking('off', 'gemini-3-pro-preview')).toEqual({ thinkingConfig: { thinkingLevel: 'LOW' } });
     expect(geminiThinking('medium', 'gemini-3-pro')).toEqual({ thinkingConfig: { thinkingLevel: 'HIGH', includeThoughts: true } });
     expect(geminiThinking('low', 'gemini-3-pro')).toEqual({ thinkingConfig: { thinkingLevel: 'LOW', includeThoughts: true } });
+    // 3.1 Pro and later take every level; off is still LOW, since a Pro cannot stop thinking.
+    expect(geminiThinking('medium', 'gemini-3.1-pro-preview')).toEqual({ thinkingConfig: { thinkingLevel: 'MEDIUM', includeThoughts: true } });
+    expect(geminiThinking('off', 'gemini-3.1-pro-preview')).toEqual({ thinkingConfig: { thinkingLevel: 'LOW' } });
+    expect(geminiThinking('medium', 'gemini-3.5-flash')).toEqual({ thinkingConfig: { thinkingLevel: 'MEDIUM', includeThoughts: true } });
     expect(geminiThinking('high', 'gemma-3-27b-it')).toEqual({});
     expect(geminiThinking(undefined, 'gemini-3-pro')).toEqual({});
     expect(geminiBody({ ...req, reasoning: 'medium' }, 'gemini-3-flash')['generationConfig']).toMatchObject({ thinkingConfig: { thinkingLevel: 'MEDIUM' } });
