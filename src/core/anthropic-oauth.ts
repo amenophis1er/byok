@@ -168,6 +168,10 @@ async function httpError(what: string, res: Response): Promise<string> {
   if (res.status === 429 || /rate.?limit/i.test(detail)) {
     return "Anthropic is rate-limiting sign-in (usually from repeated tries). Wait a few minutes, then do it ONCE with a fresh code — or use 'Paste a setup-token instead', which skips this step.";
   }
+  // A refresh token that was revoked, rotated elsewhere or expired: only a new sign-in recovers, not a retry.
+  if (what === 'Token refresh' && (res.status === 400 || res.status === 401) && /invalid_grant|revoked|expired/i.test(detail)) {
+    return 'Your Claude sign-in was revoked or expired — remove the connection and sign in again.';
+  }
   return `${what} failed (${res.status})${detail ? `: ${detail}` : ''}`;
 }
 

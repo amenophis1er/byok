@@ -272,7 +272,8 @@ export type AIOpencodePoll =
 /** Message content: text, images for vision-capable providers, and PDF documents. */
 export type AIContentPart =
   | { type: 'text'; text: string }
-  | { type: 'image'; mediaType: 'image/png' | 'image/jpeg'; data: string /* base64 */ }
+  /** PNG, JPEG, GIF and WebP: what Anthropic and OpenAI take. The Gemini API takes no GIF (PNG, JPEG, WebP, HEIC). */
+  | { type: 'image'; mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string /* base64 */ }
   /** Anthropic: a `document` block. OpenAI-compatible: a `file` part (OpenAI, OpenRouter); servers without PDF input reject the request. */
   | { type: 'document'; mediaType: 'application/pdf'; data: string /* base64 */; name?: string };
 

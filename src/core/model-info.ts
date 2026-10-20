@@ -67,6 +67,28 @@ function first(rules: Rule[], id: string): ModelFacts {
   return facts ? { ...facts, ...(facts.capabilities ? { capabilities: { ...facts.capabilities } } : {}) } : {};
 }
 
+/**
+ * A Claude id as the table spells it: without a Bedrock prefix and version
+ * (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`), with a Vertex date
+ * joined (`claude-opus-4-1@20250805`), and without the `[1m]` suffix that
+ * names the 1M-context variant of a 200k model.
+ */
+function claudeId(id: string): { id: string; million: boolean } {
+  let out = id.trim();
+  const million = /\[1m\]$/i.test(out);
+  out = out.replace(/\[1m\]$/i, '');
+  out = out.replace(/^(?:[a-z]{2,6}\.)?anthropic\./, '').replace(/-v\d+(?::\d+)?$/, '');
+  out = out.replace(/@(\d{8})$/, '-$1');
+  return { id: out, million };
+}
+
+/** The Claude table's facts for `id` in any of its spellings; the `[1m]` variant has the 1M window. */
+function claudeFacts(id: string): ModelFacts {
+  const { id: plain, million } = claudeId(id);
+  const facts = first(CLAUDE, plain);
+  return million && facts.contextWindow !== undefined ? { ...facts, contextWindow: 1_000_000 } : facts;
+}
+
 const hostOf = (baseUrl: string): string => {
   try { return new URL(baseUrl).hostname; } catch { return ''; }
 };
@@ -78,10 +100,10 @@ const hostOf = (baseUrl: string): string => {
  * ids). Nothing for other servers: their listing is the source, or nothing.
  */
 export function knownModelInfo(conn: Pick<Connection, 'kind' | 'baseUrl' | 'issuer'>, id: string): ModelFacts {
-  if (conn.kind === 'anthropic') return first(CLAUDE, id);
+  if (conn.kind === 'anthropic') return claudeFacts(id);
   if (conn.kind === 'chatgpt') return first(GPT, id);
   if (conn.kind === 'openai-compatible') {
-    if (conn.issuer === 'opencode') return /^claude-/.test(id) ? first(CLAUDE, id) : first(GPT, id);
+    if (conn.issuer === 'opencode') return /claude-/.test(id) ? claudeFacts(id) : first(GPT, id);
     if (hostOf(conn.baseUrl) === 'api.openai.com') return first(GPT, id);
   }
   return {};

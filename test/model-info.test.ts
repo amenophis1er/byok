@@ -41,6 +41,19 @@ describe('the tables', () => {
     expect(knownModelInfo(anthropic, 'claude-opus-55')).toEqual({});
   });
 
+  it('read a Claude id in its other spellings: the [1m] variant, Bedrock and Vertex ids', () => {
+    expect(knownModelInfo(anthropic, 'claude-sonnet-4-5[1m]')).toEqual({ contextWindow: 1_000_000, maxOutputTokens: 64_000, capabilities: ALL });
+    expect(knownModelInfo(anthropic, 'claude-opus-4-1-20250805[1m]')).toMatchObject({ contextWindow: 1_000_000, maxOutputTokens: 32_000 });
+    expect(knownModelInfo(anthropic, 'us.anthropic.claude-sonnet-4-5-20250929-v1:0')).toEqual({ contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL });
+    expect(knownModelInfo(anthropic, 'anthropic.claude-3-5-haiku-20241022-v1:0')).toMatchObject({ maxOutputTokens: 8192 });
+    expect(knownModelInfo(anthropic, 'claude-opus-4-1@20250805')).toMatchObject({ maxOutputTokens: 32_000 });
+    const opencode: Connection = { kind: 'openai-compatible', issuer: 'opencode', baseUrl: 'https://opencode.ai/inference/v1' };
+    expect(knownModelInfo(opencode, 'claude-haiku-4-5[1m]')).toMatchObject({ contextWindow: 1_000_000 });
+    // An unknown model in a known spelling is still unknown.
+    expect(knownModelInfo(anthropic, 'us.anthropic.claude-opus-6-v1:0')).toEqual({});
+    expect(knownModelInfo(anthropic, 'claude-opus-6[1m]')).toEqual({});
+  });
+
   it('know the OpenAI families, for api.openai.com and a ChatGPT sign-in, the Codex slugs included', () => {
     expect(knownModelInfo(openai, 'gpt-5')).toEqual({ contextWindow: 400_000, maxOutputTokens: 128_000, capabilities: ALL });
     expect(knownModelInfo({ kind: 'chatgpt', baseUrl: '' }, 'gpt-5.6-sol')).toMatchObject({ contextWindow: 400_000 });
@@ -153,6 +166,29 @@ describe('listModels carries what is known', () => {
     // A plain server's bare ids stay bare.
     vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'gpt-oss:20b', object: 'model' }] })));
     expect(await listModels({ kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1' }, '')).toEqual([{ id: 'gpt-oss:20b', name: 'gpt-oss:20b' }]);
+  });
+
+  it('follows every page of the Anthropic catalog, and stops on a page that does not move', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({ data: [{ id: 'claude-a' }], has_more: true, last_id: 'claude-a' }))
+      .mockResolvedValueOnce(json({ data: [{ id: 'claude-b' }], has_more: true, last_id: 'claude-b' }))
+      .mockResolvedValueOnce(json({ data: [{ id: 'claude-c' }], has_more: false, last_id: 'claude-c' }));
+    vi.stubGlobal('fetch', fetch);
+    expect((await listModels({ kind: 'anthropic', baseUrl: '' }, 'sk')).map((m) => m.id)).toEqual(['claude-a', 'claude-b', 'claude-c']);
+    expect(fetch.mock.calls.map((c) => String(c[0]))).toEqual([
+      'https://api.anthropic.com/v1/models?limit=100',
+      'https://api.anthropic.com/v1/models?limit=100&after_id=claude-a',
+      'https://api.anthropic.com/v1/models?limit=100&after_id=claude-b',
+    ]);
+    vi.stubGlobal('fetch', vi.fn(async () => json({ data: [{ id: 'claude-x' }], has_more: true, last_id: 'claude-x' })));
+    expect((await listModels({ kind: 'anthropic', baseUrl: '' }, 'sk')).length).toBeLessThanOrEqual(20);
+  });
+
+  it('keeps what the Codex catalog says of a model under the table', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ models: [{ slug: 'gpt-5.5', display_name: 'GPT-5.5', priority: 1, context_window: 272000, input_modalities: ['text', 'image'] }] })));
+    expect(await listModels({ kind: 'chatgpt', baseUrl: '' }, 'tok')).toEqual([
+      { id: 'gpt-5.5', name: 'GPT-5.5', contextWindow: 272000, maxOutputTokens: 128_000, capabilities: ALL },
+    ]);
   });
 });
 

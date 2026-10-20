@@ -87,6 +87,7 @@ describe('pollDevice', () => {
     ['pending as a string', () => json({ error: 'deviceauth_authorization_pending' }, 400), { status: 'pending' }],
     ['pending as an object', () => json({ error: { code: 'deviceauth_authorization_pending' } }, 400), { status: 'pending' }],
     ['slow_down', () => json({ error: 'slow_down' }, 400), { status: 'slow_down' }],
+    ['a 429 while polling', () => new Response('', { status: 429 }), { status: 'slow_down' }],
   ])('maps %s', async (_name, response, expected) => {
     mockFetch(response());
     expect(await pollDevice('d', 'u')).toEqual(expected);
@@ -148,9 +149,10 @@ describe('refreshOpenAiTokens', () => {
     expect((await refreshOpenAiTokens('rt1')).refreshToken).toBe('rt1');
   });
 
-  it('fails on an error status', async () => {
-    mockFetch(new Response('invalid_grant', { status: 401 }));
-    await expect(refreshOpenAiTokens('rt1')).rejects.toThrow('Token refresh failed (401): invalid_grant');
+  it('fails on an error status, and names a revoked sign-in as one to redo', async () => {
+    mockFetch(new Response('down', { status: 502 }), new Response('invalid_grant', { status: 401 }));
+    await expect(refreshOpenAiTokens('rt1')).rejects.toThrow('Token refresh failed (502): down');
+    await expect(refreshOpenAiTokens('rt1')).rejects.toThrow('Your ChatGPT sign-in was revoked or expired — remove the connection and sign in again.');
   });
 });
 
