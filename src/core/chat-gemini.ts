@@ -201,7 +201,8 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   // A turn cut off by the limit or a filter may carry a truncated call: never hand one out.
   const runnable = mapped === 'end';
   const webSearch = queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
-  if (webSearch && usage) usage.webSearchRequests = queries.length;
+  // Gemini 3 and later bill each query; before that, grounding is billed once per prompt. Unknown model, no count.
+  if (webSearch && usage && model) usage.webSearchRequests = /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model) ? queries.length : 1;
   return {
     ok: true,
     ...(text ? { text } : {}),

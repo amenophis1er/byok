@@ -23,11 +23,11 @@ describe('the tool in the request', () => {
   it('Anthropic: the web_search server tool after the function tools, with its limit, domains and location', () => {
     const tools = anthropicBody(req, 'claude-opus-5-5', [])['tools'] as Array<Record<string, unknown>>;
     expect(tools).toEqual([
-      { name: 'browser', description: 'Control a page.', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } },
-      { type: 'web_search_20250305', name: 'web_search', max_uses: 3, allowed_domains: ['example.com'], user_location: { type: 'approximate', city: 'Paris', country: 'FR' } },
+      { name: 'browser', description: 'Control a page.', input_schema: { type: 'object' } },
+      { type: 'web_search_20250305', name: 'web_search', max_uses: 3, allowed_domains: ['example.com'], user_location: { type: 'approximate', city: 'Paris', country: 'FR' }, cache_control: { type: 'ephemeral' } },
     ]);
     const blocked = anthropicBody({ ...req, tools: [{ type: 'web_search', blockedDomains: ['spam.example'] }] }, 'm', [])['tools'] as Array<Record<string, unknown>>;
-    expect(blocked).toEqual([{ type: 'web_search_20250305', name: 'web_search', blocked_domains: ['spam.example'] }]);
+    expect(blocked).toEqual([{ type: 'web_search_20250305', name: 'web_search', blocked_domains: ['spam.example'], cache_control: { type: 'ephemeral' } }]);
     expect(anthropicBody({ ...req, tools: [TOOL] }, 'm', [])['tools']).toHaveLength(1);
   });
 
@@ -97,6 +97,17 @@ describe('what a turn searched', () => {
     expect(JSON.stringify(anthropicBody({ ...req, messages: history, cacheConversation: true }, 'm', [])['messages'])).not.toContain('cache_control');
   });
 
+  it('Responses: one call with several queries counts once, the newer `queries` over the older `query`, and a truncated turn keeps what it searched', async () => {
+    const seen: ChatEvent[] = [];
+    const result = await codexResult(sse(openaiSse([
+      { type: 'response.output_item.done', item: { id: 'ws_1', type: 'web_search_call', status: 'completed', action: { type: 'search', query: 'a', queries: ['a', 'b'] } } },
+      { type: 'response.output_text.delta', item_id: 'msg_1', delta: 'Half' },
+      { type: 'response.incomplete', response: { status: 'incomplete', usage: { input_tokens: 5, output_tokens: 9 } } },
+    ], false)), undefined, (e) => seen.push(e));
+    expect(result).toMatchObject({ stopReason: 'length', webSearch: { queries: ['a', 'b'], sources: [] }, usage: { webSearchRequests: 1 } });
+    expect(seen.filter((e) => e.type === 'search')).toEqual([{ type: 'search', query: 'a' }, { type: 'search', query: 'b' }]);
+  });
+
   it('Responses: the web_search_call queries, the citations as sources, the calls counted', async () => {
     const seen: ChatEvent[] = [];
     const result = await codexResult(sse(openaiSse([
@@ -115,10 +126,17 @@ describe('what a turn searched', () => {
     expect((result.providerState as { items: Array<{ type: string }> }).items.map((i) => i.type)).toEqual(['web_search_call', 'web_search_call', 'message']);
   });
 
+  it('Gemini: billed per query from Gemini 3, once per prompt before, not at all when the model is unknown', async () => {
+    const grounded = (modelVersion?: string) => sse(openaiSse([{ ...(modelVersion ? { modelVersion } : {}), candidates: [{ content: { role: 'model', parts: [{ text: 'x' }] }, finishReason: 'STOP', groundingMetadata: { webSearchQueries: ['a', 'b'] } }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } }], false));
+    expect((await geminiResult(grounded('gemini-3-pro-001'))).usage).toMatchObject({ webSearchRequests: 2 });
+    expect((await geminiResult(grounded('gemini-2.5-flash'))).usage).toMatchObject({ webSearchRequests: 1 });
+    expect((await geminiResult(grounded())).usage).not.toHaveProperty('webSearchRequests');
+  });
+
   it('Gemini: the grounding queries and web chunks, in whichever chunk they arrive', async () => {
     const seen: ChatEvent[] = [];
     const result = await geminiResult(sse(openaiSse([
-      { candidates: [{ content: { role: 'model', parts: [{ text: 'Two ' }] } }] },
+      { modelVersion: 'gemini-3-pro', candidates: [{ content: { role: 'model', parts: [{ text: 'Two ' }] } }] },
       { candidates: [{ content: { role: 'model', parts: [{ text: 'things.' }] }, finishReason: 'STOP', groundingMetadata: {
         webSearchQueries: ['news today', 'news today'],
         groundingChunks: [{ web: { uri: 'https://example.com/a', title: 'A' } }, { web: { uri: 'https://example.com/a', title: 'A' } }, { retrievedContext: { uri: 'x' } }],

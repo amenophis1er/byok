@@ -151,6 +151,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const thoughts: string[] = [];
   let thought = '';
   const queries: string[] = [];
+  let searchCalls = 0;
   const sources = new Map<string, { url: string; title?: string }>();
 
   const call = (item: Record<string, unknown>) => {
@@ -205,12 +206,13 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
         const item = event['item'] ?? {};
         if (item && typeof item === 'object' && typeof item.type === 'string') items.push(item as Record<string, unknown>);
         if (item.type === 'web_search_call') {
-          // The action names the query (or queries); the sources read come as the message's citations.
+          // One billed call; its action names the queries (`queries`, or the older `query`). The sources read come as the message's citations.
+          searchCalls += 1;
           const action = item.action ?? {};
-          for (const query of [action.query, ...(Array.isArray(action.queries) ? action.queries : [])]) {
+          const named = Array.isArray(action.queries) ? action.queries : [action.query];
+          for (const query of named) {
             if (typeof query === 'string' && query) { queries.push(query); onEvent?.({ type: 'search', query }); }
           }
-          if (!action.query && !Array.isArray(action.queries)) queries.push('');
         }
         if (item.type === 'message' && Array.isArray(item.content)) {
           for (const part of item.content) {
@@ -244,7 +246,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
           const cached = u.input_tokens_details?.cached_tokens;
           const reasoned = u.output_tokens_details?.reasoning_tokens;
           usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens, ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}), ...(typeof reasoned === 'number' ? { reasoningTokens: reasoned } : {}) };
-          if (queries.length > 0) usage.webSearchRequests = queries.length;
+          if (searchCalls > 0) usage.webSearchRequests = searchCalls;
         }
         incomplete = event['type'] === 'response.incomplete' || response.status === 'incomplete';
         completed = true;
@@ -274,9 +276,9 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const text = [...texts.values()].join('\n\n').trim();
   if (thought) thoughts.push(thought);
   const reasoning = thoughts.join('\n\n').trim();
-  const webSearch = queries.length > 0 || sources.size > 0 ? { queries: queries.filter(Boolean), sources: [...sources.values()] } : undefined;
+  const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
   // A turn cut off by the limit may carry a truncated call: never hand one out.
-  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
+  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
   return {
     ok: true,
     ...(text ? { text } : {}),

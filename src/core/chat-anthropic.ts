@@ -138,8 +138,6 @@ export function anthropicBody(req: AIChatRequest, model: string, system: Array<{
   const lastSystem = systemBlocks[systemBlocks.length - 1];
   if (lastSystem) lastSystem['cache_control'] = { type: 'ephemeral' };
   const tools: Array<Record<string, unknown>> = functionTools(req).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
-  const lastTool = tools[tools.length - 1];
-  if (lastTool) lastTool['cache_control'] = { type: 'ephemeral' };
   const search = webSearchTool(req);
   if (search) {
     const location = approximateLocation(search);
@@ -150,6 +148,9 @@ export function anthropicBody(req: AIChatRequest, model: string, system: Array<{
       ...(location ? { user_location: { type: 'approximate', ...location } } : {}),
     });
   }
+  // The last tool, server tool included, closes the cached prefix.
+  const lastTool = tools[tools.length - 1];
+  if (lastTool) lastTool['cache_control'] = { type: 'ephemeral' };
   const messages = anthropicMessages(req.messages);
   const maxTokens = req.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
   return {
