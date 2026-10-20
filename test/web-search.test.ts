@@ -4,7 +4,7 @@
  * counted, a paused Anthropic turn sent back as it came, and the function
  * tools kept apart.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { anthropicBody, anthropicMessages, anthropicResult } from '../src/core/chat-anthropic.js';
 import { codexBody, codexResult } from '../src/core/chat-codex.js';
 import { geminiBody, geminiResult } from '../src/core/chat-gemini.js';
@@ -31,7 +31,7 @@ describe('the tool in the request', () => {
     expect(anthropicBody({ ...req, tools: [TOOL] }, 'm', [])['tools']).toHaveLength(1);
   });
 
-  it('Responses: the web_search tool with its filters and location; Gemini: Google Search grounding; Chat Completions: nothing', () => {
+  it('Responses: the web_search tool with its filters and location; Gemini: Google Search grounding; Chat Completions: a refusal before any request', () => {
     const tools = codexBody(req, 'gpt-5.5')['tools'] as Array<Record<string, unknown>>;
     expect(tools).toEqual([
       { type: 'function', name: 'browser', description: 'Control a page.', parameters: { type: 'object' }, strict: false },
@@ -41,8 +41,8 @@ describe('the tool in the request', () => {
     expect(gemini['tools']).toEqual([{ functionDeclarations: [{ name: 'browser', description: 'Control a page.', parametersJsonSchema: { type: 'object' } }] }, { googleSearch: {} }]);
     expect(geminiBody({ ...req, tools: [SEARCH] }, 'gemini-3-pro')).toMatchObject({ tools: [{ googleSearch: {} }] });
     expect(geminiBody({ ...req, tools: [SEARCH] }, 'gemini-3-pro')).not.toHaveProperty('toolConfig');
-    const chat = openaiBody(req, 'gpt-5', 'https://api.openai.com/v1');
-    expect(chat['tools']).toEqual([{ type: 'function', function: { name: 'browser', description: 'Control a page.', parameters: { type: 'object' } } }]);
+    expect(() => openaiBody(req, 'gpt-5', 'https://api.openai.com/v1')).toThrow(/no web search tool/);
+    expect(openaiBody({ ...req, tools: [TOOL] }, 'gpt-5', 'https://api.openai.com/v1')['tools']).toEqual([{ type: 'function', function: { name: 'browser', description: 'Control a page.', parameters: { type: 'object' } } }]);
   });
 });
 
@@ -145,6 +145,17 @@ describe('what a turn searched', () => {
     expect(result).toMatchObject({ text: 'Two things.', webSearch: { queries: ['news today'], sources: [{ url: 'https://example.com/a', title: 'A' }] }, usage: { webSearchRequests: 1 } });
     // The grounding is read before the chunk's parts, so the search is announced before the text it arrived with.
     expect(seen).toEqual([{ type: 'text', delta: 'Two ' }, { type: 'search', query: 'news today' }, { type: 'text', delta: 'things.' }]);
+  });
+
+  it('on a server that speaks Chat Completions only, the turn fails before any request; on OpenAI it moves to the Responses API', async () => {
+    const { chat } = await import('../src/core/index.js');
+    const fetch = vi.fn(async () => new Response('{"error":{"message":"no"}}', { status: 500 }));
+    expect(await chat({ kind: 'openai-compatible', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama' }, 'k', { ...req, tools: [SEARCH] }, { fetch }))
+      .toMatchObject({ ok: false, error: expect.stringContaining('no web search tool'), failure: { kind: 'request' } });
+    expect(fetch).not.toHaveBeenCalled();
+    await chat({ kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5' }, 'k', { ...req, tools: [SEARCH] }, { fetch });
+    expect(String(fetch.mock.calls[0]![0])).toBe('https://api.openai.com/v1/responses');
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('a turn that searched nothing carries no webSearch', async () => {

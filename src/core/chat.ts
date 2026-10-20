@@ -20,6 +20,7 @@ import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot
 import { rateLimitOf } from './rate-limit.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
 import { anthropicState, withoutThinking } from './provider-state.js';
+import { webSearchTool } from './tools.js';
 import type { ChatEventSink } from './events.js';
 
 /** A turn's request. The worker's `connectionId`/`connectionRevision` pin a stored connection; here the connection is given. */
@@ -70,6 +71,8 @@ export interface ChatOptions extends RequestOptions {
 }
 
 const CHAT_TIMEOUT_MS = 120_000;
+/** The refusal of a web search tool on a server that speaks Chat Completions only. */
+export const NO_WEB_SEARCH = 'This server speaks Chat Completions, which has no web search tool: leave the web_search tool out for it.';
 export const TIMED_OUT = 'Timed out waiting for the model.';
 
 /**
@@ -100,7 +103,11 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     const onEvent = guarded(options.onEvent, () => { streamed = true; });
     const ctx: Turn = { conn, credential, model, req, signal: controller.signal, fetch: fetchOf(options), idle, debug: options.debug, hint, onEvent };
 
-    const candidates = protocolCandidates(conn, model);
+    // Chat Completions has no web search tool: with one asked for, the turn skips that protocol for the next candidate (the
+    // Responses API, on OpenAI itself) and fails before any request when no other remains.
+    const all = protocolCandidates(conn, model);
+    const candidates = webSearchTool(req) ? all.filter((p) => p !== 'chat-completions') : all;
+    if (candidates.length === 0) throw new Error(NO_WEB_SEARCH);
     let mismatch: ProtocolMismatch | undefined;
     for (const protocol of candidates) {
       try {

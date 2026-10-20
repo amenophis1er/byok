@@ -311,7 +311,7 @@ if (result.stopReason === 'pause') { /* Anthropic paused a long search turn: pus
 
 Anthropic runs its `web_search` server tool, the Responses API its
 `web_search` tool, Gemini its Google Search grounding; a Chat Completions
-server has none and is sent nothing. The results stay with the provider and
+server has none, and a turn that asks it for one fails before any request. The results stay with the provider and
 in `providerState`; the turn reports the queries and sources it used.
 
 Ask for reasoning where the model can, and watch it:
