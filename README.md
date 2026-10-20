@@ -349,9 +349,10 @@ families, and nothing where nothing is
 known. Ask about one model without listing them all:
 
 ```ts
-import { getModelInfo } from '@amenophis1er/byok/core';
+import { getModelInfo, knownModelInfoByName } from '@amenophis1er/byok/core';
 
 const info = await getModelInfo(conn, key);         // the bound model; or pass an id
+knownModelInfoByName('anthropic/claude-sonnet-5-5'); // the tables by name alone, whichever gateway serves it
 if (info.capabilities?.pdf === false) { /* send the text, not the PDF */ }
 if (info.contextWindow && estimate(messages) > info.contextWindow) { /* trim first */ }
 ```

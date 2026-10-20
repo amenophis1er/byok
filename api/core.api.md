@@ -114,10 +114,19 @@ export function isNetworkFailure(result: AIChatResult): boolean;
 export function knownModelInfo(conn: Pick<Connection, 'kind' | 'baseUrl' | 'issuer'>, id: string): ModelFacts;
 
 // @public
+export function knownModelInfoByName(id: string): ModelFacts;
+
+// @public
 export function listModels(conn: Connection, credential: ConnectionCredential, options?: RequestOptions): Promise<ModelInfo[]>;
 
 // @public
 export type ModelFacts = Omit<ModelInfo, 'id' | 'name'>;
+
+// @public
+export function modelName(id: string): {
+    id: string;
+    million: boolean;
+};
 
 // @public
 export function networkCause(error: Error): string;
