@@ -66,14 +66,24 @@ function keyHeader(name: string, value: string): Authorizer | undefined {
   return value ? async () => ({ [name]: value }) : undefined;
 }
 
+/** Anthropic's catalog, across its pages (`has_more` / `last_id`). */
 async function anthropicModels(fetch: Fetch, token: string, subscription: boolean): Promise<ModelInfo[]> {
-  const res = await fetch(`${ANTHROPIC_BASE}/v1/models?limit=100`, {
-    headers: anthropicHeaders(token, subscription),
-  });
-  if (!res.ok) throw await httpFailure(res);
-  // Since the 5 generation the listing says each model's limits and inputs; those win over the table.
-  const json = (await res.json()) as { data?: Array<Record<string, unknown> & { id: string; display_name?: string }> };
-  return (json.data ?? []).map((m) => ({ id: m.id, name: m.display_name ?? m.id, ...anthropicFacts(m) }));
+  const models: ModelInfo[] = [];
+  let after = '';
+  for (let page = 0; page < 20; page++) {
+    const url = new URL(`${ANTHROPIC_BASE}/v1/models`);
+    url.searchParams.set('limit', '100');
+    if (after) url.searchParams.set('after_id', after);
+    const res = await fetch(url, { headers: anthropicHeaders(token, subscription) });
+    if (!res.ok) throw await httpFailure(res);
+    // Since the 5 generation the listing says each model's limits and inputs; those win over the table.
+    const json = (await res.json()) as { data?: Array<Record<string, unknown> & { id: string; display_name?: string }>; has_more?: boolean; last_id?: string | null };
+    const data = json.data ?? [];
+    for (const m of data) models.push({ id: m.id, name: m.display_name ?? m.id, ...anthropicFacts(m) });
+    if (!json.has_more || typeof json.last_id !== 'string' || !json.last_id || data.length === 0 || json.last_id === after) break;
+    after = json.last_id;
+  }
+  return models;
 }
 
 export const isGemini = (base: string): boolean => {

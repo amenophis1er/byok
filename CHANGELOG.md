@@ -19,6 +19,17 @@ while on 0.x, a breaking change bumps the minor version.
   `codex_cli_rs` as before (`CODEX_ORIGINATOR`, exported). The worker takes
   it as `AiHandlerOptions.codexOriginator`. The device-flow and refresh calls
   never carried one, and still do not.
+- **Small fixes** (#41): the Anthropic model list is read across its pages
+  (`has_more` / `after_id`); the Codex catalog's `context_window` and
+  `input_modalities` are kept as `contextWindow` and `capabilities.images`;
+  the Claude table reads the `[1m]` variant (with its 1M window), Bedrock ids
+  (`us.anthropic.claude-…-v1:0`) and Vertex ids (`claude-…@20250805`);
+  images may be `image/gif` and `image/webp` (the Gemini API takes no GIF); a
+  token refresh the provider answers `invalid_grant` says "remove the
+  connection and sign in again" instead of reading as a transient failure;
+  a 429 while polling the ChatGPT device flow means slow down, not denied.
+  Ollama request signing was checked against ollama's client and already
+  matches it (method and path, the query excluded), so it is unchanged.
 
 ## 0.1.8
 

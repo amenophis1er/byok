@@ -23,6 +23,16 @@ describe('Codex model catalog', () => {
     ]);
   });
 
+  it('keeps the context window and input modalities an entry carries', () => {
+    expect(codexCatalogModels({ models: [
+      { slug: 'gpt-5.5', context_window: 272000, input_modalities: ['text', 'image'] },
+      { slug: 'gpt-5.3-codex-spark', context_window: 'big', input_modalities: ['text'] },
+    ] })).toEqual([
+      { id: 'gpt-5.5', name: 'gpt-5.5', contextWindow: 272000, capabilities: { images: true } },
+      { id: 'gpt-5.3-codex-spark', name: 'gpt-5.3-codex-spark', capabilities: { images: false } },
+    ]);
+  });
+
   it('keeps an entry without a visibility, and gives nothing for a body that is not a catalog', () => {
     expect(codexCatalogModels({ models: [{ slug: 'gpt-5.5' }] })).toEqual([{ id: 'gpt-5.5', name: 'gpt-5.5' }]);
     expect(codexCatalogModels(null)).toEqual([]);

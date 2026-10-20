@@ -142,9 +142,10 @@ describe('refreshTokens', () => {
     await expect(refreshTokens('rt1')).rejects.toThrow('no token pair');
   });
 
-  it('labels its failures as a refresh', async () => {
-    mockFetch(new Response('invalid_grant', { status: 400 }));
-    await expect(refreshTokens('rt1')).rejects.toThrow('Token refresh failed (400): invalid_grant');
+  it('labels its failures as a refresh, and a revoked sign-in as one to redo', async () => {
+    mockFetch(new Response('server down', { status: 503 }), new Response('{"error":"invalid_grant"}', { status: 400 }));
+    await expect(refreshTokens('rt1')).rejects.toThrow('Token refresh failed (503): server down');
+    await expect(refreshTokens('rt1')).rejects.toThrow('Your Claude sign-in was revoked or expired — remove the connection and sign in again.');
   });
 });
 

@@ -18,6 +18,7 @@
  * call 404s without it).
  */
 
+import type { ModelInfo } from '../types.js';
 import { fetchOf, httpFailure, type RequestOptions } from './http.js';
 
 const ISSUER = 'https://auth.openai.com';
@@ -57,29 +58,33 @@ export const CODEX_MODELS = [
 /**
  * The models the Codex catalog lists for this client, in the backend's order
  * (`priority`, lowest first): id is the slug the Responses API takes, name the
- * display name. Entries the backend hides are left out, as the Codex CLI does.
- * Returns [] for a body that is not a catalog.
+ * display name, and what the entry says of the model — its `context_window`
+ * and whether `input_modalities` names images. Entries the backend hides are
+ * left out, as the Codex CLI does. Returns [] for a body that is not a catalog.
  */
-export function codexCatalogModels(body: unknown): Array<{ id: string; name: string }> {
+export function codexCatalogModels(body: unknown): ModelInfo[] {
   const models = (body as { models?: unknown } | null)?.models;
   if (!Array.isArray(models)) return [];
-  const listed: Array<{ id: string; name: string; priority: number }> = [];
+  const listed: Array<ModelInfo & { priority: number }> = [];
   for (const entry of models) {
     if (typeof entry !== 'object' || entry === null) continue;
-    const { slug, display_name: displayName, visibility, priority } = entry as Record<string, unknown>;
+    const { slug, display_name: displayName, visibility, priority, context_window: window, input_modalities: modalities } = entry as Record<string, unknown>;
     if (typeof slug !== 'string' || slug.length === 0) continue;
     if (visibility !== undefined && visibility !== 'list') continue;
+    const images = Array.isArray(modalities) && modalities.every((m) => typeof m === 'string') ? modalities.includes('image') : undefined;
     listed.push({
       id: slug,
       name: typeof displayName === 'string' && displayName.length > 0 ? displayName : slug,
       priority: typeof priority === 'number' ? priority : Number.MAX_SAFE_INTEGER,
+      ...(typeof window === 'number' && Number.isFinite(window) && window > 0 ? { contextWindow: Math.floor(window) } : {}),
+      ...(images !== undefined ? { capabilities: { images } } : {}),
     });
   }
-  return listed.sort((a, b) => a.priority - b.priority).map(({ id, name }) => ({ id, name }));
+  return listed.sort((a, b) => a.priority - b.priority).map(({ priority: _priority, ...model }) => model);
 }
 
 /** GET the Codex model catalog for a signed-in account, as `originator` (default `CODEX_ORIGINATOR`). Throws on a failed request or an empty catalog. */
-export async function codexModels(input: { accessToken: string; accountId?: string; originator?: string }, options: RequestOptions = {}): Promise<Array<{ id: string; name: string }>> {
+export async function codexModels(input: { accessToken: string; accountId?: string; originator?: string }, options: RequestOptions = {}): Promise<ModelInfo[]> {
   const res = await fetchOf(options)(`${CODEX_MODELS_URL}?client_version=${CODEX_CLIENT_VERSION}`, {
     headers: {
       authorization: `Bearer ${input.accessToken}`,
@@ -212,6 +217,8 @@ export async function pollDevice(deviceAuthId: string, userCode: string, options
     return { status: 'denied', error: 'Malformed device token response.' };
   }
   if (res.status === 403 || res.status === 404) return { status: 'pending' };
+  // Polling too fast is not a denial: back off, as on `slow_down`.
+  if (res.status === 429) return { status: 'slow_down' };
   const bodyText = await res.text().catch(() => '');
   let code: unknown;
   try {
@@ -257,7 +264,14 @@ export async function refreshOpenAiTokens(refreshToken: string, options: Request
       refresh_token: refreshToken,
     }).toString(),
   });
-  if (!res.ok) throw new Error(`Token refresh failed (${res.status}): ${await res.text()}`);
+  if (!res.ok) {
+    const text = await res.text();
+    // A refresh token that was revoked, rotated elsewhere or expired: only a new sign-in recovers, not a retry.
+    if ((res.status === 400 || res.status === 401) && /invalid_grant|revoked|expired/i.test(text)) {
+      throw new Error('Your ChatGPT sign-in was revoked or expired — remove the connection and sign in again.');
+    }
+    throw new Error(`Token refresh failed (${res.status}): ${text}`);
+  }
   const tokens = parseTokens(await res.json());
   if (!tokens.refreshToken) tokens.refreshToken = refreshToken;
   return tokens;

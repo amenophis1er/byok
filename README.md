@@ -218,7 +218,8 @@ What it guarantees:
   first one. The backend hides models from clients it deems old, so the request
   claims the Codex CLI version in `CODEX_CLIENT_VERSION`: bump it with releases.
   When the catalog cannot be fetched the built-in `CODEX_MODELS` list stands in.
-- **Images and PDFs.** Content can be `{type:'image', mediaType, data}` or,
+- **Images and PDFs.** Content can be `{type:'image', mediaType, data}`
+  (PNG, JPEG, GIF or WebP; the Gemini API takes no GIF) or
   `{type:'document', mediaType:'application/pdf', data, name?}`
   (base64). Anthropic gets `image` / `document` blocks; OpenAI-compatible
   servers get `image_url` / `file` parts, moved out of tool messages into a
@@ -277,7 +278,7 @@ const result = await chat(conn, key, request, {
 A listed model carries what is known about it — `contextWindow`,
 `maxOutputTokens`, `capabilities: { tools?, images?, pdf? }` — from the
 listing where it says (Anthropic since the Claude 5 generation, Gemini,
-OpenRouter, vLLM, Workers AI) or a built-in table of the Anthropic and OpenAI
+OpenRouter, vLLM, Workers AI, the Codex catalog's context window) or a built-in table of the Anthropic and OpenAI
 families, and nothing where nothing is
 known. Ask about one model without listing them all:
 
