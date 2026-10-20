@@ -19,6 +19,7 @@
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
+import { anthropicState, tagged } from './provider-state.js';
 
 type Block = Record<string, unknown> & { type: string };
 
@@ -39,9 +40,10 @@ function parts(content: string | AIContentPart[]): string | Block[] {
   });
 }
 
-/** The assistant turn as blocks: the provider's own blocks when we have them, else rebuilt. */
+/** The assistant turn as blocks: the provider's own blocks when we have them (written under this protocol), else rebuilt. */
 function assistantBlocks(message: Extract<AIMessage, { role: 'assistant' }>): Block[] {
-  if (Array.isArray(message.providerState)) return message.providerState as Block[];
+  const own = anthropicState(message.providerState);
+  if (own) return own as Block[];
   const blocks: Block[] = [];
   if (message.content) blocks.push({ type: 'text', text: message.content });
   for (const call of message.toolCalls ?? []) blocks.push({ type: 'tool_use', id: call.id, name: call.name, input: call.args ?? {} });
@@ -223,7 +225,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
     ok: true,
     ...(text ? { text } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
-    providerState: state,
+    providerState: tagged.anthropic(state),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),
     usage,

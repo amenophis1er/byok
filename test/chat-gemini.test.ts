@@ -72,11 +72,11 @@ describe('stream', () => {
       ok: true,
       text: 'Let me look.',
       toolCalls: [{ id: 'call_0', name: 'browser', args: { action: 'observe' } }, { id: 'fc-9', name: 'browser', args: { action: 'click' } }],
-      providerState: [
+      providerState: { protocol: 'gemini', parts: [
         { text: 'Let me look.' },
         { functionCall: { name: 'browser', args: { action: 'observe' } }, thoughtSignature: 'sig-1' },
         { functionCall: { id: 'fc-9', name: 'browser', args: { action: 'click' } } },
-      ],
+      ] },
       stopReason: 'tool_use',
       usage: { inputTokens: 120, outputTokens: 40, cacheReadTokens: 100 },
     });
@@ -88,7 +88,7 @@ describe('stream', () => {
       chunk([{ text: ' there.' }], 'STOP'),
     ]);
     expect(result).toMatchObject({ ok: true, text: 'Hello there.', stopReason: 'end' });
-    expect(result.providerState).toEqual([{ text: 'Hello', thoughtSignature: 'sig-t' }, { text: ' there.' }]);
+    expect(result.providerState).toEqual({ protocol: 'gemini', parts: [{ text: 'Hello', thoughtSignature: 'sig-t' }, { text: ' there.' }] });
   });
 
   it('never hands out a call from a turn cut off by the limit or a filter', async () => {

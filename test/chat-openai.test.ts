@@ -119,7 +119,7 @@ describe('streamed response', () => {
       chunk({ tool_calls: [{ index: 1, id: 'g2', type: 'function', function: { name: 'browser', arguments: '{}' } }] }),
       chunk({}, 'tool_calls'),
     ]));
-    expect(result.providerState).toEqual({ extraContent: { g1: signature } });
+    expect(result.providerState).toEqual({ protocol: 'chat-completions', extraContent: { g1: signature } });
 
     const [assistant] = openaiMessages('', [{ role: 'assistant', toolCalls: result.toolCalls, providerState: result.providerState }]);
     expect(assistant!['tool_calls']).toEqual([

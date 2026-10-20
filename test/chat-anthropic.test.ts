@@ -118,10 +118,10 @@ describe('streamed response', () => {
       ...stop('tool_use')]);
     expect(result.stopReason).toBe('tool_use');
     expect(result.toolCalls).toEqual([{ id: 'toolu_01', name: 'browser', args: { action: 'navigate', url: 'https://example.com' } }]);
-    expect(result.providerState).toEqual([
+    expect(result.providerState).toEqual({ protocol: 'anthropic', blocks: [
       { type: 'thinking', thinking: 'Need to navigate.', signature: 'EqQBCgIYAh' },
       { type: 'tool_use', id: 'toolu_01', name: 'browser', input: { action: 'navigate', url: 'https://example.com' } },
-    ]);
+    ] });
   });
 
   it('returns two calls in one response in order', async () => {
@@ -141,7 +141,7 @@ describe('streamed response', () => {
       expect(result.ok).toBe(true);
       expect(result.stopReason).toBe(reason === 'max_tokens' ? 'length' : 'refusal');
       expect(result.toolCalls).toBeUndefined();
-      expect(result.providerState).toEqual([]);
+      expect(result.providerState).toEqual({ protocol: 'anthropic', blocks: [] });
     }
   });
 

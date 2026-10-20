@@ -229,8 +229,12 @@ What it guarantees:
   user message after them. A server without image or PDF input rejects the
   request: fall back to text.
 - **Replay what the provider needs.** `providerState` (Anthropic: the turn's
-  content blocks, thinking signatures included) must be stored with the
-  assistant message and sent back unchanged.
+  content blocks, thinking signatures included; Gemini: its parts with their
+  thought signatures) must be stored with the assistant message and sent back
+  unchanged. It is tagged with the protocol that wrote it and replayed only
+  there: move a conversation to another provider and each assistant turn is
+  replayed from its text and tool calls instead. `stripProviderState(messages)`
+  from the core drops it outright.
 - **Pinned connection.** With `connectionId` + `connectionRevision`, a deleted
   or edited connection fails the call instead of sending the conversation to a
   different provider.

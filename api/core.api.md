@@ -120,6 +120,9 @@ export function protocolCandidates(conn: Connection, model: string): Protocol[];
 export function protocolOf(conn: Pick<Connection, 'kind' | 'protocol'>): Protocol;
 
 // @public
+export type ProviderStateProtocol = 'anthropic' | 'gemini' | 'chat-completions';
+
+// @public
 export interface RateLimit {
     quota?: RateLimitWindow;
     resetAt?: number;
@@ -160,6 +163,9 @@ export interface RetryOptions {
 
 // @public
 export function signRequest(pair: CryptoKeyPair, method: string, url: URL): Promise<Record<string, string>>;
+
+// @public
+export function stripProviderState<T extends AIMessage>(messages: readonly T[]): T[];
 
 // @public (undocumented)
 export const TIMED_OUT = "Timed out waiting for the model.";
