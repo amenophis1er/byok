@@ -78,6 +78,13 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, h({ 'x-codex-primary-used-percent': '100', 'x-codex-primary-reset-at': 'soon' }), '', NOW)).toEqual({});
     // A reset in the past is a wait of nothing.
     expect(rateLimitOf(429, h({ 'x-codex-primary-used-percent': '100', 'x-codex-primary-reset-at': at(-5) }), '', NOW)).toEqual({ retryAfterMs: 0, resetAt: NOW });
+    // A window name that is not a header token names nothing, and never throws; an instant too long to be one says nothing.
+    expect(rateLimitOf(429, h({ 'x-codex-rate-limit-reached-type': 'primary, secondary', 'x-codex-primary-used-percent': '100', 'x-codex-primary-reset-at': at(60) }), '', NOW))
+      .toEqual({ retryAfterMs: 60_000, resetAt: NOW + 60_000, quota: 'plan' });
+    expect(rateLimitOf(429, h({ 'x-codex-primary-used-percent': '100', 'x-codex-primary-reset-at': '9'.repeat(309) }), '', NOW)).toEqual({});
+    // The plan is named by `code` even when `type` says something else.
+    expect(rateLimitOf(429, undefined, JSON.stringify({ error: { type: 'rate_limit_error', code: 'usage_limit_reached', resets_in_seconds: 20 } }), NOW))
+      .toEqual({ retryAfterMs: 20_000, resetAt: NOW + 20_000, quota: 'plan' });
   });
 
   it('reads a body wrapped in an array, as Gemini sends at times', () => {

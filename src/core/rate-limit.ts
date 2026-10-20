@@ -156,8 +156,8 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Ra
  */
 function planWindow(get: (name: string) => string | null, json: Record<string, unknown> | undefined): RateLimitWindow | undefined {
   const error = json?.['error'];
-  const type = error && typeof error === 'object' ? (error as Record<string, unknown>)['type'] ?? (error as Record<string, unknown>)['code'] : undefined;
-  if (type === 'usage_limit_reached' || get('x-codex-rate-limit-reached-type') !== null) return 'plan';
+  const fields = error && typeof error === 'object' ? [(error as Record<string, unknown>)['type'], (error as Record<string, unknown>)['code']] : [];
+  if (fields.includes('usage_limit_reached') || get('x-codex-rate-limit-reached-type') !== null) return 'plan';
   return undefined;
 }
 
@@ -167,11 +167,15 @@ function planWindow(get: (name: string) => string | null, json: Record<string, u
  * the windows used in full (`x-codex-<window>-used-percent` ≥ 100).
  */
 function codexReset(get: (name: string) => string | null, now: number): number | undefined {
-  const named = get('x-codex-rate-limit-reached-type')?.trim().toLowerCase();
+  // A window name goes into a header name: only a token-shaped one does.
+  const given = get('x-codex-rate-limit-reached-type')?.trim().toLowerCase();
+  const named = given && /^[a-z0-9_-]{1,64}$/.test(given) ? given : undefined;
   const windows = ['primary', 'secondary', ...(named && !['primary', 'secondary'].includes(named) ? [named] : [])];
   const resetOf = (name: string): number | undefined => {
     const at = get(`x-codex-${name}-reset-at`);
-    return at !== null && /^\d+$/.test(at.trim()) ? Math.max(0, Number(at) * 1000 - now) : undefined;
+    if (at === null || !/^\d{1,15}$/.test(at.trim())) return undefined;
+    const wait = Number(at) * 1000 - now;
+    return Number.isFinite(wait) ? Math.max(0, wait) : undefined;
   };
   if (named) {
     const wait = resetOf(named);
