@@ -66,13 +66,14 @@ export function codexInput(messages: AIMessage[]): Item[] {
   return items;
 }
 
-/** The request body. The Codex backend refuses `max_output_tokens`; a standard Responses endpoint takes it. */
-export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens = false } = {}): Record<string, unknown> {
+/** The request body. The Codex backend refuses `max_output_tokens`; a standard Responses endpoint takes it. `cacheKey` sends OpenAI's `prompt_cache_key`: for OpenAI itself, not another server. */
+export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens = false, cacheKey = false } = {}): Record<string, unknown> {
   return {
     model, store: false, stream: true,
     instructions: req.system || 'You are a helpful assistant.',
     input: codexInput(req.messages),
     ...(maxOutputTokens && req.maxTokens ? { max_output_tokens: req.maxTokens } : {}),
+    ...(cacheKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
     ...(req.tools?.length ? {
       tools: req.tools.map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
       tool_choice: 'auto',
@@ -123,6 +124,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   let completed = false;
   let incomplete = false;
   let usage: AIChatResult['usage'];
+  let model: string | undefined;
 
   const call = (item: Record<string, unknown>) => {
     const id = typeof item['id'] === 'string' ? item['id'] : String(item['call_id'] ?? '');
@@ -180,7 +182,12 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
       case 'response.incomplete': {
         const response = event['response'] ?? {};
         const u = response.usage ?? {};
-        if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens };
+        if (typeof response.model === 'string' && response.model) model = response.model;
+        // input_tokens counts the whole prompt, cached included; the cached part is in its details.
+        if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
+          const cached = u.input_tokens_details?.cached_tokens;
+          usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens, ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}) };
+        }
         incomplete = event['type'] === 'response.incomplete' || response.status === 'incomplete';
         completed = true;
         break;
@@ -208,12 +215,13 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   });
   const text = [...texts.values()].join('\n\n').trim();
   // A turn cut off by the limit may carry a truncated call: never hand one out.
-  if (incomplete) return { ok: true, ...(text ? { text } : {}), stopReason: 'length', ...(usage ? { usage } : {}) };
+  if (incomplete) return { ok: true, ...(text ? { text } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
   return {
     ok: true,
     ...(text ? { text } : {}),
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
     stopReason: toolCalls.length > 0 ? 'tool_use' : 'end',
+    ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),
   };
 }

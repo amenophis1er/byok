@@ -102,7 +102,8 @@ describe('streamed response', () => {
       { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'the mug is $12.' } },
       { type: 'content_block_stop', index: 0 }, ...stop('end_turn', 12)]);
     expect(result).toMatchObject({ ok: true, text: 'Done: the mug is $12.', stopReason: 'end',
-      usage: { inputTokens: 120, outputTokens: 12, cacheReadTokens: 100, cacheWriteTokens: 0 } });
+      // input_tokens 120 beside 100 read from the cache: the whole prompt is 220.
+      usage: { inputTokens: 220, outputTokens: 12, cacheReadTokens: 100, cacheWriteTokens: 0 } });
     expect(result.toolCalls).toBeUndefined();
   });
 

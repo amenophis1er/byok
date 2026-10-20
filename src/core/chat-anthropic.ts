@@ -72,6 +72,24 @@ export function anthropicMessages(messages: AIMessage[]): Array<{ role: 'user' |
   return out;
 }
 
+/**
+ * The messages with a cache breakpoint on the last one's last eligible block,
+ * so the whole conversation is the cached prefix of the next turn. Thinking
+ * blocks take no breakpoint (Anthropic refuses one), nor does an empty text
+ * block; the nearest block before them carries it, or none does. The
+ * caller's blocks are copied, never edited.
+ */
+function withConversationBreakpoint(messages: ReturnType<typeof anthropicMessages>): ReturnType<typeof anthropicMessages> {
+  const last = messages[messages.length - 1];
+  if (!last) return messages;
+  const blocks: Block[] = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content.map((b) => ({ ...b }));
+  const eligible = (block: Block) => block.type !== 'thinking' && block.type !== 'redacted_thinking' && !(block.type === 'text' && !block['text']);
+  const block = [...blocks].reverse().find(eligible);
+  if (!block) return messages;
+  block['cache_control'] = { type: 'ephemeral' };
+  return [...messages.slice(0, -1), { ...last, content: blocks }];
+}
+
 /** The request body. `system` is the already-prepared system blocks (the subscription sentinel is the caller's). */
 export function anthropicBody(req: AIChatRequest, model: string, system: Array<{ type: 'text'; text: string }>): Record<string, unknown> {
   const systemBlocks: Block[] = system.map((block) => ({ ...block }));
@@ -80,12 +98,13 @@ export function anthropicBody(req: AIChatRequest, model: string, system: Array<{
   const tools: Array<Record<string, unknown>> = (req.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
   const lastTool = tools[tools.length - 1];
   if (lastTool) lastTool['cache_control'] = { type: 'ephemeral' };
+  const messages = anthropicMessages(req.messages);
   return {
     model,
     max_tokens: req.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
     stream: true,
     ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
-    messages: anthropicMessages(req.messages),
+    messages: req.cacheConversation ? withConversationBreakpoint(messages) : messages,
     ...(tools.length > 0 ? { tools, tool_choice: { type: 'auto', disable_parallel_tool_use: req.parallelToolCalls !== true } } : {}),
   };
 }
@@ -101,6 +120,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   const partialJson = new Map<number, string>();
   const ended = new Set<number>();
   let stopReason: string | undefined;
+  let model: string | undefined;
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let finished = false;
 
@@ -111,9 +131,11 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
     switch (payload['type']) {
       case 'message_start': {
         const u = payload['message']?.['usage'] ?? {};
-        usage.inputTokens = u['input_tokens'] ?? 0;
+        if (typeof payload['message']?.['model'] === 'string') model = payload['message']['model'];
+        // Anthropic's input_tokens leaves the cached tokens out; the whole prompt is the three together, as the other providers count it.
         usage.cacheReadTokens = u['cache_read_input_tokens'] ?? 0;
         usage.cacheWriteTokens = u['cache_creation_input_tokens'] ?? 0;
+        usage.inputTokens = (u['input_tokens'] ?? 0) + usage.cacheReadTokens + usage.cacheWriteTokens;
         usage.outputTokens = u['output_tokens'] ?? 0;
         break;
       }
@@ -203,6 +225,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     providerState: state,
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
+    ...(model ? { model } : {}),
     usage,
   };
 }

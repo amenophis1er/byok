@@ -73,6 +73,8 @@ export interface AIChatMessageRequest extends AIChatRequest {
 
 // @public (undocumented)
 export interface AIChatRequest {
+    cacheConversation?: boolean;
+    cacheKey?: string;
     connectionId?: string;
     connectionRevision?: number;
     idleTimeoutMs?: number;
@@ -92,6 +94,7 @@ export interface AIChatRequest {
 export interface AIChatResult {
     // (undocumented)
     error?: string;
+    model?: string;
     // (undocumented)
     ok: boolean;
     // (undocumented)
@@ -106,7 +109,6 @@ export interface AIChatResult {
     text?: string;
     // (undocumented)
     toolCalls?: AIToolCall[];
-    // (undocumented)
     usage?: {
         inputTokens: number;
         outputTokens: number;

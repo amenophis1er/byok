@@ -97,7 +97,7 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
 }
 
 /** Optional request fields a server has rejected, to leave out of the retry. */
-export type OptionalField = 'parallel_tool_calls' | 'stream_options';
+export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_cache_key';
 
 /** The request body, without the `omit`ted fields. */
 export function openaiBody(req: AIChatRequest, model: string, base: string, omit: ReadonlySet<OptionalField> = new Set()): Record<string, unknown> {
@@ -111,6 +111,8 @@ export function openaiBody(req: AIChatRequest, model: string, base: string, omit
     ...(tools.length > 0 ? { tools } : {}),
     ...(tools.length > 0 && !omit.has('parallel_tool_calls') ? { parallel_tool_calls: req.parallelToolCalls === true } : {}),
     ...(!omit.has('stream_options') ? { stream_options: { include_usage: true } } : {}),
+    // OpenAI's own field; another server that refuses it gets the request again without it.
+    ...(req.cacheKey && openai && !omit.has('prompt_cache_key') ? { prompt_cache_key: req.cacheKey } : {}),
   };
 }
 
@@ -123,6 +125,7 @@ export function rejectedField(status: number, body: string): OptionalField | und
   if (status !== 400) return undefined;
   if (/parallel_tool_calls/i.test(body)) return 'parallel_tool_calls';
   if (/stream_options|include_usage/i.test(body)) return 'stream_options';
+  if (/prompt_cache_key/i.test(body)) return 'prompt_cache_key';
   return undefined;
 }
 
@@ -148,6 +151,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   };
   let finishReason: string | undefined;
   let usage: AIChatResult['usage'];
+  let model: string | undefined;
 
   for await (const { data } of events) {
     if (data.trim() === '[DONE]') break;
@@ -157,8 +161,14 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
       const error = chunk['error'];
       return { ok: false, error: typeof error === 'string' ? error : String(error['message'] ?? 'the stream reported an error') };
     }
+    if (typeof chunk['model'] === 'string' && chunk['model']) model = chunk['model'];
     if (chunk['usage']) {
-      usage = { inputTokens: chunk['usage']['prompt_tokens'] ?? 0, outputTokens: chunk['usage']['completion_tokens'] ?? 0 };
+      // prompt_tokens counts the whole prompt, cached included; the cached part is in its details (OpenAI, OpenRouter).
+      const cached = chunk['usage']['prompt_tokens_details']?.['cached_tokens'];
+      usage = {
+        inputTokens: chunk['usage']['prompt_tokens'] ?? 0, outputTokens: chunk['usage']['completion_tokens'] ?? 0,
+        ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}),
+      };
     }
     const choice = chunk['choices']?.[0];
     if (!choice) continue;
@@ -215,6 +225,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     ...(runnable && Object.keys(extraContent).length > 0 ? { providerState: { extraContent } satisfies OpenAiState } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
+    ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),
   };
 }
