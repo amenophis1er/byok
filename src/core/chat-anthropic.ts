@@ -16,7 +16,7 @@
  * verbatim on the next request, as the API requires for thinking blocks.
  */
 
-import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
+import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIReasoning, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { anthropicState, tagged } from './provider-state.js';
@@ -93,6 +93,43 @@ function withConversationBreakpoint(messages: ReturnType<typeof anthropicMessage
   return [...messages.slice(0, -1), { ...last, content: blocks }];
 }
 
+/**
+ * Which thinking a Claude takes: adaptive (the 4.6 generation and later, the
+ * 5 generation, Mythos), extended with a token budget (3.7 to 4.5), or none.
+ */
+export function claudeThinking(model: string): 'adaptive' | 'enabled' | 'none' {
+  const id = model.toLowerCase();
+  if (/claude-(?:fable|mythos|opus|sonnet|haiku)-5(?:[-.]|$)/.test(id) || /claude-mythos/.test(id)) return 'adaptive';
+  if (/claude-(?:opus|sonnet)-4[-.][678](?:-|$)/.test(id)) return 'adaptive';
+  if (/claude-(?:opus|sonnet|haiku)-4(?:[-.]|$)/.test(id) || /claude-3-7-sonnet/.test(id)) return 'enabled';
+  return 'none';
+}
+
+const BUDGETS: Record<Exclude<AIReasoning, 'off'>, number> = { low: 2048, medium: 8192, high: 16000 };
+
+/**
+ * The thinking fields for a reasoning level: adaptive thinking with
+ * `output_config.effort` where the model takes it, a budget where it takes
+ * extended thinking only, nothing where it takes neither. `off` is sent only
+ * where the model thinks by default and can be told not to (Opus 5, Sonnet 5,
+ * Haiku 5.5: `disabled`; Sonnet 5.5: `between_tools`); the always-on models
+ * and the off-by-default ones get nothing.
+ */
+export function thinkingFields(reasoning: AIReasoning | undefined, model: string, maxTokens: number): Record<string, unknown> {
+  if (!reasoning) return {};
+  const mode = claudeThinking(model);
+  if (mode === 'none') return {};
+  if (reasoning === 'off') {
+    if (mode !== 'adaptive') return {};
+    if (/claude-sonnet-5-5(?:-|$)/.test(model)) return { thinking: { type: 'between_tools' } };
+    if (/claude-(?:opus|sonnet)-5(?:-\d{8})?$|claude-haiku-5-5(?:-|$)/.test(model)) return { thinking: { type: 'disabled' } };
+    return {};
+  }
+  if (mode === 'adaptive') return { thinking: { type: 'adaptive', display: 'summarized' }, output_config: { effort: reasoning } };
+  const budget = Math.min(BUDGETS[reasoning], maxTokens - 1024);
+  return budget >= 1024 ? { thinking: { type: 'enabled', budget_tokens: budget } } : {};
+}
+
 /** The request body. `system` is the already-prepared system blocks (the subscription sentinel is the caller's). */
 export function anthropicBody(req: AIChatRequest, model: string, system: Array<{ type: 'text'; text: string }>): Record<string, unknown> {
   const systemBlocks: Block[] = system.map((block) => ({ ...block }));
@@ -102,10 +139,12 @@ export function anthropicBody(req: AIChatRequest, model: string, system: Array<{
   const lastTool = tools[tools.length - 1];
   if (lastTool) lastTool['cache_control'] = { type: 'ephemeral' };
   const messages = anthropicMessages(req.messages);
+  const maxTokens = req.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
   return {
     model,
-    max_tokens: req.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
+    max_tokens: maxTokens,
     stream: true,
+    ...thinkingFields(req.reasoning, model, maxTokens),
     ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
     messages: req.cacheConversation ? withConversationBreakpoint(messages) : messages,
     ...(tools.length > 0 ? { tools, tool_choice: { type: 'auto', disable_parallel_tool_use: req.parallelToolCalls !== true } } : {}),
@@ -124,7 +163,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   const ended = new Set<number>();
   let stopReason: string | undefined;
   let model: string | undefined;
-  const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  const usage: NonNullable<AIChatResult['usage']> = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let finished = false;
 
   for await (const { event, data } of events) {
@@ -160,7 +199,10 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
           block['text'] = `${block['text'] ?? ''}${delta['text']}`;
           if (block.type === 'text' && delta['text']) onEvent?.({ type: 'text', delta: String(delta['text']) });
         }
-        else if (delta['type'] === 'thinking_delta') block['thinking'] = `${block['thinking'] ?? ''}${delta['thinking']}`;
+        else if (delta['type'] === 'thinking_delta') {
+          block['thinking'] = `${block['thinking'] ?? ''}${delta['thinking']}`;
+          if (block.type === 'thinking' && delta['thinking']) onEvent?.({ type: 'reasoning', delta: String(delta['thinking']) });
+        }
         else if (delta['type'] === 'signature_delta') block['signature'] = `${block['signature'] ?? ''}${delta['signature']}`;
         else if (delta['type'] === 'input_json_delta') {
           partialJson.set(payload['index'], `${partialJson.get(payload['index']) ?? ''}${delta['partial_json']}`);
@@ -179,6 +221,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
       case 'message_delta':
         stopReason = payload['delta']?.['stop_reason'] ?? stopReason;
         if (typeof payload['usage']?.['output_tokens'] === 'number') usage.outputTokens = payload['usage']['output_tokens'];
+        if (typeof payload['usage']?.['output_tokens_details']?.['thinking_tokens'] === 'number') usage.reasoningTokens = payload['usage']['output_tokens_details']['thinking_tokens'];
         break;
       case 'message_stop':
         finished = true;
@@ -194,9 +237,11 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
 
   const toolCalls: AIToolCall[] = [];
   const texts: string[] = [];
+  const thoughts: string[] = [];
   for (const [index, block] of blocks.entries()) {
     if (!block) continue;
     if (block.type === 'text') texts.push(String(block['text'] ?? ''));
+    if (block.type === 'thinking' && typeof block['thinking'] === 'string' && block['thinking']) thoughts.push(block['thinking']);
     if (block.type !== 'tool_use') continue;
     const raw = partialJson.get(index) ?? '';
     const call: AIToolCall = { id: String(block['id']), name: String(block['name']) };
@@ -222,9 +267,11 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   const runnable = mapped === 'tool_use' || mapped === 'end';
   const state = runnable ? blocks.filter(Boolean) : blocks.filter((block) => block && block.type !== 'tool_use');
   const text = texts.join('');
+  const reasoning = thoughts.join('\n\n');
   return {
     ok: true,
     ...(text ? { text } : {}),
+    ...(reasoning ? { reasoning } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     providerState: tagged.anthropic(state),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,

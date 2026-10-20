@@ -29,6 +29,29 @@ while on 0.x, a breaking change bumps the minor version.
   never do). `stripProviderState(messages)` is exported from the core for a
   host moving a conversation. A Gemini placeholder signature for a call that
   has none is not sent: the current Gemini docs document none.
+- **Reasoning** (#35). `ChatRequest.reasoning: 'off' | 'low' | 'medium' | 'high'`
+  is mapped per provider: Anthropic's adaptive thinking with
+  `output_config.effort` on the models that take it (the 4.6 generation and
+  later, the 5 generation), extended thinking with a budget on 3.7 to 4.5,
+  `disabled` / `between_tools` for `off` where the model thinks by default
+  and can be told not to; `reasoning_effort` on Chat Completions and
+  `reasoning: { effort, summary: 'auto' }` with the encrypted content on the
+  Responses API, to OpenAI; Gemini's `thinkingLevel` (3 and later) or
+  `thinkingBudget`. Absent, nothing is sent. What the provider shows of its
+  reasoning streams as `reasoning` events and comes back as
+  `AIChatResult.reasoning`; `usage.reasoningTokens` counts it. A model that
+  writes its thinking inline in `<think>` tags has it split from the text as
+  it streams, never stripped after the fact; DeepSeek's and OpenRouter's
+  `reasoning_content` / `reasoning` fields are read. A Responses turn's
+  output items — the reasoning with its encrypted content included — are
+  its `providerState` (`{ protocol: 'responses', items }`) and go back as
+  the next input, so a ChatGPT tool continuation keeps its reasoning. When
+  Anthropic refuses the thinking blocks it signed (an edited prefix, a block
+  bound to another conversation), the turn is sent once more without them.
+  Fixed on the way: a Chat Completions 400 that merely names an optional
+  field (OpenAI's "use /v1/responses or set reasoning_effort to 'none'") no
+  longer counts as that field being rejected; only a field the request
+  carried is dropped for the retry, so the move to the Responses API happens.
 - **A failure as data** (#34). Every failed `chat()` result carries
   `failure: { kind, status?, providerCode?, requestId?, cause?, streamed }`
   beside the sentence: the kind (`request`, `network`, `http`, `stream`,

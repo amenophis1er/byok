@@ -56,7 +56,9 @@ describe('ChatGPT stream', () => {
       { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc1', call_id: 'call_1', name: 'browser', arguments: '{"action":"observe"}' } },
       { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 120, output_tokens: 9 } } },
     ));
-    expect(result).toEqual({ ok: true, text: 'Opening it.', toolCalls: [{ id: 'call_1', name: 'browser', args: { action: 'observe' } }], stopReason: 'tool_use', usage: { inputTokens: 120, outputTokens: 9 } });
+    expect(result).toEqual({ ok: true, text: 'Opening it.', toolCalls: [{ id: 'call_1', name: 'browser', args: { action: 'observe' } }], stopReason: 'tool_use', usage: { inputTokens: 120, outputTokens: 9 },
+      // The turn's items, to be the next input.
+      providerState: { protocol: 'responses', items: [{ type: 'function_call', id: 'fc1', call_id: 'call_1', name: 'browser', arguments: '{"action":"observe"}' }] } });
   });
 
   it('takes whole arguments from the done item when no pieces came, and reports bad JSON as argsError', async () => {

@@ -83,6 +83,7 @@ export interface AIChatRequest {
     messages: AIMessage[];
     model?: string;
     parallelToolCalls?: boolean;
+    reasoning?: AIReasoning;
     // (undocumented)
     system: string;
     timeoutMs?: number;
@@ -101,6 +102,7 @@ export interface AIChatResult {
     // (undocumented)
     providerState?: unknown;
     quota?: 'minute' | 'day' | 'plan';
+    reasoning?: string;
     resetAt?: number;
     retryable?: boolean;
     retryAfterMs?: number;
@@ -114,7 +116,8 @@ export interface AIChatResult {
         inputTokens: number;
         outputTokens: number;
         cacheReadTokens?: number;
-        cacheWriteTokens?: number;
+        cacheWriteTokens?: number; /** The part of `outputTokens` spent reasoning, when the provider says. */
+        reasoningTokens?: number;
     };
 }
 
@@ -328,6 +331,9 @@ export type AIOpencodePoll = {
     status: 'created';
     id: string;
 };
+
+// @public
+export type AIReasoning = 'off' | 'low' | 'medium' | 'high';
 
 // @public (undocumented)
 export interface AIResult<T> {

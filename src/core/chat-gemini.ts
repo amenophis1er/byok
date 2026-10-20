@@ -25,7 +25,7 @@
  * to its call by name.
  */
 
-import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
+import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIReasoning, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { geminiState, tagged } from './provider-state.js';
@@ -88,13 +88,28 @@ export function geminiContents(messages: AIMessage[]): Content[] {
   return out;
 }
 
-export function geminiBody(req: AIChatRequest): Record<string, unknown> {
+const BUDGETS: Record<AIReasoning, number> = { off: 0, low: 1024, medium: 8192, high: 24576 };
+
+/**
+ * Gemini's thinking config for a level: `thinkingLevel` on Gemini 3 and
+ * later (`MINIMAL` for off), a `thinkingBudget` before that (0 for off), with
+ * the thought summaries asked for when thinking is on. Nothing for a model
+ * that is not a Gemini (Gemma, another family), which rejects the field.
+ */
+export function geminiThinking(reasoning: AIReasoning | undefined, model: string): Record<string, unknown> {
+  if (!reasoning || !/^gemini-/.test(model)) return {};
+  const third = /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model);
+  const level = third ? { thinkingLevel: reasoning === 'off' ? 'MINIMAL' : reasoning.toUpperCase() } : { thinkingBudget: BUDGETS[reasoning] };
+  return { thinkingConfig: { ...level, ...(reasoning !== 'off' ? { includeThoughts: true } : {}) } };
+}
+
+export function geminiBody(req: AIChatRequest, model = ''): Record<string, unknown> {
   const declarations = (req.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.inputSchema }));
   return {
     ...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
     contents: geminiContents(req.messages),
     ...(declarations.length > 0 ? { tools: [{ functionDeclarations: declarations }], toolConfig: { functionCallingConfig: { mode: 'AUTO' } } } : {}),
-    generationConfig: { maxOutputTokens: req.maxTokens ?? GEMINI_DEFAULT_MAX_TOKENS },
+    generationConfig: { maxOutputTokens: req.maxTokens ?? GEMINI_DEFAULT_MAX_TOKENS, ...geminiThinking(req.reasoning, model) },
   };
 }
 
@@ -122,13 +137,14 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
         inputTokens: meta['promptTokenCount'],
         outputTokens: (meta['candidatesTokenCount'] ?? 0) + (meta['thoughtsTokenCount'] ?? 0),
         ...(typeof meta['cachedContentTokenCount'] === 'number' ? { cacheReadTokens: meta['cachedContentTokenCount'] } : {}),
+        ...(typeof meta['thoughtsTokenCount'] === 'number' ? { reasoningTokens: meta['thoughtsTokenCount'] } : {}),
       };
     }
     const candidate = chunk['candidates']?.[0];
     if (!candidate) continue;
     for (const part of candidate['content']?.['parts'] ?? []) {
       if (onEvent) {
-        if (typeof part['text'] === 'string' && !part['thought'] && part['text']) onEvent({ type: 'text', delta: part['text'] });
+        if (typeof part['text'] === 'string' && part['text']) onEvent({ type: part['thought'] ? 'reasoning' : 'text', delta: part['text'] });
         if (part['functionCall']) {
           // Arguments arrive whole: one delta carries them, numbered as the result will number the call.
           const fc = part['functionCall'] as { id?: string; name?: string; args?: unknown };
@@ -153,6 +169,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   if (finishReason === 'MALFORMED_FUNCTION_CALL') return streamFailure('The model made a malformed function call.', finishReason);
 
   const text = parts.filter((p) => typeof p['text'] === 'string' && !p['thought']).map((p) => p['text'] as string).join('').trim();
+  const reasoning = parts.filter((p) => typeof p['text'] === 'string' && p['thought']).map((p) => p['text'] as string).join('').trim();
   let n = 0;
   const toolCalls: AIToolCall[] = parts.filter((p) => p['functionCall']).map((p) => {
     const call = p['functionCall'] as { id?: string; name?: string; args?: unknown };
@@ -171,6 +188,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   return {
     ok: true,
     ...(text ? { text } : {}),
+    ...(reasoning ? { reasoning } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     // The parts come back as sent, signatures included; thought summaries without one are left out.
     ...(runnable && parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),

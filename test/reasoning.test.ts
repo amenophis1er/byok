@@ -1,0 +1,207 @@
+/**
+ * Reasoning (#35): the request setting mapped to each provider, reasoning
+ * reported as it streams and on the result, inline thinking split from the
+ * text, the Responses turn replayed with its encrypted reasoning, and the
+ * retry without the thinking blocks Anthropic refused.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { anthropicBody, anthropicResult, claudeThinking, thinkingFields } from '../src/core/chat-anthropic.js';
+import { codexBody, codexInput, codexResult } from '../src/core/chat-codex.js';
+import { geminiBody, geminiResult, geminiThinking } from '../src/core/chat-gemini.js';
+import { ThinkSplitter, openaiBody, openaiResult, rejectedField } from '../src/core/chat-openai.js';
+import { chat, type Connection, type Fetch } from '../src/core/index.js';
+import { readSse } from '../src/core/sse.js';
+import type { AIChatRequest, AIMessage } from '../src/types.js';
+import type { ChatEvent } from '../src/core/events.js';
+import { anthropicSse, openaiSse, streamOf } from './helpers.js';
+
+const req: AIChatRequest = { system: '', messages: [{ role: 'user', content: 'Why?' }], tools: [] };
+const sse = (text: string) => readSse(streamOf(text, 9));
+const OPENAI = 'https://api.openai.com/v1';
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('the request, per provider', () => {
+  it('Anthropic: adaptive thinking with an effort on the models that take it, a budget before them, nothing on the rest', () => {
+    expect(claudeThinking('claude-sonnet-5-5')).toBe('adaptive');
+    expect(claudeThinking('claude-opus-4-6')).toBe('adaptive');
+    expect(claudeThinking('claude-sonnet-4-5-20250929')).toBe('enabled');
+    expect(claudeThinking('claude-3-7-sonnet-latest')).toBe('enabled');
+    expect(claudeThinking('claude-3-5-haiku-20241022')).toBe('none');
+    expect(thinkingFields('high', 'claude-opus-5-5', 16000)).toEqual({ thinking: { type: 'adaptive', display: 'summarized' }, output_config: { effort: 'high' } });
+    expect(thinkingFields('low', 'claude-sonnet-4-5', 16000)).toEqual({ thinking: { type: 'enabled', budget_tokens: 2048 } });
+    expect(thinkingFields('high', 'claude-sonnet-4-5', 16000)).toEqual({ thinking: { type: 'enabled', budget_tokens: 14976 } });
+    // The budget leaves room for the answer, and is skipped when there is none.
+    expect(thinkingFields('medium', 'claude-sonnet-4-5', 4000)).toEqual({ thinking: { type: 'enabled', budget_tokens: 2976 } });
+    expect(thinkingFields('medium', 'claude-sonnet-4-5', 2000)).toEqual({});
+    expect(thinkingFields('medium', 'claude-3-5-sonnet', 16000)).toEqual({});
+    expect(thinkingFields(undefined, 'claude-opus-5-5', 16000)).toEqual({});
+  });
+
+  it('Anthropic: off is sent only where the model thinks by default and can be told not to', () => {
+    expect(thinkingFields('off', 'claude-opus-5')).toEqual({ thinking: { type: 'disabled' } });
+    expect(thinkingFields('off', 'claude-haiku-5-5')).toEqual({ thinking: { type: 'disabled' } });
+    expect(thinkingFields('off', 'claude-sonnet-5-5')).toEqual({ thinking: { type: 'between_tools' } });
+    for (const always of ['claude-fable-5-1', 'claude-opus-5-5', 'claude-mythos-5-1']) expect(thinkingFields('off', always), always).toEqual({});
+    for (const quiet of ['claude-opus-4-6', 'claude-sonnet-4-5', 'claude-3-5-haiku']) expect(thinkingFields('off', quiet), quiet).toEqual({});
+    expect(anthropicBody({ ...req, reasoning: 'medium' }, 'claude-sonnet-5-5', [])).toMatchObject({ output_config: { effort: 'medium' } });
+  });
+
+  it('Chat Completions: reasoning_effort to OpenAI, not elsewhere, and left out when refused; off sends nothing', () => {
+    expect(openaiBody({ ...req, reasoning: 'high' }, 'gpt-5', OPENAI)).toMatchObject({ reasoning_effort: 'high' });
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5', OPENAI)).not.toHaveProperty('reasoning_effort');
+    expect(openaiBody({ ...req, reasoning: 'high' }, 'r1', 'https://api.groq.com/openai/v1')).not.toHaveProperty('reasoning_effort');
+    expect(openaiBody({ ...req, reasoning: 'high' }, 'gpt-5', OPENAI, new Set(['reasoning_effort']))).not.toHaveProperty('reasoning_effort');
+    expect(rejectedField(400, '{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}')).toBe('reasoning_effort');
+  });
+
+  it('Responses: the effort with a summary and the encrypted reasoning asked for; off sends nothing', () => {
+    expect(codexBody({ ...req, reasoning: 'medium' }, 'gpt-5.5')).toMatchObject({ reasoning: { effort: 'medium', summary: 'auto' }, include: ['reasoning.encrypted_content'] });
+    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.5')).not.toHaveProperty('reasoning');
+    expect(codexBody(req, 'gpt-5.5')).not.toHaveProperty('include');
+  });
+
+  it('Gemini: thinkingLevel on 3 and later, a budget before, thoughts asked for when on, nothing for another family', () => {
+    expect(geminiThinking('high', 'gemini-3-pro')).toEqual({ thinkingConfig: { thinkingLevel: 'HIGH', includeThoughts: true } });
+    expect(geminiThinking('off', 'gemini-3.5-flash')).toEqual({ thinkingConfig: { thinkingLevel: 'MINIMAL' } });
+    expect(geminiThinking('low', 'gemini-2.5-flash')).toEqual({ thinkingConfig: { thinkingBudget: 1024, includeThoughts: true } });
+    expect(geminiThinking('off', 'gemini-2.5-pro')).toEqual({ thinkingConfig: { thinkingBudget: 0 } });
+    expect(geminiThinking('high', 'gemma-3-27b-it')).toEqual({});
+    expect(geminiThinking(undefined, 'gemini-3-pro')).toEqual({});
+    expect(geminiBody({ ...req, reasoning: 'medium' }, 'gemini-3-pro')['generationConfig']).toMatchObject({ thinkingConfig: { thinkingLevel: 'MEDIUM' } });
+  });
+});
+
+describe('reasoning reported as it streams and on the result', () => {
+  it('Anthropic: the summarized thinking, its tokens counted', async () => {
+    const seen: ChatEvent[] = [];
+    const result = await anthropicResult(sse(anthropicSse([
+      { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 1 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Consider the ' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'primes.' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Yes.' } },
+      { type: 'content_block_stop', index: 1 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 40, output_tokens_details: { thinking_tokens: 30 } } },
+      { type: 'message_stop' },
+    ])), (e) => seen.push(e));
+    expect(result).toMatchObject({ ok: true, text: 'Yes.', reasoning: 'Consider the primes.', usage: { outputTokens: 40, reasoningTokens: 30 } });
+    expect(seen).toEqual([{ type: 'reasoning', delta: 'Consider the ' }, { type: 'reasoning', delta: 'primes.' }, { type: 'text', delta: 'Yes.' }]);
+    // An omitted display streams an empty thinking: no event, no reasoning on the result.
+    const quiet = await anthropicResult(sse(anthropicSse([
+      { type: 'message_start', message: { usage: {} } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+      { type: 'message_stop' },
+    ])));
+    expect(quiet.reasoning).toBeUndefined();
+  });
+
+  it('Chat Completions: a reasoning field, or inline <think> tags split from the text as they stream', async () => {
+    const seen: ChatEvent[] = [];
+    const fielded = await openaiResult(sse(openaiSse([
+      { choices: [{ index: 0, delta: { reasoning_content: 'Let me see. ' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { reasoning: 'Two primes.' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: 'Yes.' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 5, completion_tokens: 9, completion_tokens_details: { reasoning_tokens: 6 } } },
+    ])), (e) => seen.push(e));
+    expect(fielded).toMatchObject({ text: 'Yes.', reasoning: 'Let me see. Two primes.', usage: { reasoningTokens: 6 } });
+    expect(seen.map((e) => e.type)).toEqual(['reasoning', 'reasoning', 'text']);
+
+    const events: ChatEvent[] = [];
+    const inline = await openaiResult(sse(openaiSse([
+      { choices: [{ index: 0, delta: { content: 'Sure. <thi' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: 'nk>hmm, 2 <' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: ' 3</think>' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: ' Yes.' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    ])), (e) => events.push(e));
+    expect(inline).toMatchObject({ text: 'Sure.  Yes.', reasoning: 'hmm, 2 < 3' });
+    expect(events.filter((e) => e.type === 'reasoning').map((e) => (e as { delta: string }).delta).join('')).toBe('hmm, 2 < 3');
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { delta: string }).delta).join('')).toBe('Sure.  Yes.');
+  });
+
+  it('the splitter holds a possible tag start, keeps a stray close as text, and flushes at the end', () => {
+    const out: string[] = [];
+    const s = new ThinkSplitter((kind, delta) => out.push(`${kind}:${delta}`));
+    s.push('a <'); s.push('b </think> c <reasoning>'); s.push('deep</reas'); s.push('oning> d <'); s.end();
+    expect(out.join('|')).toBe('text:a |text:<b </think>|text: c |reasoning:deep|text: d |text:<');
+  });
+
+  it('Responses: summary deltas, the reasoning tokens, and the turn\'s items kept to replay', async () => {
+    const seen: ChatEvent[] = [];
+    const reasoningItem = { id: 'rs_1', type: 'reasoning', encrypted_content: 'enc…', summary: [{ type: 'summary_text', text: 'Two primes.' }] };
+    const result = await codexResult(sse(openaiSse([
+      { type: 'response.output_item.added', item: { id: 'rs_1', type: 'reasoning' } },
+      { type: 'response.reasoning_summary_text.delta', item_id: 'rs_1', delta: 'Two ' },
+      { type: 'response.reasoning_summary_text.delta', item_id: 'rs_1', delta: 'primes.' },
+      { type: 'response.reasoning_summary_text.done', item_id: 'rs_1', text: 'Two primes.' },
+      { type: 'response.output_item.done', item: reasoningItem },
+      { type: 'response.output_text.delta', item_id: 'msg_1', delta: 'Yes.' },
+      { type: 'response.output_item.done', item: { id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Yes.' }] } },
+      { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 5, output_tokens: 9, output_tokens_details: { reasoning_tokens: 6 } } } },
+    ], false)), undefined, (e) => seen.push(e));
+    expect(result).toMatchObject({ text: 'Yes.', reasoning: 'Two primes.', usage: { reasoningTokens: 6 }, providerState: { protocol: 'responses', items: [reasoningItem, expect.objectContaining({ type: 'message' })] } });
+    expect(seen.map((e) => e.type)).toEqual(['reasoning', 'reasoning', 'text']);
+    // The items go back as the turn's input; without them the turn is rebuilt.
+    const history: AIMessage[] = [{ role: 'user', content: 'Why?' }, { role: 'assistant', content: 'Yes.', providerState: result.providerState }];
+    expect(codexInput(history).slice(1)).toEqual(result.providerState && (result.providerState as { items: unknown[] }).items);
+    expect(codexInput([{ role: 'user', content: 'Why?' }, { role: 'assistant', content: 'Yes.', providerState: { protocol: 'anthropic', blocks: [] } }])[1]).toMatchObject({ type: 'message', role: 'assistant' });
+  });
+
+  it('Gemini: thought summaries as reasoning, counted', async () => {
+    const seen: ChatEvent[] = [];
+    const result = await geminiResult(sse(openaiSse([
+      { candidates: [{ content: { role: 'model', parts: [{ text: 'Two primes.', thought: true }, { text: 'Yes.' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 3, thoughtsTokenCount: 6 } },
+    ], false)), (e) => seen.push(e));
+    expect(result).toMatchObject({ text: 'Yes.', reasoning: 'Two primes.', usage: { inputTokens: 5, outputTokens: 9, reasoningTokens: 6 } });
+    expect(seen).toEqual([{ type: 'reasoning', delta: 'Two primes.' }, { type: 'text', delta: 'Yes.' }]);
+  });
+});
+
+describe('when Anthropic refuses the thinking blocks it signed', () => {
+  const conn: Connection = { kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-5-5' };
+  const history: AIMessage[] = [
+    { role: 'user', content: 'go' },
+    { role: 'assistant', content: 'Done.', providerState: { protocol: 'anthropic', blocks: [{ type: 'thinking', thinking: '…', signature: 'old' }, { type: 'text', text: 'Done.' }] } },
+    { role: 'user', content: 'again' },
+  ];
+  const ok = () => new Response(streamOf(anthropicSse([
+    { type: 'message_start', message: { usage: {} } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Again.' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+    { type: 'message_stop' },
+  ]), 11), { status: 200 });
+
+  it('sends the turn once more without them, and only once', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const refuse = () => new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.' } }), { status: 400 });
+    const fetch = vi.fn<Fetch>(async (_url, init) => { bodies.push(JSON.parse(init!.body as string)); return bodies.length === 1 ? refuse() : ok(); });
+    expect(await chat(conn, 'sk', { ...req, messages: history }, { fetch })).toMatchObject({ ok: true, text: 'Again.' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(bodies[0])).toContain('"thinking"');
+    expect(JSON.stringify(bodies[1])).not.toContain('"type":"thinking"');
+    expect((bodies[1]!['messages'] as Array<{ content: unknown[] }>)[1]!.content).toEqual([{ type: 'text', text: 'Done.' }]);
+    // A second refusal is the failure it is.
+    const twice = vi.fn<Fetch>(async () => refuse());
+    expect(await chat(conn, 'sk', { ...req, messages: history }, { fetch: twice })).toMatchObject({ ok: false, failure: { kind: 'http', status: 400 } });
+    expect(twice).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry another 400, or one with no thinking to drop', async () => {
+    const other = vi.fn<Fetch>(async () => new Response(JSON.stringify({ error: { type: 'invalid_request_error', message: 'max_tokens: must be positive' } }), { status: 400 }));
+    expect(await chat(conn, 'sk', { ...req, messages: history }, { fetch: other })).toMatchObject({ ok: false });
+    expect(other).toHaveBeenCalledTimes(1);
+    const bare = vi.fn<Fetch>(async () => new Response(JSON.stringify({ error: { message: 'Invalid `signature` in `thinking` block.' } }), { status: 400 }));
+    expect(await chat(conn, 'sk', req, { fetch: bare })).toMatchObject({ ok: false });
+    expect(bare).toHaveBeenCalledTimes(1);
+  });
+});
