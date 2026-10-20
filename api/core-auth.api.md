@@ -17,6 +17,20 @@ export interface AnthropicTokens {
 }
 
 // @public
+export class AuthError extends Error {
+    constructor(message: string, source: {
+        status: number;
+        code?: string;
+        reconnect?: boolean;
+    });
+    // (undocumented)
+    readonly code?: string;
+    readonly reconnect: boolean;
+    // (undocumented)
+    readonly status: number;
+}
+
+// @public
 export const CLAUDE_CODE_SENTINEL = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 // @public (undocumented)

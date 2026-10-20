@@ -125,7 +125,7 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     if (controller.signal.aborted) return failed(TIMED_OUT, { kind: 'timeout' });
     if (error instanceof SinkError) return failed(error.message, { kind: 'sink', cause: error.message });
     // A dropped connection: nothing was acted on, so the caller may send the same request again — unless output had streamed.
-    if (error instanceof TypeError) return failed(networkError(conn), { kind: 'network', cause: error.message }, { retryable: true });
+    if (error instanceof TypeError) return failed(networkError(conn), { kind: 'network', cause: networkCause(error) }, { retryable: true });
     // The server refused: a 5xx (or an overloaded one) is worth another try, and so is a rate limit that lifts within the minute. It says when.
     if (error instanceof HttpError) {
       const retryable = error.status >= 500 || shortRateLimit(error) || /overloaded|backend failed/i.test(error.message);
@@ -403,6 +403,15 @@ async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
 }
 
 /* ── failures ────────────────────────────────────────────────────── */
+
+/** What the transport said, with its code when it has one: "fetch failed (ECONNRESET)". */
+export function networkCause(error: Error): string {
+  const inner = (error as { cause?: unknown }).cause;
+  const code = inner && typeof inner === 'object' ? (inner as { code?: unknown }).code : undefined;
+  const detail = inner instanceof Error && inner.message && inner.message !== error.message ? inner.message : '';
+  const tail = [typeof code === 'string' && code ? code : '', detail].filter(Boolean).join(': ');
+  return tail ? `${error.message} (${tail})` : error.message;
+}
 
 /** `{ cause }` for an abort reason that says something, else nothing. */
 function cause(reason: unknown): Pick<AIFailure, 'cause'> {

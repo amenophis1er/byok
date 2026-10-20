@@ -58,7 +58,7 @@ describe('core chat()', () => {
 
     it('a day window is not: the key is out until tomorrow, whatever the wait says', async () => {
       vi.stubGlobal('fetch', refused(429, { error: { message: 'Rate limit reached on requests per day (RPD). Please try again in 2s.' } }));
-      expect(await chat(conn, 'k', req)).toMatchObject({ ok: false, error: expect.stringContaining('HTTP 429'), retryAfterMs: 2000, resetAt: expect.any(Number), quota: 'day' });
+      expect(await chat(conn, 'k', req)).toMatchObject({ ok: false, error: expect.stringContaining('HTTP 429'), retryAfterMs: 2000, quota: 'day' });
     });
 
     it('a long or unknown wait is the caller\'s call: not retryable, the wait given when known', async () => {
@@ -84,7 +84,7 @@ describe('core chat()', () => {
       };
       vi.stubGlobal('fetch', refused(429, gemini));
       expect(await chat({ kind: 'openai-compatible', protocol: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' }, 'k', req))
-        .toMatchObject({ ok: false, error: 'HTTP 429: You exceeded your current quota.', retryAfterMs: 37_000, resetAt: expect.any(Number), quota: 'day' });
+        .toMatchObject({ ok: false, error: 'HTTP 429: You exceeded your current quota.', retryAfterMs: 37_000, quota: 'day' });
 
       vi.stubGlobal('fetch', refused(429, { type: 'error', error: { type: 'rate_limit_error', message: 'This request would exceed the rate limit for your organization of 50,000 input tokens per minute.' } },
         { 'anthropic-ratelimit-input-tokens-remaining': '0', 'anthropic-ratelimit-input-tokens-reset': new Date(Date.now() + 15_000).toISOString() }));

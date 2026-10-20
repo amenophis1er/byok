@@ -43,13 +43,19 @@ function userParts(content: string | AIContentPart[]): Part[] {
     part.type === 'text' ? { text: part.text } : { inlineData: { mimeType: part.mediaType, data: part.data } });
 }
 
-/** The model turn's parts: the API's own when we have them (written under this protocol), else rebuilt. */
-function modelParts(message: Extract<AIMessage, { role: 'assistant' }>): Part[] {
+/** Google's placeholder for a function call that has no thought signature (history from another model, or written by the caller), which Gemini 3 would otherwise reject. */
+export const GEMINI_SIGNATURE_PLACEHOLDER = 'skip_thought_signature_validator';
+
+/** Whether the model checks thought signatures on replayed function calls: Gemini 3 and later. */
+export const checksSignatures = (model: string): boolean => /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model);
+
+/** The model turn's parts: the API's own when we have them (written under this protocol), else rebuilt — with the placeholder signature on the first call where the model checks. */
+function modelParts(message: Extract<AIMessage, { role: 'assistant' }>, placeholder: boolean): Part[] {
   const own = geminiState(message.providerState);
   if (own) return own as Part[];
   const parts: Part[] = [];
   if (message.content) parts.push({ text: message.content });
-  for (const call of message.toolCalls ?? []) parts.push({ functionCall: { name: call.name, args: call.args ?? {} } });
+  (message.toolCalls ?? []).forEach((call, i) => parts.push({ functionCall: { name: call.name, args: call.args ?? {} }, ...(placeholder && i === 0 ? { thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER } : {}) }));
   return parts;
 }
 
@@ -66,11 +72,12 @@ function responseOf(message: Extract<AIMessage, { role: 'tool' }>): Record<strin
   return { result: text };
 }
 
-export function geminiContents(messages: AIMessage[]): Content[] {
+export function geminiContents(messages: AIMessage[], model = ''): Content[] {
   const out: Content[] = [];
+  const placeholder = checksSignatures(model);
   for (const message of messages) {
     if (message.role === 'assistant') {
-      out.push({ role: 'model', parts: modelParts(message) });
+      out.push({ role: 'model', parts: modelParts(message, placeholder) });
       continue;
     }
     if (message.role === 'tool') {
@@ -121,7 +128,7 @@ export function geminiBody(req: AIChatRequest, model = ''): Record<string, unkno
   const tools = [...(declarations.length > 0 ? [{ functionDeclarations: declarations }] : []), ...(webSearchTool(req) ? [{ googleSearch: {} }] : [])];
   return {
     ...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
-    contents: geminiContents(req.messages),
+    contents: geminiContents(req.messages, model),
     ...(tools.length > 0 ? { tools } : {}),
     ...(declarations.length > 0 ? { toolConfig: { functionCallingConfig: { mode: 'AUTO' } } } : {}),
     generationConfig: { maxOutputTokens: req.maxTokens ?? GEMINI_DEFAULT_MAX_TOKENS, ...geminiThinking(req.reasoning, model) },

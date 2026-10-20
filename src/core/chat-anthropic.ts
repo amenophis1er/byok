@@ -140,6 +140,7 @@ export function anthropicBody(req: AIChatRequest, model: string, system: Array<{
   const tools: Array<Record<string, unknown>> = functionTools(req).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
   const search = webSearchTool(req);
   if (search) {
+    if (tools.some((tool) => tool['name'] === 'web_search')) throw new Error("A function tool named web_search collides with the provider's web search tool: rename it.");
     const location = approximateLocation(search);
     tools.push({
       type: 'web_search_20250305', name: 'web_search',

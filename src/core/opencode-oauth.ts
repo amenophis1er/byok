@@ -18,6 +18,7 @@
  */
 
 import { fetchOf, type RequestOptions } from './http.js';
+import { authFailure } from './auth-error.js';
 
 export const OPENCODE_CONSOLE = 'https://opencode.ai/console';
 /** The API root for chat and the model list (the `opencode` provider in models.dev). */
@@ -113,11 +114,8 @@ export async function pollOpencode(deviceCode: string, clientId = DEFAULT_CLIENT
 /** Rotate the token pair. The Console answers `invalid_grant` once the session was revoked: only a new sign-in recovers. */
 export async function refreshOpencodeTokens(refreshToken: string, clientId = DEFAULT_CLIENT_ID, options: RequestOptions = {}): Promise<OpencodeTokens> {
   const res = await post('/auth/device/token', { grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId }, options);
-  if (!res.ok) {
-    const text = await res.text();
-    if (/invalid_grant/.test(text)) throw new Error('Your OpenCode sign-in was revoked or expired — remove the connection and sign in again.');
-    throw new Error(`OpenCode token refresh failed (${res.status}): ${text}`);
-  }
+  // The Console answers `invalid_grant` once the session was revoked: only a new sign-in recovers (`reconnect`).
+  if (!res.ok) throw authFailure('OpenCode', 'Token refresh', res.status, await res.text());
   const tokens = parseTokens(await res.json());
   // A refresh answers with the same refresh token when it does not rotate: keep what we have either way.
   return tokens.refreshToken ? tokens : { ...tokens, refreshToken };

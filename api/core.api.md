@@ -119,6 +119,9 @@ export function listModels(conn: Connection, credential: ConnectionCredential, o
 // @public
 export type ModelFacts = Omit<ModelInfo, 'id' | 'name'>;
 
+// @public
+export function networkCause(error: Error): string;
+
 // @public (undocumented)
 export const OLLAMA_BASE = "https://ollama.com";
 

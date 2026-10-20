@@ -93,10 +93,12 @@ describe('pollDevice', () => {
     expect(await pollDevice('d', 'u')).toEqual(expected);
   });
 
-  it('denies on other errors, keeping the body', async () => {
+  it('denies on a refusal, keeping the body; a server failure or a dropped connection is not the user\'s answer, so it keeps polling', async () => {
     mockFetch(json({ error: 'access_denied' }, 400), new Response('gateway', { status: 502 }));
     expect(await pollDevice('d', 'u')).toEqual({ status: 'denied', error: 'Device auth failed (400): {"error":"access_denied"}' });
-    expect(await pollDevice('d', 'u')).toEqual({ status: 'denied', error: 'Device auth failed (502): gateway' });
+    expect(await pollDevice('d', 'u')).toEqual({ status: 'pending' });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+    expect(await pollDevice('d', 'u')).toEqual({ status: 'pending' });
   });
 
   it('denies a success response missing the code or verifier', async () => {
@@ -132,7 +134,7 @@ describe('exchangeDeviceCode', () => {
 
   it('fails on an error status or a missing access token', async () => {
     mockFetch(new Response('bad code', { status: 400 }), json({ refresh_token: 'rt' }));
-    await expect(exchangeDeviceCode({ authorizationCode: 'ac', codeVerifier: 'cv' })).rejects.toThrow('Code exchange failed (400): bad code');
+    await expect(exchangeDeviceCode({ authorizationCode: 'ac', codeVerifier: 'cv' })).rejects.toThrow('Code exchange failed (HTTP 400).');
     await expect(exchangeDeviceCode({ authorizationCode: 'ac', codeVerifier: 'cv' })).rejects.toThrow('missing access_token');
   });
 });
@@ -151,7 +153,7 @@ describe('refreshOpenAiTokens', () => {
 
   it('fails on an error status, and names a revoked sign-in as one to redo', async () => {
     mockFetch(new Response('down', { status: 502 }), new Response('invalid_grant', { status: 401 }));
-    await expect(refreshOpenAiTokens('rt1')).rejects.toThrow('Token refresh failed (502): down');
+    await expect(refreshOpenAiTokens('rt1')).rejects.toThrow('Token refresh failed (HTTP 502).');
     await expect(refreshOpenAiTokens('rt1')).rejects.toThrow('Your ChatGPT sign-in was revoked or expired — remove the connection and sign in again.');
   });
 });

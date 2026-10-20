@@ -28,7 +28,7 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, h({ 'x-ratelimit-remaining-requests': '5', 'x-ratelimit-reset-requests': '6m0s' }), '', NOW)).toEqual({});
     expect(rateLimitOf(429, h({ 'x-ratelimit-reset-requests': '6m0s', 'x-ratelimit-reset-tokens': '8s' }), '', NOW)).toEqual({ retryAfterMs: 360_000, resetAt: NOW + (360_000) });
     const daily = JSON.stringify({ error: { message: 'Rate limit reached for gpt-5-mini on requests per day (RPD): Limit 200, Used 200, Requested 1. Please try again in 7h12m3s.' } });
-    expect(rateLimitOf(429, undefined, daily, NOW)).toEqual({ retryAfterMs: 7 * 3_600_000 + 12 * 60_000 + 3000, resetAt: NOW + (7 * 3_600_000 + 12 * 60_000 + 3000), quota: 'day' });
+    expect(rateLimitOf(429, undefined, daily, NOW)).toEqual({ retryAfterMs: 7 * 3_600_000 + 12 * 60_000 + 3000, quota: 'day' });
   });
 
   it('reads Anthropic\'s reset instants for the exhausted window', () => {
@@ -53,8 +53,8 @@ describe('rateLimitOf', () => {
       },
     });
     expect(rateLimitOf(429, undefined, body(['GenerateRequestsPerMinutePerProjectPerModel-FreeTier']), NOW)).toEqual({ retryAfterMs: 20_000, resetAt: NOW + (20_000), quota: 'minute' });
-    expect(rateLimitOf(429, undefined, body(['GenerateRequestsPerDayPerProjectPerModel-FreeTier'], '2.5s'), NOW)).toEqual({ retryAfterMs: 2500, resetAt: NOW + (2500), quota: 'day' });
-    expect(rateLimitOf(429, undefined, body(['GenerateRequestsPerMinutePerProjectPerModel', 'GenerateRequestsPerDayPerProjectPerModel']), NOW)).toEqual({ retryAfterMs: 20_000, resetAt: NOW + (20_000), quota: 'day' });
+    expect(rateLimitOf(429, undefined, body(['GenerateRequestsPerDayPerProjectPerModel-FreeTier'], '2.5s'), NOW)).toEqual({ retryAfterMs: 2500, quota: 'day' });
+    expect(rateLimitOf(429, undefined, body(['GenerateRequestsPerMinutePerProjectPerModel', 'GenerateRequestsPerDayPerProjectPerModel']), NOW)).toEqual({ retryAfterMs: 20_000, quota: 'day' });
   });
 
   it('reads ChatGPT\'s resets_in_seconds, and usage_limit_reached as the plan window', () => {
@@ -113,7 +113,7 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, undefined, message('Rate limit reached on requests per min (RPM). Please try again in 2s. Your plan also has a daily quota of 10000 requests.'), NOW))
       .toEqual({ retryAfterMs: 2000, resetAt: NOW + (2000), quota: 'minute' });
     expect(rateLimitOf(429, undefined, message('Rate limit reached on requests per day (RPD): Limit 200. Also 3 RPM. Please try again in 1m 30s.'), NOW))
-      .toEqual({ retryAfterMs: 90_000, resetAt: NOW + (90_000), quota: 'day' });
+      .toEqual({ retryAfterMs: 90_000, quota: 'day' });
     expect(rateLimitOf(429, undefined, message('slow down'), NOW)).toEqual({});
     // A body that is not JSON is read as the message.
     expect(rateLimitOf(429, undefined, 'Too many requests per minute. Retry in 500ms', NOW)).toEqual({ retryAfterMs: 500, resetAt: NOW + (500), quota: 'minute' });

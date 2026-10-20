@@ -25,6 +25,8 @@ export function code(value: unknown): Pick<AIFailure, 'providerCode'> {
 export function providerCodeOf(body: string): string | undefined {
   let json: unknown;
   try { json = JSON.parse(body); } catch { return undefined; }
+  // A body wrapped in an array (Gemini, at times): its first object.
+  if (Array.isArray(json)) json = json.find((item) => item && typeof item === 'object' && !Array.isArray(item));
   if (!json || typeof json !== 'object') return undefined;
   const top = json as Record<string, unknown>;
   const error = top['error'] && typeof top['error'] === 'object' ? (top['error'] as Record<string, unknown>) : undefined;

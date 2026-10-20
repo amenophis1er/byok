@@ -382,8 +382,10 @@ storage and UI: the Claude subscription PKCE flow (`startLogin`,
 `pollDevice`, `exchangeDeviceCode`, `refreshOpenAiTokens`), the OpenCode device
 grant (`startOpencodeLogin`, `pollOpencode`, `refreshOpencodeTokens`) and the
 Ollama pairing (`publicKeyLine`, `connectUrl`, `whoami`, `disconnect`,
-`signRequest`). The same warning applies as in the extension: the Claude and
-ChatGPT flows are unofficial.
+`signRequest`). A call the provider refused throws an `AuthError` with
+`status`, `code` and `reconnect`: true when only a new sign-in recovers.
+The same warning applies as in the extension: the Claude and ChatGPT flows
+are unofficial.
 
 Every request goes through the global `fetch` unless you pass your own:
 `chat(conn, key, request, { fetch })`, `listModels(conn, key, { fetch })`,
