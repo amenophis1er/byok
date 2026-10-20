@@ -301,7 +301,10 @@ export type AIMessage =
       /**
        * Opaque provider data that must be sent back verbatim with this turn —
        * e.g. Anthropic thinking blocks (with signatures) and tool_use blocks.
-       * Persist it with the message; never edit it.
+       * Persist it with the message; never edit it. It is tagged with the
+       * protocol that wrote it and replayed only there: a conversation moved
+       * to another provider replays this turn from its text and tool calls
+       * (`stripProviderState` from the core drops it outright).
        */
       providerState?: unknown;
     }

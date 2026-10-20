@@ -28,6 +28,7 @@
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
+import { geminiState, tagged } from './provider-state.js';
 
 type Part = Record<string, unknown>;
 interface Content { role: 'user' | 'model'; parts: Part[] }
@@ -40,9 +41,10 @@ function userParts(content: string | AIContentPart[]): Part[] {
     part.type === 'text' ? { text: part.text } : { inlineData: { mimeType: part.mediaType, data: part.data } });
 }
 
-/** The model turn's parts: the API's own when we have them, else rebuilt. */
+/** The model turn's parts: the API's own when we have them (written under this protocol), else rebuilt. */
 function modelParts(message: Extract<AIMessage, { role: 'assistant' }>): Part[] {
-  if (Array.isArray(message.providerState)) return message.providerState as Part[];
+  const own = geminiState(message.providerState);
+  if (own) return own as Part[];
   const parts: Part[] = [];
   if (message.content) parts.push({ text: message.content });
   for (const call of message.toolCalls ?? []) parts.push({ functionCall: { name: call.name, args: call.args ?? {} } });
@@ -170,7 +172,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ...(text ? { text } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     // The parts come back as sent, signatures included; thought summaries without one are left out.
-    ...(runnable && parts.length > 0 ? { providerState: parts.filter((p) => !p['thought'] || p['thoughtSignature']) } : {}),
+    ...(runnable && parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),

@@ -24,16 +24,7 @@
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReason, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
-
-/** What an assistant turn carries back: each tool call's `extra_content`, by call id. */
-interface OpenAiState {
-  extraContent: Record<string, unknown>;
-}
-
-function extraContentOf(state: unknown): Record<string, unknown> {
-  const extra = (state as Partial<OpenAiState> | null | undefined)?.extraContent;
-  return extra && typeof extra === 'object' ? extra : {};
-}
+import { chatCompletionsState, tagged } from './provider-state.js';
 
 export const OPENAI_DEFAULT_MAX_TOKENS = 16000;
 
@@ -81,7 +72,7 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
       continue;
     }
     const calls = message.toolCalls ?? [];
-    const extra = extraContentOf(message.providerState);
+    const extra = chatCompletionsState(message.providerState);
     out.push({
       role: 'assistant',
       content: message.content ?? (calls.length > 0 ? null : ''),
@@ -223,7 +214,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ok: true,
     ...(cleaned ? { text: cleaned } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
-    ...(runnable && Object.keys(extraContent).length > 0 ? { providerState: { extraContent } satisfies OpenAiState } : {}),
+    ...(runnable && Object.keys(extraContent).length > 0 ? { providerState: tagged.chatCompletions(extraContent) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),

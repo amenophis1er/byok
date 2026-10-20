@@ -19,6 +19,16 @@ while on 0.x, a breaking change bumps the minor version.
   `codex_cli_rs` as before (`CODEX_ORIGINATOR`, exported). The worker takes
   it as `AiHandlerOptions.codexOriginator`. The device-flow and refresh calls
   never carried one, and still do not.
+- **`providerState` is tagged with the protocol that wrote it** (#36):
+  `{ protocol: 'anthropic', blocks }`, `{ protocol: 'gemini', parts }`,
+  `{ protocol: 'chat-completions', extraContent }`, and each protocol replays
+  only its own — a conversation that moved from Gemini to Anthropic no longer
+  sends Gemini parts as Anthropic blocks (a 400); the turn is rebuilt from its
+  text and tool calls. State written before the tag is read when it looks
+  like the protocol's own (Anthropic blocks all carry a `type`, Gemini parts
+  never do). `stripProviderState(messages)` is exported from the core for a
+  host moving a conversation. A Gemini placeholder signature for a call that
+  has none is not sent: the current Gemini docs document none.
 - **An idle limit, and the whole-request limit's off switch** (#39).
   `idleTimeoutMs` (on the request or in `ChatOptions`) fails the turn with
   `Timed out waiting for the model.` only when nothing arrives from the
