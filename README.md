@@ -184,9 +184,15 @@ What it guarantees:
   OpenRouter, Ollama local and ollama.com, …). One call per response by default
   (`parallelToolCalls: false`); servers that reject the field are retried
   without it.
-- **A failure says whether, and when, to try again.** `retryable: true` means
-  nothing was acted on: the connection dropped, the server failed (5xx), or a
-  rate limit lifts within the minute. A rate-limited result also carries what
+- **A failure says what it was, and whether, and when, to try again.** Every
+  failed result carries `failure: { kind, status?, providerCode?, requestId?,
+  cause?, streamed }`: route on `kind` (`request`, `network`, `http`,
+  `stream`, `timeout`, `stopped`, `sink`) and the provider's own code rather
+  than on the sentence in `error`, quote `requestId` to the provider's
+  support, and read `streamed` to know whether the user already saw part of
+  the answer. `retryable: true` means nothing was acted on: the connection
+  dropped, the server failed (5xx), or a rate limit lifts within the minute,
+  and nothing had streamed. A rate-limited result also carries what
   the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
   headers, Anthropic's reset instants, Gemini's `RetryInfo`, ChatGPT's
   `resets_in_seconds` and `x-codex-*-reset-at`) with `resetAt` (epoch ms), and
@@ -377,7 +383,7 @@ with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
 default `codex_cli_rs`, the Codex CLI's). The credential is the key or token, or a
 function `(method, url) => headers` that signs each request (an Ollama device
 key: `signRequest` is exported). `chat()` never throws: a failure is an
-`{ ok: false, error, retryable?, retryAfterMs?, resetAt?, quota? }` result —
+`{ ok: false, error, failure, retryable?, retryAfterMs?, resetAt?, quota? }` result —
 the last three when the provider said how long to wait and which rate-limit
 window ran out. `listModels()` throws an `HttpError` with the same `status`,
 `retryAfterMs`, `resetAt` and `quota`; `rateLimitOf(status, headers, body)`

@@ -71,8 +71,8 @@ describe('chat()', () => {
   it('refuses a pinned connection that is gone, or whose settings changed since the run started', async () => {
     seed([conn('a', { revision: 2 })], 'a');
     vi.stubGlobal('fetch', vi.fn());
-    expect(await chat({ system: '', messages: [], connectionId: 'zzz' })).toEqual({ ok: false, error: expect.stringMatching(/no longer exists/) });
-    expect(await chat({ system: '', messages: [], connectionId: 'a', connectionRevision: 1 })).toEqual({ ok: false, error: expect.stringMatching(/changed during this run/) });
+    expect(await chat({ system: '', messages: [], connectionId: 'zzz' })).toMatchObject({ ok: false, error: expect.stringMatching(/no longer exists/) });
+    expect(await chat({ system: '', messages: [], connectionId: 'a', connectionRevision: 1 })).toMatchObject({ ok: false, error: expect.stringMatching(/changed during this run/) });
   });
 
   it('retries once without parallel_tool_calls when the server rejects the field', async () => {
@@ -126,14 +126,14 @@ describe('chat()', () => {
     const stop = new AbortController();
     const pending = chat({ system: '', messages: [] }, { signal: stop.signal });
     setTimeout(() => stop.abort(), 5);
-    expect(await pending).toEqual({ ok: false, error: 'Stopped.' });
-    expect(await chat({ system: '', messages: [], timeoutMs: 5 })).toEqual({ ok: false, error: 'Timed out waiting for the model.' });
+    expect(await pending).toMatchObject({ ok: false, error: 'Stopped.' });
+    expect(await chat({ system: '', messages: [], timeoutMs: 5 })).toMatchObject({ ok: false, error: 'Timed out waiting for the model.' });
   });
 
   it('names who could not be reached when the connection drops, and marks it worth retrying', async () => {
     seed([conn('a', { kind: 'anthropic', baseUrl: '', model: 'claude', apiKeyEnc: { plain: 'k' } }), conn('l'), conn('r', { baseUrl: 'https://openrouter.ai/api' })], 'a');
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
-    expect(await chat({ system: '', messages: [] })).toEqual({ ok: false, error: 'The connection to Anthropic dropped (network error).', retryable: true });
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: 'The connection to Anthropic dropped (network error).', retryable: true });
     const local = await chat({ system: '', messages: [], connectionId: 'l' });
     expect(local.error).toMatch(/model server on this computer .*OLLAMA_ORIGINS/);
     expect((await chat({ system: '', messages: [], connectionId: 'r' })).error).toBe('The connection to openrouter.ai dropped (network error).');
@@ -145,14 +145,19 @@ describe('chat()', () => {
     expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, retryable: true });
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"bad model"}', { status: 400 })));
     expect(await chat({ system: '', messages: [] })).not.toHaveProperty('retryable');
+    // A stream cut off before anything streamed is worth another try; one cut after text the user saw is not.
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse('data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n')));
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', retryable: true, failure: { kind: 'stream', streamed: false } });
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse('data: {"choices":[{"index":0,"delta":{"content":"half"}}]}\n\n')));
-    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', retryable: true });
+    const cut = await chat({ system: '', messages: [] });
+    expect(cut).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', failure: { kind: 'stream', streamed: true } });
+    expect(cut).not.toHaveProperty('retryable');
   });
 
   it('passes on when the provider said to come back after a rate limit', async () => {
     seed([conn('l')], 'l');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"Rate limit reached on tokens per minute (TPM). Please try again in 1.5s."}}', { status: 429 })));
-    expect(await chat({ system: '', messages: [] })).toEqual({ ok: false, error: expect.stringContaining('HTTP 429'), retryable: true, retryAfterMs: 1500, resetAt: expect.any(Number), quota: 'minute' });
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: expect.stringContaining('HTTP 429'), retryable: true, retryAfterMs: 1500, resetAt: expect.any(Number), quota: 'minute' });
   });
 
   it('declines the on-device model, which has no tool calling', async () => {
@@ -206,11 +211,11 @@ describe('chat()', () => {
     const stop = new AbortController();
     stop.abort();
     const get = vi.spyOn(chrome.storage.local, 'get');
-    expect(await chat({ system: '', messages: [] }, { signal: stop.signal })).toEqual({ ok: false, error: 'Stopped.' });
+    expect(await chat({ system: '', messages: [] }, { signal: stop.signal })).toMatchObject({ ok: false, error: 'Stopped.' });
     expect(get).not.toHaveBeenCalled();
     // The refresh answers, but only after the limit (the one writer must get it back: a hung refresh holds the queue).
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => setTimeout(() => resolve(new Response('{}', { status: 500 })), 40))));
-    expect(await chat({ system: '', messages: [], timeoutMs: 10 })).toEqual({ ok: false, error: 'Timed out waiting for the model.' });
+    expect(await chat({ system: '', messages: [], timeoutMs: 10 })).toMatchObject({ ok: false, error: 'Timed out waiting for the model.' });
   });
 
   it('marks a token refresh its server failed as worth retrying', async () => {
@@ -232,7 +237,7 @@ describe('chat()', () => {
     it('says when to come back when the listing is rate limited', async () => {
       seed([conn('l')], 'l');
       vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"Too many requests"}}', { status: 429, headers: { 'retry-after': '4' } })));
-      expect(await list({ id: 'l', kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1' })).toEqual({ ok: false, error: 'HTTP 429: Too many requests', retryAfterMs: 4000, resetAt: expect.any(Number) });
+      expect(await list({ id: 'l', kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1' })).toMatchObject({ ok: false, error: 'HTTP 429: Too many requests', retryAfterMs: 4000, resetAt: expect.any(Number) });
     });
 
     it('tries a key typed in the form as a plain Bearer, not under the saved OpenCode organization', async () => {
@@ -347,7 +352,7 @@ describe('chat()', () => {
       expect(String(url)).toBe('https://api.openai.com/v1/responses');
       expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-1' });
       expect(init.headers).not.toHaveProperty('originator');
-      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'HTTP 404: Unknown model.' });
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: false, error: 'HTTP 404: Unknown model.' });
     });
 
     it('moves an OpenAI model that takes tools on Responses only over to it, and stays there', async () => {
@@ -362,13 +367,13 @@ describe('chat()', () => {
       // Any other 400 is the answer, not a mismatch.
       vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"bad"}}', { status: 400 })));
       seed([conn('ob', { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.5', apiKeyEnc: { plain: 'sk-1' } })], 'ob');
-      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'HTTP 400: bad' });
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: false, error: 'HTTP 400: bad' });
     });
 
     it('reports a non-ChatGPT Responses failure event in the provider\'s words', async () => {
       seed([conn('r', { baseUrl: 'https://api.openai.com/v1', protocol: 'responses', apiKeyEnc: { plain: 'sk-1' } })], 'r');
       vi.stubGlobal('fetch', vi.fn(async () => sseResponse(`data: ${JSON.stringify({ type: 'error', error: { message: 'Quota exceeded.' } })}\n\n`)));
-      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toEqual({ ok: false, error: 'Quota exceeded.' });
+      expect(await chat({ system: '', messages: [{ role: 'user', content: 'go' }] })).toMatchObject({ ok: false, error: 'Quota exceeded.' });
     });
 
     it('shows the protocol on each connection, and keeps a saved one', async () => {

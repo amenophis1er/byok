@@ -29,6 +29,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReaso
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { geminiState, tagged } from './provider-state.js';
+import { streamFailure } from './failure.js';
 
 type Part = Record<string, unknown>;
 interface Content { role: 'user' | 'model'; parts: Part[] }
@@ -112,8 +113,8 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
 
   for await (const { data } of events) {
     let chunk: Record<string, any>;
-    try { chunk = JSON.parse(data) as Record<string, any>; } catch { return { ok: false, error: 'Malformed stream chunk.' }; }
-    if (chunk['error']) return { ok: false, error: String(chunk['error']['message'] ?? 'the stream reported an error') };
+    try { chunk = JSON.parse(data) as Record<string, any>; } catch { return streamFailure('Malformed stream chunk.'); }
+    if (chunk['error']) return streamFailure(String(chunk['error']['message'] ?? 'the stream reported an error'), chunk['error']['status']);
     if (typeof chunk['modelVersion'] === 'string' && chunk['modelVersion']) model = chunk['modelVersion'];
     const meta = chunk['usageMetadata'];
     if (meta && typeof meta['promptTokenCount'] === 'number') {
@@ -148,8 +149,8 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     }
     if (candidate['finishReason']) finishReason = String(candidate['finishReason']);
   }
-  if (!finishReason) return { ok: false, error: 'The response stream ended before it finished.' };
-  if (finishReason === 'MALFORMED_FUNCTION_CALL') return { ok: false, error: 'The model made a malformed function call.' };
+  if (!finishReason) return streamFailure('The response stream ended before it finished.');
+  if (finishReason === 'MALFORMED_FUNCTION_CALL') return streamFailure('The model made a malformed function call.', finishReason);
 
   const text = parts.filter((p) => typeof p['text'] === 'string' && !p['thought']).map((p) => p['text'] as string).join('').trim();
   let n = 0;

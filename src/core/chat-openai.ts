@@ -25,6 +25,17 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReaso
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { chatCompletionsState, tagged } from './provider-state.js';
+import { streamFailure } from './failure.js';
+
+/** What an assistant turn carries back: each tool call's `extra_content`, by call id. */
+interface OpenAiState {
+  extraContent: Record<string, unknown>;
+}
+
+function extraContentOf(state: unknown): Record<string, unknown> {
+  const extra = (state as Partial<OpenAiState> | null | undefined)?.extraContent;
+  return extra && typeof extra === 'object' ? extra : {};
+}
 
 export const OPENAI_DEFAULT_MAX_TOKENS = 16000;
 
@@ -147,10 +158,10 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   for await (const { data } of events) {
     if (data.trim() === '[DONE]') break;
     let chunk: Record<string, any>;
-    try { chunk = JSON.parse(data) as Record<string, any>; } catch { return { ok: false, error: 'Malformed stream chunk.' }; }
+    try { chunk = JSON.parse(data) as Record<string, any>; } catch { return streamFailure('Malformed stream chunk.'); }
     if (chunk['error']) {
       const error = chunk['error'];
-      return { ok: false, error: typeof error === 'string' ? error : String(error['message'] ?? 'the stream reported an error') };
+      return streamFailure(typeof error === 'string' ? error : String(error['message'] ?? 'the stream reported an error'), typeof error === 'object' ? error['code'] ?? error['type'] : undefined);
     }
     if (typeof chunk['model'] === 'string' && chunk['model']) model = chunk['model'];
     if (chunk['usage']) {
@@ -186,7 +197,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     }
     if (choice['finish_reason']) finishReason = choice['finish_reason'];
   }
-  if (!finishReason) return { ok: false, error: 'The response stream ended before it finished.' };
+  if (!finishReason) return streamFailure('The response stream ended before it finished.');
   for (const [index, fragment] of [...fragments.entries()].sort(([a], [b]) => a - b)) {
     const id = settle(index, fragment); // a call that never got arguments is settled, and announced, here
     onEvent?.({ type: 'tool_call_end', id });

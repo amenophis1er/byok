@@ -148,11 +148,11 @@ describe('streamed response', () => {
   it('fails on an error event after HTTP 200, even if everything before it looked fine', async () => {
     const result = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']),
       { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }]);
-    expect(result).toEqual({ ok: false, error: 'overloaded_error: Overloaded' });
+    expect(result).toMatchObject({ ok: false, error: 'overloaded_error: Overloaded' });
   });
 
   it('fails when the stream ends before message_stop, even after complete-looking arguments', async () => {
     const result = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']), { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } }]);
-    expect(result).toEqual({ ok: false, error: 'The response stream ended before it finished.' });
+    expect(result).toMatchObject({ ok: false, error: 'The response stream ended before it finished.' });
   });
 });

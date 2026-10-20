@@ -341,6 +341,30 @@ export interface AIChatRequest {
 
 export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal';
 
+/**
+ * Why a turn failed: refused before any request went out (`request`: no
+ * model, no key, a model this library cannot serve), the connection dropped
+ * (`network`), the server refused (`http`, with `status`), the stream failed
+ * or ended early (`stream`), a limit passed (`timeout`), the caller's signal
+ * (`stopped`), or the caller's `onEvent` threw (`sink`).
+ */
+export type AIFailureKind = 'request' | 'network' | 'http' | 'stream' | 'timeout' | 'stopped' | 'sink';
+
+/** A failure as data, beside the sentence in `error`. */
+export interface AIFailure {
+  kind: AIFailureKind;
+  /** The HTTP status, on `http`. */
+  status?: number;
+  /** The provider's own code when it gave one: Anthropic's `rate_limit_error`, OpenAI's `insufficient_quota`, ChatGPT's `usage_limit_reached`, Gemini's `RESOURCE_EXHAUSTED`. */
+  providerCode?: string;
+  /** The provider's request id (`request-id`, `x-request-id`), for its support. */
+  requestId?: string;
+  /** The underlying exception's message, when there was one (what the network said, what the sink threw). */
+  cause?: string;
+  /** Whether text or a tool call had streamed to `onEvent` before the failure: the user may have seen it, so the turn is never `retryable`. */
+  streamed: boolean;
+}
+
 export interface AIChatResult {
   ok: boolean;
   text?: string;
@@ -357,10 +381,13 @@ export interface AIChatResult {
    */
   usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
   error?: string;
+  /** The failure as data: its kind, the provider's code and request id, whether output had streamed. On every `ok: false` result from `chat()`. */
+  failure?: AIFailure;
   /**
    * A failure worth one more try: the connection dropped, the provider's
    * server failed (5xx, overloaded), or a rate limit lifts within the minute
-   * (a 429 with a wait of a minute at most, or on a minute window).
+   * (a 429 with a wait of a minute at most, or on a minute window) — and
+   * nothing had streamed to the caller (`failure.streamed` is false).
    */
   retryable?: boolean;
   /** How long the provider asked us to wait before trying again, when it said (`Retry-After`, OpenAI's reset headers, Gemini's `RetryInfo`). On a day window it is the provider's words, which may not be the day's end: `quota` is the authority. */

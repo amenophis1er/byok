@@ -93,6 +93,7 @@ const STOPPED: AIChatResult = { ok: false, error: 'Stopped.' };
 function shouldRetry(result: AIChatResult): boolean {
   if (result.ok || !result.retryable) return false;
   if (result.quota === 'day' || result.quota === 'plan') return false;
+  if (result.failure?.streamed) return false;
   if (result.text || (result.toolCalls && result.toolCalls.length > 0)) return false;
   return true;
 }

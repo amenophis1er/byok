@@ -20,6 +20,7 @@
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
+import { streamFailure } from './failure.js';
 
 export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
 
@@ -139,7 +140,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   for await (const { data } of events) {
     if (data.trim() === '[DONE]') break;
     let event: Record<string, any>;
-    try { event = JSON.parse(data) as Record<string, any>; } catch { return { ok: false, error: 'Malformed stream chunk.' }; }
+    try { event = JSON.parse(data) as Record<string, any>; } catch { return streamFailure('Malformed stream chunk.'); }
     const itemId = typeof event['item_id'] === 'string' ? event['item_id'] : '';
     switch (event['type']) {
       case 'response.output_item.added':
@@ -193,13 +194,13 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
         break;
       }
       case 'response.failed':
-        return { ok: false, error: failure(JSON.stringify(event['response'] ?? {})) };
+        return streamFailure(failure(JSON.stringify(event['response'] ?? {})), event['response']?.error?.code ?? event['response']?.error?.type);
       case 'error':
-        return { ok: false, error: failure(JSON.stringify({ error: event['error'] ?? event })) };
+        return streamFailure(failure(JSON.stringify({ error: event['error'] ?? event })), event['error']?.code ?? event['error']?.type ?? event['code']);
       default:
     }
   }
-  if (!completed) return { ok: false, error: 'The response stream ended before it finished.' };
+  if (!completed) return streamFailure('The response stream ended before it finished.');
   for (const entry of calls.values()) if (!entry.ended) { announce(entry); onEvent?.({ type: 'tool_call_end', id: entry.callId }); }
 
   const toolCalls: AIToolCall[] = [...calls.values()].map((entry) => {

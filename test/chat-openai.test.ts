@@ -152,9 +152,9 @@ describe('streamed response', () => {
   });
 
   it('fails on an error chunk, and when the stream ends before a finish_reason', async () => {
-    expect(await parse(openaiSse([chunk({ content: 'x' }), { error: { message: 'upstream overloaded' } }]))).toEqual({ ok: false, error: 'upstream overloaded' });
+    expect(await parse(openaiSse([chunk({ content: 'x' }), { error: { message: 'upstream overloaded' } }]))).toMatchObject({ ok: false, error: 'upstream overloaded' });
     expect(await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'c', function: { name: 'browser', arguments: '{"action":"observe"}' } }] })], false)))
-      .toEqual({ ok: false, error: 'The response stream ended before it finished.' });
+      .toMatchObject({ ok: false, error: 'The response stream ended before it finished.' });
   });
 
   it('accepts a finish_reason with no [DONE] after it', async () => {

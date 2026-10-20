@@ -20,6 +20,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReaso
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { anthropicState, tagged } from './provider-state.js';
+import { streamFailure } from './failure.js';
 
 type Block = Record<string, unknown> & { type: string };
 
@@ -129,7 +130,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   for await (const { event, data } of events) {
     if (event === 'ping') continue;
     let payload: Record<string, any>;
-    try { payload = JSON.parse(data) as Record<string, any>; } catch { return { ok: false, error: `Malformed stream event (${event}).` }; }
+    try { payload = JSON.parse(data) as Record<string, any>; } catch { return streamFailure(`Malformed stream event (${event}).`); }
     switch (payload['type']) {
       case 'message_start': {
         const u = payload['message']?.['usage'] ?? {};
@@ -183,12 +184,12 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
         finished = true;
         break;
       case 'error':
-        return { ok: false, error: `${payload['error']?.['type'] ?? 'error'}: ${payload['error']?.['message'] ?? 'the stream reported an error'}` };
+        return streamFailure(`${payload['error']?.['type'] ?? 'error'}: ${payload['error']?.['message'] ?? 'the stream reported an error'}`, payload['error']?.['type']);
       default:
         break;
     }
   }
-  if (!finished) return { ok: false, error: 'The response stream ended before it finished.' };
+  if (!finished) return streamFailure('The response stream ended before it finished.');
   for (const [index, block] of blocks.entries()) if (block?.type === 'tool_use' && !ended.has(index)) onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
 
   const toolCalls: AIToolCall[] = [];

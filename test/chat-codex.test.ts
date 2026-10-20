@@ -78,10 +78,10 @@ describe('ChatGPT stream', () => {
 
   it('fails on an error event, a failed response, or a stream that ends before completing', async () => {
     expect(await codexResult(events({ type: 'error', error: { code: 'rate_limit_exceeded', message: 'secret prompt echo' } })))
-      .toEqual({ ok: false, error: 'Your ChatGPT plan’s limit is reached. Wait for it to reset.' });
+      .toMatchObject({ ok: false, error: 'Your ChatGPT plan’s limit is reached. Wait for it to reset.' });
     expect((await codexResult(events({ type: 'response.failed', response: { error: { code: 'server_error' } } }))).ok).toBe(false);
     expect(await codexResult(events({ type: 'response.output_text.delta', item_id: 'm', delta: 'half' })))
-      .toEqual({ ok: false, error: 'The response stream ended before it finished.' });
+      .toMatchObject({ ok: false, error: 'The response stream ended before it finished.' });
   });
 });
 
