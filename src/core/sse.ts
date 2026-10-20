@@ -54,10 +54,11 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
     else if (field === 'data') data.push(value);
   }
 
+  let drained = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) { drained = true; break; }
       buffer += decoder.decode(value, { stream: true });
       for (const line of lines(false)) yield* handle(line);
     }
@@ -66,6 +67,9 @@ export async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator
     // An event not closed by a blank line before EOF is incomplete: the SSE
     // spec discards it, and so do we — a cut stream must not look finished.
   } finally {
-    reader.releaseLock();
+    // A consumer that stops early (at `[DONE]`, say) leaves bytes it will never read: cancel the
+    // body, so the connection and anything watching the stream are released, not left pending.
+    if (drained) reader.releaseLock();
+    else await reader.cancel().catch(() => undefined);
   }
 }

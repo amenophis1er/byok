@@ -130,13 +130,16 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
 /** The silence watchdog: armed when a request goes out, reset by every chunk, and `onTimeout` when the limit passes. Nothing when the limit is 0. */
 class Idle {
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private done = false;
   constructor(private readonly ms: number, private readonly onTimeout: () => void) {}
   touch(): void {
-    if (this.ms <= 0) return;
+    if (this.ms <= 0 || this.done) return;
     clearTimeout(this.timer);
     this.timer = setTimeout(this.onTimeout, this.ms);
   }
+  /** Disarms for good: a read still pending when the turn ends cannot arm it again. */
   stop(): void {
+    this.done = true;
     clearTimeout(this.timer);
     this.timer = undefined;
   }
@@ -148,11 +151,11 @@ class Idle {
     return new ReadableStream<Uint8Array>({
       pull: async (controller) => {
         const { done, value } = await reader.read();
-        if (done) { this.stop(); controller.close(); return; }
+        if (done) { clearTimeout(this.timer); controller.close(); return; }
         this.touch();
         controller.enqueue(value);
       },
-      cancel: async (reason) => { this.stop(); await reader.cancel(reason); },
+      cancel: async (reason) => { clearTimeout(this.timer); await reader.cancel(reason); },
     });
   }
 }

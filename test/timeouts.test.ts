@@ -70,6 +70,25 @@ describe('the idle limit', () => {
     expect(await chat(conn, 'k', { ...req, idleTimeoutMs: 30 }, { timeoutMs: 0 })).toEqual({ ok: false, error: TIMED_OUT });
   });
 
+  it('does not re-arm after the turn: a body still open at [DONE] is cancelled, not left pending', async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) { controller.enqueue(new TextEncoder().encode(chunks.join('') + 'data: [DONE]\n\n')); return; }
+        return new Promise(() => undefined); // more may come, never does
+      },
+      cancel() { cancelled = true; },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
+    const timeout = vi.fn();
+    expect(await chat(conn, 'k', req, { timeoutMs: 0, idleTimeoutMs: 30, onEvent: () => undefined })).toMatchObject({ ok: true, text: 'Hello.' });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(cancelled).toBe(true);
+    expect(timeout).not.toHaveBeenCalled();
+  });
+
   it('is off by default and with 0', async () => {
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => new Response(slowBody(25, init.signal), { status: 200 })));
     expect(await chat(conn, 'k', req, { idleTimeoutMs: 0 })).toMatchObject({ ok: true });
