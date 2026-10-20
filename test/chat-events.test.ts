@@ -44,6 +44,7 @@ describe('events', () => {
     const { result, events } = await both((sink) => anthropicResult(sse(text), sink));
     expect(result).toMatchObject({ ok: true, text: 'Let me look.', toolCalls: [{ id: 'toolu_1', args: { action: 'observe' } }] });
     expect(events).toEqual([
+      { type: 'reasoning', delta: 'hmm' },
       { type: 'text', delta: 'Let me ' }, { type: 'text', delta: 'look.' },
       { type: 'tool_call_start', id: 'toolu_1', name: 'browser' },
       { type: 'tool_call_delta', id: 'toolu_1', argsDelta: '{"action":' }, { type: 'tool_call_delta', id: 'toolu_1', argsDelta: '"observe"}' },
@@ -99,6 +100,7 @@ describe('events', () => {
     const { result, events } = await both((sink) => geminiResult(sse(text), sink));
     expect(result).toMatchObject({ ok: true, text: 'Let me look.', toolCalls: [{ id: 'call_0' }, { id: 'fc-9' }] });
     expect(events).toEqual([
+      { type: 'reasoning', delta: 'Thinking…' },
       { type: 'text', delta: 'Let me ' }, { type: 'text', delta: 'look.' },
       { type: 'tool_call_start', id: 'call_0', name: 'browser' }, { type: 'tool_call_delta', id: 'call_0', argsDelta: '{"action":"observe"}' }, { type: 'tool_call_end', id: 'call_0' },
       { type: 'tool_call_start', id: 'fc-9', name: 'other' }, { type: 'tool_call_delta', id: 'fc-9', argsDelta: '{}' }, { type: 'tool_call_end', id: 'fc-9' },

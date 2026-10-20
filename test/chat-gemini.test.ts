@@ -78,7 +78,7 @@ describe('stream', () => {
         { functionCall: { id: 'fc-9', name: 'browser', args: { action: 'click' } } },
       ] },
       stopReason: 'tool_use',
-      usage: { inputTokens: 120, outputTokens: 40, cacheReadTokens: 100 },
+      usage: { inputTokens: 120, outputTokens: 40, cacheReadTokens: 100, reasoningTokens: 10 },
     });
   });
 

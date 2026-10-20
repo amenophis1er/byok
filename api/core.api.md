@@ -17,6 +17,11 @@ export function chat(conn: Connection, credential: ConnectionCredential, req: Ch
 export type ChatEvent = {
     type: 'text';
     delta: string;
+}
+/** Reasoning as the provider shows it (a summary, or a model's inline `<think>` text), before the text it leads to. */
+| {
+    type: 'reasoning';
+    delta: string;
 } | {
     type: 'tool_call_start';
     id: string;
@@ -125,7 +130,7 @@ export function protocolCandidates(conn: Connection, model: string): Protocol[];
 export function protocolOf(conn: Pick<Connection, 'kind' | 'protocol'>): Protocol;
 
 // @public
-export type ProviderStateProtocol = 'anthropic' | 'gemini' | 'chat-completions';
+export type ProviderStateProtocol = 'anthropic' | 'gemini' | 'chat-completions' | 'responses';
 
 // @public
 export interface RateLimit {

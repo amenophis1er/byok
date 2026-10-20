@@ -11,14 +11,17 @@
  * the limit, a filter or a failure may have announced calls that the result
  * then withholds, and a stream that fails mid-turn leaves what came before
  * reported and the failure as the result. Text deltas are the model's text as
- * it arrives; the final text may differ by trimming and by inline reasoning
- * stripped from it. Observing never changes the result.
+ * it arrives; the final text may differ by trimming. Reasoning a model writes
+ * inline (`<think>` tags) is reported as `reasoning`, never as text.
+ * Observing never changes the result.
  */
 
 import type { AIChatResult } from '../types.js';
 
 export type ChatEvent =
   | { type: 'text'; delta: string }
+  /** Reasoning as the provider shows it (a summary, or a model's inline `<think>` text), before the text it leads to. */
+  | { type: 'reasoning'; delta: string }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; argsDelta: string }
   | { type: 'tool_call_end'; id: string }

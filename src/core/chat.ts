@@ -9,7 +9,7 @@
  */
 
 import type { AIChatRequest, AIChatResult, AIFailure, Protocol } from '../types.js';
-import { anthropicBody, anthropicResult } from './chat-anthropic.js';
+import { anthropicBody, anthropicMessages, anthropicResult } from './chat-anthropic.js';
 import { openaiBody, openaiResult, rejectedField, type OptionalField } from './chat-openai.js';
 import { geminiBody, geminiResult } from './chat-gemini.js';
 import { CODEX_RESPONSES_URL, codexBody, codexFailure, codexHttpError, codexResult } from './chat-codex.js';
@@ -19,6 +19,7 @@ import { CODEX_ORIGINATOR } from './openai-oauth.js';
 import { ANTHROPIC_BASE, ANTHROPIC_VERSION, HttpError, anthropicHeaders, apiRoot, describeHttpText, errMessage, failureSource, fetchOf, rateLimitFields, shortRateLimit, type ConnectionCredential, type Fetch, type RequestOptions } from './http.js';
 import { rateLimitOf } from './rate-limit.js';
 import { authorizerFor, protocolOf, tokenOf, type Connection } from './connection.js';
+import { anthropicState, withoutThinking } from './provider-state.js';
 import type { ChatEventSink } from './events.js';
 
 /** A turn's request. The worker's `connectionId`/`connectionRevision` pin a stored connection; here the connection is given. */
@@ -281,7 +282,7 @@ async function geminiTurn(t: Turn): Promise<AIChatResult> {
   const headers = conn.issuer === 'opencode' || typeof credential === 'function'
     ? await authorizerFor(conn, credential)('POST', url)
     : token ? { 'x-goog-api-key': token } : {};
-  const res = await post(t, url, headers, geminiBody(t.req));
+  const res = await post(t, url, headers, geminiBody(t.req, t.model));
   if (!res.ok) throw httpError(res, await res.text());
   return geminiResult(readSse(bodyOf(t, res)), t.onEvent);
 }
@@ -299,8 +300,25 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
   const headers = native
     ? anthropicHeaders(token, subscription)
     : { ...(await authorizerFor(conn, credential)('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
-  const res = await post(t, url, headers, anthropicBody(req, t.model, system));
-  if (!res.ok) throw httpError(res, await res.text());
+  let res = await post(t, url, headers, anthropicBody(req, t.model, system));
+  if (!res.ok) {
+    const text = await res.text();
+    // The API refused the thinking blocks it had itself signed (an edited prefix, a block bound to another conversation): once more
+    // without them, from the turn it named onward — the turns before keep theirs, as the docs ask.
+    const from = res.status === 400 ? refusedThinkingFrom(text, req.messages) : undefined;
+    if (from !== undefined) {
+      let n = -1;
+      const stripped = { ...req, messages: req.messages.map((m) => {
+        if (m.role !== 'assistant') return m;
+        n += 1;
+        return n >= from && m.providerState !== undefined ? { ...m, providerState: withoutThinking(m.providerState) } : m;
+      }) };
+      res = await post(t, url, headers, anthropicBody(stripped, t.model, system));
+      if (!res.ok) throw httpError(res, await res.text());
+    } else {
+      throw httpError(res, text);
+    }
+  }
   return anthropicResult(readSse(bodyOf(t, res)), t.onEvent);
 }
 
@@ -328,21 +346,47 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
   return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent);
 }
 
+/**
+ * The assistant turn (0-based, counting assistant turns) from which to drop
+ * replayed thinking after Anthropic refused it, or undefined when the 400 is
+ * about something else or no turn replays thinking. The two documented
+ * refusals: "`thinking` or `redacted_thinking` blocks in the latest assistant
+ * message cannot be modified" (the latest turn) and "messages.{i}.content.{j}:
+ * Invalid `signature` in `thinking` block" (that turn, in the API's numbering
+ * of messages, where consecutive tool results share one).
+ */
+function refusedThinkingFrom(text: string, messages: ChatRequest['messages']): number | undefined {
+  const thinking = (m: ChatRequest['messages'][number]) => m.role === 'assistant' && (anthropicState(m.providerState) ?? []).some((b) => b['type'] === 'thinking' || b['type'] === 'redacted_thinking');
+  if (!messages.some(thinking)) return undefined;
+  const invalid = /messages\.(\d+)\.content\.\d+:[^\n]{0,40}Invalid `signature` in `thinking` block/i.exec(text);
+  const modified = /(?:`thinking`|redacted_thinking)[^\n]{0,80}cannot be modified/i.test(text);
+  if (!invalid && !modified) return undefined;
+  const assistants = messages.filter((m) => m.role === 'assistant').length;
+  if (!invalid) return assistants - 1;
+  // The API's message index to the assistant turn it names: assistants map one to one, tool results merge.
+  const api = anthropicMessages(messages);
+  const named = Number(invalid[1]);
+  const before = api.slice(0, named).filter((m) => m.role === 'assistant').length;
+  return api[named]?.role === 'assistant' ? Math.min(before, assistants - 1) : Math.min(before, assistants - 1);
+}
+
 /** Chat Completions at `${baseUrl}/chat/completions`. */
 async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
   const base = apiRoot(t.conn.baseUrl);
   const authorize = authorizerFor(t.conn, t.credential);
   const omit = new Set<OptionalField>();
+  let body: Record<string, unknown> = {};
   const send = async () => {
     const url = new URL(`${base}/chat/completions`);
-    return post(t, url, await authorize('POST', url), openaiBody(t.req, t.model, base, omit));
+    body = openaiBody(t.req, t.model, base, omit);
+    return post(t, url, await authorize('POST', url), body);
   };
-  // A server that rejects an optional field gets the request again without it, once per field.
+  // A server that rejects an optional field gets the request again without it, once per field — only a field the request carried, not one its answer merely names.
   let res = await send();
   while (!res.ok) {
     const text = await res.text();
     const field = rejectedField(res.status, text);
-    if (!field || omit.has(field)) throw httpError(res, text);
+    if (!field || omit.has(field) || !(field in body)) throw httpError(res, text);
     omit.add(field);
     res = await send();
   }

@@ -325,6 +325,16 @@ export interface AIChatRequest {
   /** The model to use; default the connection's. */
   model?: string;
   /**
+   * How much the model reasons before answering, where it can: `off`, or a
+   * level. Mapped per provider — Anthropic's adaptive thinking with
+   * `output_config.effort` (extended thinking with a budget on the 4.5
+   * generation and before), the Responses API's and Chat Completions'
+   * `reasoning.effort` / `reasoning_effort` (to OpenAI), Gemini's
+   * `thinkingLevel` (3 and later) or `thinkingBudget`. Absent: the provider's
+   * default, and nothing is sent.
+   */
+  reasoning?: AIReasoning;
+  /**
    * Cache the conversation's prefix, not only the system prompt and tools:
    * Anthropic gets a `cache_control` breakpoint on the last message, so each
    * turn reads the one before from the cache (a write costs 25% more there;
@@ -340,6 +350,9 @@ export interface AIChatRequest {
 }
 
 export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal';
+
+/** How much the model reasons before answering: off, or a level. */
+export type AIReasoning = 'off' | 'low' | 'medium' | 'high';
 
 /**
  * Why a turn failed: refused before any request went out (`request`: no
@@ -373,13 +386,15 @@ export interface AIChatResult {
   stopReason?: AIStopReason;
   /** The model that answered, as the provider named it (an alias resolved, a `-latest` pinned), when it said. */
   model?: string;
+  /** The reasoning the provider showed — Anthropic's summarized thinking, a Responses reasoning summary, Gemini's thought summaries, a model's inline `<think>` text — when it showed any. Never the raw chain of thought. */
+  reasoning?: string;
   /**
    * Token counts, the same meaning on every provider: `inputTokens` is the
    * whole prompt, cached tokens included; `cacheReadTokens` the part of it
    * read from the cache and `cacheWriteTokens` the part written to it, when
    * the provider says.
    */
-  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; /** The part of `outputTokens` spent reasoning, when the provider says. */ reasoningTokens?: number };
   error?: string;
   /** The failure as data: its kind, the provider's code and request id, whether output had streamed. On every `ok: false` result from `chat()`. */
   failure?: AIFailure;

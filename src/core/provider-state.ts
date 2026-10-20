@@ -15,7 +15,7 @@
 import type { AIMessage } from '../types.js';
 
 /** The protocol a `providerState` was written under. */
-export type ProviderStateProtocol = 'anthropic' | 'gemini' | 'chat-completions';
+export type ProviderStateProtocol = 'anthropic' | 'gemini' | 'chat-completions' | 'responses';
 
 type Tagged = { protocol: ProviderStateProtocol } & Record<string, unknown>;
 
@@ -46,12 +46,25 @@ export function chatCompletionsState(state: unknown): Record<string, unknown> {
   return {};
 }
 
+/** The Responses API's output items of a turn (reasoning with its encrypted content, messages, function calls), to send back as its input: the state written under that protocol, else nothing. */
+export function responsesState(state: unknown): Array<Record<string, unknown>> | undefined {
+  if (isTagged(state)) return state.protocol === 'responses' && Array.isArray(state['items']) ? (state['items'] as Array<Record<string, unknown>>) : undefined;
+  return undefined;
+}
+
 /** The state as written: tagged with its protocol. */
 export const tagged = {
   anthropic: (blocks: unknown[]) => ({ protocol: 'anthropic' as const, blocks }),
   gemini: (parts: unknown[]) => ({ protocol: 'gemini' as const, parts }),
   chatCompletions: (extraContent: Record<string, unknown>) => ({ protocol: 'chat-completions' as const, extraContent }),
+  responses: (items: unknown[]) => ({ protocol: 'responses' as const, items }),
 };
+
+/** An Anthropic state without its thinking blocks, for a retry after the API refused them; other state untouched. */
+export function withoutThinking(state: unknown): unknown {
+  const blocks = anthropicState(state);
+  return blocks ? tagged.anthropic(blocks.filter((b) => b['type'] !== 'thinking' && b['type'] !== 'redacted_thinking')) : state;
+}
 
 /**
  * The messages without their `providerState`, for a host moving a

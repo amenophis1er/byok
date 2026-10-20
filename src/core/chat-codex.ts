@@ -10,8 +10,9 @@
  *
  * Backend quirks:
  *  - `max_output_tokens` is refused, so no output cap is sent;
- *  - `store: false`, and no encrypted reasoning is asked for: with nothing
- *    to replay it into, asking makes tool continuations fail;
+ *  - `store: false`: nothing is kept server-side, so the turn's output items
+ *    (its reasoning with the encrypted content, messages, function calls)
+ *    come back as `providerState` and are sent back as the next input;
  *  - the answer always streams.
  *
  * Provider error text is never copied into an error: it can echo the request.
@@ -21,6 +22,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIToolCall 
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { streamFailure } from './failure.js';
+import { responsesState, tagged } from './provider-state.js';
 
 export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
 
@@ -58,6 +60,9 @@ export function codexInput(messages: AIMessage[]): Item[] {
       items.push({ type: 'message', role: 'user', content: userParts(message.content) });
       continue;
     }
+    // The turn's own output items when we have them (reasoning included), else rebuilt from text and calls.
+    const own = responsesState(message.providerState);
+    if (own) { items.push(...own); continue; }
     if (message.content) items.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: message.content }] });
     for (const call of message.toolCalls ?? []) {
       items.push({ type: 'function_call', call_id: call.id, name: call.name, arguments: call.argsError ? call.argsError.raw : JSON.stringify(call.args ?? {}) });
@@ -75,6 +80,8 @@ export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens =
     input: codexInput(req.messages),
     ...(maxOutputTokens && req.maxTokens ? { max_output_tokens: req.maxTokens } : {}),
     ...(cacheKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
+    // A level asks for the effort and a summary, and for the encrypted reasoning to replay (store is false).
+    ...(req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' }, include: ['reasoning.encrypted_content'] } : {}),
     ...(req.tools?.length ? {
       tools: req.tools.map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
       tool_choice: 'auto',
@@ -126,6 +133,9 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   let incomplete = false;
   let usage: AIChatResult['usage'];
   let model: string | undefined;
+  const items: Array<Record<string, unknown>> = [];
+  const thoughts: string[] = [];
+  let thought = '';
 
   const call = (item: Record<string, unknown>) => {
     const id = typeof item['id'] === 'string' ? item['id'] : String(item['call_id'] ?? '');
@@ -155,6 +165,17 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
           if (event['delta']) onEvent?.({ type: 'text', delta: event['delta'] });
         }
         break;
+      case 'response.reasoning_summary_text.delta':
+      case 'response.reasoning_text.delta':
+        if (typeof event['delta'] === 'string' && event['delta']) {
+          thought += event['delta'];
+          onEvent?.({ type: 'reasoning', delta: event['delta'] });
+        }
+        break;
+      case 'response.reasoning_summary_text.done':
+      case 'response.reasoning_text.done':
+        if (thought) { thoughts.push(thought); thought = ''; }
+        break;
       case 'response.function_call_arguments.delta': {
         const entry = calls.get(itemId);
         if (entry && typeof event['delta'] === 'string') {
@@ -166,6 +187,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
       }
       case 'response.output_item.done': {
         const item = event['item'] ?? {};
+        if (item && typeof item === 'object' && typeof item.type === 'string') items.push(item as Record<string, unknown>);
         if (item.type !== 'function_call') break;
         const entry = call(item);
         if (entry.ended) break; // a repeated `done` changes nothing
@@ -187,7 +209,8 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
         // input_tokens counts the whole prompt, cached included; the cached part is in its details.
         if (typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
           const cached = u.input_tokens_details?.cached_tokens;
-          usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens, ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}) };
+          const reasoned = u.output_tokens_details?.reasoning_tokens;
+          usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens, ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}), ...(typeof reasoned === 'number' ? { reasoningTokens: reasoned } : {}) };
         }
         incomplete = event['type'] === 'response.incomplete' || response.status === 'incomplete';
         completed = true;
@@ -215,12 +238,17 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
     return out;
   });
   const text = [...texts.values()].join('\n\n').trim();
+  if (thought) thoughts.push(thought);
+  const reasoning = thoughts.join('\n\n').trim();
   // A turn cut off by the limit may carry a truncated call: never hand one out.
-  if (incomplete) return { ok: true, ...(text ? { text } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
+  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
   return {
     ok: true,
     ...(text ? { text } : {}),
+    ...(reasoning ? { reasoning } : {}),
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
+    // The turn's items come back as sent, the reasoning's encrypted content included, to be the next input.
+    ...(items.length > 0 ? { providerState: tagged.responses(items) } : {}),
     stopReason: toolCalls.length > 0 ? 'tool_use' : 'end',
     ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),

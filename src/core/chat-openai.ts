@@ -99,7 +99,7 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
 }
 
 /** Optional request fields a server has rejected, to leave out of the retry. */
-export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_cache_key';
+export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_cache_key' | 'reasoning_effort';
 
 /** The request body, without the `omit`ted fields. */
 export function openaiBody(req: AIChatRequest, model: string, base: string, omit: ReadonlySet<OptionalField> = new Set()): Record<string, unknown> {
@@ -113,8 +113,9 @@ export function openaiBody(req: AIChatRequest, model: string, base: string, omit
     ...(tools.length > 0 ? { tools } : {}),
     ...(tools.length > 0 && !omit.has('parallel_tool_calls') ? { parallel_tool_calls: req.parallelToolCalls === true } : {}),
     ...(!omit.has('stream_options') ? { stream_options: { include_usage: true } } : {}),
-    // OpenAI's own field; another server that refuses it gets the request again without it.
+    // OpenAI's own fields; another server that refuses one gets the request again without it.
     ...(req.cacheKey && openai && !omit.has('prompt_cache_key') ? { prompt_cache_key: req.cacheKey } : {}),
+    ...(req.reasoning && req.reasoning !== 'off' && openai && !omit.has('reasoning_effort') ? { reasoning_effort: req.reasoning } : {}),
   };
 }
 
@@ -128,6 +129,7 @@ export function rejectedField(status: number, body: string): OptionalField | und
   if (/parallel_tool_calls/i.test(body)) return 'parallel_tool_calls';
   if (/stream_options|include_usage/i.test(body)) return 'stream_options';
   if (/prompt_cache_key/i.test(body)) return 'prompt_cache_key';
+  if (/reasoning_effort/i.test(body)) return 'reasoning_effort';
   return undefined;
 }
 
@@ -135,13 +137,62 @@ const STOP: Record<string, AIStopReason> = {
   stop: 'end', tool_calls: 'tool_use', function_call: 'tool_use', length: 'length', content_filter: 'refusal',
 };
 
-/** Strip reasoning some local models emit inline despite instructions. */
-function stripThinking(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '').trim();
+/**
+ * Splits a model's text from the reasoning it writes inline in `<think>` or
+ * `<reasoning>` tags, as it streams: text outside the tags is text, text
+ * inside is reasoning, and a chunk that ends on what may be the start of a
+ * tag is held until the next one says.
+ */
+export class ThinkSplitter {
+  private inside = false;
+  /** The tag that opened the reasoning; only its own close ends it. */
+  private opened = '';
+  private held = '';
+  constructor(private readonly emit: (kind: 'text' | 'reasoning', delta: string) => void) {}
+
+  push(chunk: string): void {
+    let s = this.held + chunk;
+    this.held = '';
+    for (;;) {
+      const tag = /<(\/?)(think|reasoning)>/i.exec(s);
+      if (!tag) break;
+      const closing = tag[1] === '/';
+      const name = tag[2]!.toLowerCase();
+      // A close outside, an open inside, or a close of the other tag inside: literal text of whatever is current.
+      if (closing !== this.inside || (closing && name !== this.opened)) {
+        this.out(s.slice(0, tag.index + tag[0].length));
+        s = s.slice(tag.index + tag[0].length);
+        continue;
+      }
+      this.out(s.slice(0, tag.index));
+      this.inside = !closing;
+      this.opened = closing ? '' : name;
+      s = s.slice(tag.index + tag[0].length);
+    }
+    // Hold back a tail that may be the start of a tag ("<", "</thi"), up to a tag's length.
+    const tail = /<\/?[a-z]{0,9}$/i.exec(s);
+    if (tail) { this.held = s.slice(tail.index); s = s.slice(0, tail.index); }
+    this.out(s);
+  }
+
+  /** The end of the stream: what was held is what it is. */
+  end(): void {
+    this.out(this.held);
+    this.held = '';
+  }
+
+  private out(delta: string): void {
+    if (delta) this.emit(this.inside ? 'reasoning' : 'text', delta);
+  }
 }
 
 export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: ChatEventSink): Promise<AIChatResult> {
   let text = '';
+  let reasoning = '';
+  const splitter = new ThinkSplitter((kind, delta) => {
+    if (kind === 'text') text += delta; else reasoning += delta;
+    onEvent?.({ type: kind, delta });
+  });
   const fragments = new Map<number, { id: string; name: string; args: string; extra?: unknown; callId?: string }>();
   // A call's id is settled when its arguments start (the server's, or `call_N`), and announced then — or when
   // the turn ends; the result uses the same id, so an id arriving after the arguments began is not taken up.
@@ -167,18 +218,20 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     if (chunk['usage']) {
       // prompt_tokens counts the whole prompt, cached included; the cached part is in its details (OpenAI, OpenRouter).
       const cached = chunk['usage']['prompt_tokens_details']?.['cached_tokens'];
+      const thought = chunk['usage']['completion_tokens_details']?.['reasoning_tokens'];
       usage = {
         inputTokens: chunk['usage']['prompt_tokens'] ?? 0, outputTokens: chunk['usage']['completion_tokens'] ?? 0,
         ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}),
+        ...(typeof thought === 'number' ? { reasoningTokens: thought } : {}),
       };
     }
     const choice = chunk['choices']?.[0];
     if (!choice) continue;
     const delta = choice['delta'] ?? {};
-    if (typeof delta['content'] === 'string') {
-      text += delta['content'];
-      if (delta['content']) onEvent?.({ type: 'text', delta: delta['content'] });
-    }
+    // Reasoning in its own field (DeepSeek's and OpenRouter's `reasoning_content` / `reasoning`), or inline in the text.
+    const thought = typeof delta['reasoning_content'] === 'string' ? delta['reasoning_content'] : typeof delta['reasoning'] === 'string' ? delta['reasoning'] : '';
+    if (thought) { reasoning += thought; onEvent?.({ type: 'reasoning', delta: thought }); }
+    if (typeof delta['content'] === 'string') splitter.push(delta['content']);
     for (const piece of delta['tool_calls'] ?? []) {
       const index = typeof piece['index'] === 'number' ? piece['index'] : fragments.size;
       const current = fragments.get(index) ?? { id: '', name: '', args: '' };
@@ -197,6 +250,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     }
     if (choice['finish_reason']) finishReason = choice['finish_reason'];
   }
+  splitter.end();
   if (!finishReason) return streamFailure('The response stream ended before it finished.');
   for (const [index, fragment] of [...fragments.entries()].sort(([a], [b]) => a - b)) {
     const id = settle(index, fragment); // a call that never got arguments is settled, and announced, here
@@ -220,10 +274,12 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   const mapped = STOP[finishReason] ?? 'end';
   // A turn cut off by the token limit or a filter may carry a truncated call: never hand one out.
   const runnable = mapped === 'tool_use' || mapped === 'end';
-  const cleaned = stripThinking(text);
+  const cleaned = text.trim();
+  const thoughts = reasoning.trim();
   return {
     ok: true,
     ...(cleaned ? { text: cleaned } : {}),
+    ...(thoughts ? { reasoning: thoughts } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
     ...(runnable && Object.keys(extraContent).length > 0 ? { providerState: tagged.chatCompletions(extraContent) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,

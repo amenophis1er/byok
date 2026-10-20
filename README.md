@@ -298,6 +298,24 @@ out and between chunks. Either is `Timed out waiting for the model.`
 ```ts
 const result = await chat(conn, key, request, { timeoutMs: 0, idleTimeoutMs: 120_000, signal });
 ```
+Ask for reasoning where the model can, and watch it:
+
+```ts
+const result = await chat(conn, key, { ...request, reasoning: 'high' }, {
+  onEvent: (e) => { if (e.type === 'reasoning') showThinking(e.delta); },
+});
+result.reasoning;             // what the provider showed of it, when it showed any
+result.usage?.reasoningTokens;
+```
+
+`reasoning` is `'off'` or a level, mapped to each provider's own control
+(Anthropic's adaptive thinking and effort, or a budget on the 4.5 generation
+and before; OpenAI's `reasoning_effort` and the Responses API's `reasoning`
+with its encrypted content replayed through `providerState`; Gemini's
+`thinkingLevel` or `thinkingBudget`); absent, nothing is sent and the model
+does what it does by default. A model that writes its thinking inline in
+`<think>` tags has it reported as reasoning, not text.
+
 Token counts mean the same thing on every provider: `usage.inputTokens` is
 the whole prompt, cached tokens included, with `cacheReadTokens` and
 `cacheWriteTokens` the parts the cache served and took when the provider
