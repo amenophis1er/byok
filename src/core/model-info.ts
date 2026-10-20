@@ -74,6 +74,17 @@ const GEMINI: Rule[] = [
   [/^gemini-2\.5-flash(?:-lite)?(?:-|$)/, { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } }],
   [/^gemini-(?:2\.5-pro|3(?:\.\d+)?-(?:pro|flash(?:-lite)?)|4-argon)(?:-|$)/, { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: ALL }],
 ];
+/**
+ * Any other Gemini chat name, for a host whose listing says nothing — the
+ * `-latest` aliases (`gemini-pro-latest`, `gemini-flash-latest`,
+ * `gemini-flash-lite-latest`), the `gemini-exp-…` previews, a 4-generation
+ * model other than Argon: the window and output every chat family since 2.5
+ * shares, with tools and images, and no word on PDFs. The retired 1.x and
+ * 2.0 generations, whose limits differed, are left out. Google's own root
+ * does not use this row: its listing says each model's limits, and asking it
+ * beats a family-wide figure.
+ */
+const GEMINI_ANY: Rule[] = [...GEMINI, [/^gemini-(?!1\.|1-|2\.0-|2-0-)/, { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } }]];
 const NOT_CHAT = /image|tts|audio|live|embedding|robotics|computer-use/i;
 
 /** The first rule's facts, as a fresh copy: a caller editing what it got does not edit the table. */
@@ -86,9 +97,10 @@ function first(rules: Rule[], id: string): ModelFacts {
  * A model id as the tables spell it: without a gateway's routing prefix
  * (`anthropic/`, `openai/`, `google/`, `models/`), a Bedrock prefix and
  * version (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`), with a Vertex
- * date joined (`claude-opus-4-1@20250805`), and without the long-context
- * suffix in any spelling (`[1m]`, `-1m`, `:1m`), which names the 1M-context
- * variant of a 200k model.
+ * date joined (`claude-opus-4-1@20250805`), with a dotted Claude version
+ * hyphenated (`claude-opus-5.5` → `claude-opus-5-5`, `claude-3.5-sonnet` →
+ * `claude-3-5-sonnet`, as Anthropic spells them), and without the long-context suffix in any spelling (`[1m]`, `-1m`,
+ * `:1m`), which names the 1M-context variant of a 200k model.
  */
 export function modelName(id: string): { id: string; million: boolean } {
   let out = id.trim();
@@ -97,6 +109,7 @@ export function modelName(id: string): { id: string; million: boolean } {
   out = out.replace(/^(?:anthropic|openai|google|models)\//, '');
   out = out.replace(/^(?:[a-z]{2,6}\.)?anthropic\./, '').replace(/-v\d+(?::\d+)?$/, '');
   out = out.replace(/@(\d{8})$/, '-$1');
+  out = out.replace(/^(claude(?:-[a-z]+)?-\d+)\.(\d+)(?=-|$)/, '$1-$2');
   return { id: out, million };
 }
 
@@ -107,10 +120,10 @@ function claudeFacts(id: string): ModelFacts {
   return million && facts.contextWindow !== undefined ? { ...facts, contextWindow: 1_000_000 } : facts;
 }
 
-/** Google's table's facts for a chat model; nothing for an image, speech or other non-chat variant. */
-function geminiTableFacts(id: string): ModelFacts {
+/** Google's table's facts for a chat model, the family-wide row included when `any`; nothing for an image, speech or other non-chat variant. */
+function geminiTableFacts(id: string, any = false): ModelFacts {
   const plain = modelName(id).id;
-  return NOT_CHAT.test(plain) ? {} : first(GEMINI, plain);
+  return NOT_CHAT.test(plain) ? {} : first(any ? GEMINI_ANY : GEMINI, plain);
 }
 
 /**
@@ -123,7 +136,7 @@ export function knownModelInfoByName(id: string): ModelFacts {
   const plain = modelName(id).id;
   if (/^claude-/.test(plain)) return claudeFacts(id);
   if (/^(?:gpt-|chatgpt-|o[1-9](?:-|$))/.test(plain)) return first(GPT, plain);
-  if (/^gemini-/.test(plain)) return geminiTableFacts(id);
+  if (/^gemini-/.test(plain)) return geminiTableFacts(id, true);
   return {};
 }
 

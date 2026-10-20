@@ -3,6 +3,20 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.11
+
+- **More names the tables know** (#66): `knownModelInfoByName` answers for
+  the Gemini `-latest` aliases (`gemini-pro-latest`, `gemini-flash-latest`,
+  `gemini-flash-lite-latest`), the `gemini-exp-…` previews and a
+  4-generation model other than Argon — any Gemini chat name beyond the
+  tabled families gets the window and output every chat family since 2.5
+  shares (1,048,576 in, 65,536 out; tools and images, no word on PDFs), the
+  retired 1.x and 2.0 generations excepted. Google's own OpenAI-compatible
+  root keeps to the tabled families, so `getModelInfo` still asks its
+  listing, which says each model's limits, for the rest. And `modelName`
+  hyphenates a dotted Claude version (`claude-opus-5.5`, `claude-3.5-sonnet`),
+  so a gateway's spelling reaches the Claude table.
+
 ## 0.1.10
 
 - **Model facts by name** (#64): `knownModelInfoByName(id)` answers from

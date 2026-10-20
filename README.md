@@ -353,6 +353,8 @@ import { getModelInfo, knownModelInfoByName } from '@amenophis1er/byok/core';
 
 const info = await getModelInfo(conn, key);         // the bound model; or pass an id
 knownModelInfoByName('anthropic/claude-sonnet-5-5'); // the tables by name alone, whichever gateway serves it
+knownModelInfoByName('claude-opus-5.5');             // a gateway's dotted spelling reads the same
+knownModelInfoByName('gemini-flash-latest');         // any Gemini chat name since 2.5: the limits the families share
 if (info.capabilities?.pdf === false) { /* send the text, not the PDF */ }
 if (info.contextWindow && estimate(messages) > info.contextWindow) { /* trim first */ }
 ```
