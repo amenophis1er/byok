@@ -39,6 +39,7 @@ export type ChatEventSink = (event: ChatEvent) => void;
 // @public (undocumented)
 export interface ChatOptions extends RequestOptions {
     debug?: (label: string, data: unknown) => void;
+    idleTimeoutMs?: number;
     onEvent?: ChatEventSink;
     settingsHint?: string;
     signal?: AbortSignal;

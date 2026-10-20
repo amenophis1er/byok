@@ -75,6 +75,7 @@ export interface AIChatMessageRequest extends AIChatRequest {
 export interface AIChatRequest {
     connectionId?: string;
     connectionRevision?: number;
+    idleTimeoutMs?: number;
     maxTokens?: number;
     // (undocumented)
     messages: AIMessage[];

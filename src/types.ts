@@ -321,8 +321,10 @@ export interface AIChatRequest {
   connectionRevision?: number;
   /** The model to use; default the connection's. */
   model?: string;
-  /** Whole-request timeout, default 120000 ms. */
+  /** Whole-request timeout, default 120000 ms; `0` turns it off in the core (the worker keeps 120 s for the token refresh, and none for the turn). */
   timeoutMs?: number;
+  /** The longest silence allowed, ms: the turn times out when nothing arrives from the server for this long. Off by default. */
+  idleTimeoutMs?: number;
 }
 
 export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal';
