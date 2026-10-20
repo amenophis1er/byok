@@ -33,7 +33,7 @@ worker, and `chat()` with native tool calling for agents:
 > Neither Anthropic nor OpenAI offers OAuth for third-party apps, so these
 > flows reuse the Claude Code and Codex CLI client IDs and present their
 > traffic as those tools (a Claude Code system prompt, the `codex_cli_rs`
-> originator, and the header rewrites in `dnr-rules.json`). Either provider
+> originator unless you set your own, and the header rewrites in `dnr-rules.json`). Either provider
 > can stop them working at any time, and using them may break its terms of
 > service and put your users' accounts at risk. Make API keys the default in
 > your extension, and present subscription sign-in as an at-your-own-risk
@@ -72,6 +72,7 @@ import { registerAiHandlers } from '@amenophis1er/byok/background';
 registerAiHandlers({
   prefix: 'myext',                       // messages become `myext:ai-*`
   settingsHint: 'Open MyExt settings → AI.',
+  // codexOriginator: 'myext',            // the `originator` ChatGPT requests carry; default codex_cli_rs
 });
 ```
 
@@ -342,10 +343,11 @@ const result = await chat(conn, key, request, { fetch, signal });
 
 The global `fetch` of Node, Bun, Deno and the browser is itself a `Fetch`.
 
-A connection is `{ kind, baseUrl, protocol?, model?, auth?, accountId?, issuer?, orgId? }`:
+A connection is `{ kind, baseUrl, protocol?, model?, auth?, accountId?, issuer?, orgId?, originator? }`:
 `kind: 'anthropic'` with `baseUrl: ''` for the Messages API, `'openai-compatible'`
 with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
-`'chatgpt'` for a Codex token. The credential is the key or token, or a
+`'chatgpt'` for a Codex token (`originator` names your client in its requests;
+default `codex_cli_rs`, the Codex CLI's). The credential is the key or token, or a
 function `(method, url) => headers` that signs each request (an Ollama device
 key: `signRequest` is exported). `chat()` never throws: a failure is an
 `{ ok: false, error, retryable?, retryAfterMs?, quota? }` result — the last

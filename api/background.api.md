@@ -6,6 +6,7 @@
 
 // @public
 export interface AiHandlerOptions {
+    codexOriginator?: string;
     cryptoDbName?: string;
     debugFlagKey?: string;
     opencodeClientId?: string;

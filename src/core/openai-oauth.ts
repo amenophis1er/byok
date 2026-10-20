@@ -31,6 +31,12 @@ const MIN_POLL_MS = 2000;
 
 const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models';
 /**
+ * The `originator` header Codex requests carry when the host names none:
+ * the Codex CLI's, since the backend serves that client. A host may send its
+ * own name instead (`Connection.originator`, `codexModels`'s `originator`).
+ */
+export const CODEX_ORIGINATOR = 'codex_cli_rs';
+/**
  * The Codex CLI version the catalog request claims. The backend hides models
  * from clients it deems too old, so bump this with releases (`npm view
  * @openai/codex version`).
@@ -72,13 +78,13 @@ export function codexCatalogModels(body: unknown): Array<{ id: string; name: str
   return listed.sort((a, b) => a.priority - b.priority).map(({ id, name }) => ({ id, name }));
 }
 
-/** GET the Codex model catalog for a signed-in account. Throws on a failed request or an empty catalog. */
-export async function codexModels(input: { accessToken: string; accountId?: string }, options: RequestOptions = {}): Promise<Array<{ id: string; name: string }>> {
+/** GET the Codex model catalog for a signed-in account, as `originator` (default `CODEX_ORIGINATOR`). Throws on a failed request or an empty catalog. */
+export async function codexModels(input: { accessToken: string; accountId?: string; originator?: string }, options: RequestOptions = {}): Promise<Array<{ id: string; name: string }>> {
   const res = await fetchOf(options)(`${CODEX_MODELS_URL}?client_version=${CODEX_CLIENT_VERSION}`, {
     headers: {
       authorization: `Bearer ${input.accessToken}`,
       ...(input.accountId ? { 'chatgpt-account-id': input.accountId } : {}),
-      originator: 'codex_cli_rs',
+      originator: input.originator || CODEX_ORIGINATOR,
       accept: 'application/json',
     },
   });
@@ -276,6 +282,7 @@ export async function codexComplete(
     model: string;
     system: string;
     prompt: string;
+    originator?: string;
   },
   signal: AbortSignal,
   options: RequestOptions = {},
@@ -287,7 +294,7 @@ export async function codexComplete(
       authorization: `Bearer ${input.accessToken}`,
       // Omitted entirely when unresolvable — an empty value is rejected.
       ...(input.accountId ? { 'chatgpt-account-id': input.accountId } : {}),
-      originator: 'codex_cli_rs',
+      originator: input.originator || CODEX_ORIGINATOR,
       'openai-beta': 'responses=experimental',
       'content-type': 'application/json',
       accept: 'text/event-stream',

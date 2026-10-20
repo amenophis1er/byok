@@ -23,6 +23,8 @@ export interface Connection {
   label?: string;
   /** chatgpt only: the account id from the token, sent as chatgpt-account-id. */
   accountId?: string;
+  /** chatgpt only: the `originator` header Codex requests carry, naming the client. Default `codex_cli_rs`, the Codex CLI's. */
+  originator?: string;
   /** oauth only: 'opencode' when the OpenCode Console issued the token. */
   issuer?: 'opencode';
   /** opencode only: the organization the token was issued for. */
