@@ -38,8 +38,8 @@ const CLAUDE: Rule[] = [
   [/^claude-opus-4-[678](?:-|$)/, { contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: ALL }],
   [/^claude-sonnet-4-6(?:-|$)/, { contextWindow: 1_000_000, maxOutputTokens: 128_000, capabilities: ALL }],
   [/^claude-opus-4(?:-[01])?(?:-\d{8})?$/, { contextWindow: 200_000, maxOutputTokens: 32_000, capabilities: ALL }],
-  [/^claude-opus-4(?:-|\.|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
-  [/^claude-(?:sonnet|haiku)-4(?:-|\.|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
+  [/^claude-opus-4(?:-|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
+  [/^claude-(?:sonnet|haiku)-4(?:-|$)/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
   [/^claude-3-7-sonnet/, { contextWindow: 200_000, maxOutputTokens: 64_000, capabilities: ALL }],
   [/^claude-3-5-sonnet/, { contextWindow: 200_000, maxOutputTokens: 8192, capabilities: ALL }],
   [/^claude-3-5-haiku/, { contextWindow: 200_000, maxOutputTokens: 8192, capabilities: { tools: true } }],
@@ -77,15 +77,17 @@ const GEMINI: Rule[] = [
 /**
  * Any other Gemini chat name, for a host whose listing says nothing — the
  * `-latest` aliases (`gemini-pro-latest`, `gemini-flash-latest`,
- * `gemini-flash-lite-latest`), the `gemini-exp-…` previews, a 4-generation
- * model other than Argon: the window and output every chat family since 2.5
- * shares, with tools and images, and no word on PDFs. The retired 1.x and
- * 2.0 generations, whose limits differed, are left out. Google's own root
- * does not use this row: its listing says each model's limits, and asking it
- * beats a family-wide figure.
+ * `gemini-flash-lite-latest`), a 4-generation model other than Argon: the
+ * window and output every chat family since 2.5 shares, with tools and
+ * images, and no word on PDFs. The retired 1.x and 2.0 generations and the
+ * `gemini-exp-…` previews of that era (`gemini-exp-1206` was 2.0 Pro's),
+ * whose limits differed, are left out. Google's own root does not use this
+ * row: its listing says each model's limits, and asking it beats a
+ * family-wide figure.
  */
-const GEMINI_ANY: Rule[] = [...GEMINI, [/^gemini-(?!1\.|1-|2\.0-|2-0-)/, { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } }]];
-const NOT_CHAT = /image|tts|audio|live|embedding|robotics|computer-use/i;
+const GEMINI_ANY: Rule[] = [...GEMINI, [/^gemini-(?!1\.|1-|2\.0-|2-0-|exp-)/, { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } }]];
+/** Not chat models: the image (Nano Banana included), speech, live, audio, video (Omni), embedding, robotics and computer-use variants. */
+const NOT_CHAT = /image|nano-banana|tts|audio|live|omni|embedding|robotics|computer-use/i;
 
 /** The first rule's facts, as a fresh copy: a caller editing what it got does not edit the table. */
 function first(rules: Rule[], id: string): ModelFacts {

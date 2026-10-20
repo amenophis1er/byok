@@ -104,15 +104,16 @@ describe('the tables', () => {
     expect(knownModelInfoByName('claude-opus-55.5')).toEqual({});
   });
 
-  it('answer by name for any other Gemini chat model — the -latest aliases, the exp previews, a 4-generation model — and not for the 1.x and 2.0 lines', () => {
+  it('answer by name for any other Gemini chat model — the -latest aliases, a 4-generation model — and not for the 1.x and 2.0 lines, their exp previews, or a non-chat variant', () => {
     const shared = { contextWindow: 1_048_576, maxOutputTokens: 65_536, capabilities: { tools: true, images: true } };
-    for (const id of ['gemini-flash-latest', 'gemini-pro-latest', 'gemini-flash-lite-latest', 'gemini-exp-1206', 'gemini-4-neon-preview', 'google/gemini-4.2-xenon', 'models/gemini-5-pro']) {
+    for (const id of ['gemini-flash-latest', 'gemini-pro-latest', 'gemini-flash-lite-latest', 'gemini-4-neon-preview', 'google/gemini-4.2-xenon', 'models/gemini-5-pro']) {
       expect(knownModelInfoByName(id), id).toEqual(shared);
     }
     // The tabled families keep their own rows ahead of the family-wide one.
     expect(knownModelInfoByName('gemini-2.5-pro')).toMatchObject({ capabilities: ALL });
     expect(knownModelInfoByName('gemini-2.0-flash-001')).toMatchObject({ maxOutputTokens: 8192 });
-    for (const id of ['gemini-1.5-pro', 'gemini-1.5-flash-8b', 'gemini-1.0-pro', 'gemini-2.0-pro-exp', 'gemini-exp-image-1206', 'gemini-4-neon-tts', 'gemini-embedding-2']) {
+    // gemini-exp-1206 was 2.0 Pro's preview, with that generation's limits: not the family-wide row.
+    for (const id of ['gemini-1.5-pro', 'gemini-1.5-flash-8b', 'gemini-1.0-pro', 'gemini-2.0-pro-exp', 'gemini-exp-1206', 'gemini-exp-image-1206', 'gemini-4-neon-tts', 'gemini-embedding-2', 'gemini-nano-banana-2.1', 'gemini-omni-1.1-flash', 'gemini-3-pro-image-preview']) {
       expect(knownModelInfoByName(id), id).toEqual({});
     }
     // Google's own root does not get the family-wide row: its listing says each model's limits.
