@@ -224,6 +224,9 @@ describe('withRetry', () => {
 
 it('tells a dropped connection from a server answer by the core\'s wording', () => {
   expect(isNetworkFailure(dropped)).toBe(true);
+  // The failure data decides when it is there, whatever the sentence says.
+  expect(isNetworkFailure({ ok: false, error: 'ECONNRESET', failure: { kind: 'network', streamed: false } })).toBe(true);
+  expect(isNetworkFailure({ ok: false, error: 'The connection to the provider dropped (network error).', failure: { kind: 'http', status: 502, streamed: false } })).toBe(false);
   expect(isNetworkFailure({ ok: false, error: 'Network error: the server could not be reached.' })).toBe(true);
   expect(isNetworkFailure({ ok: false, error: 'Could not reach the model server on this computer (http://localhost:11434/v1). Check that it is running.' })).toBe(true);
   expect(isNetworkFailure(server)).toBe(false);

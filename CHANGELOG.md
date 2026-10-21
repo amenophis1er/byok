@@ -3,6 +3,44 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.13
+
+- **A dropped connection is whatever the transport rejected with.** A host
+  `fetch` that rejects with its own error (`{ code: 'ECONNRESET' }`, not a
+  `TypeError`), or a body read that fails (a refused response's included),
+  is `failure.kind: 'network'`,
+  retryable before anything streamed, with the message and code in `cause`.
+  `isNetworkFailure` reads `failure.kind` where the result carries it, the
+  core's wording only on a result without the failure data.
+- **Every refusal over thinking blocks is retried, once more at most.** A
+  manual-mode (budget) turn whose latest assistant message has no thinking
+  block to open with ("…must start with a thinking block") is sent again
+  with thinking off; a stripped retry refused over thinking again gets one
+  last request with no thinking block anywhere (and, in manual mode,
+  thinking off), unless that is what was just sent.
+- **The subscription sentinel in a block of its own.** On an Anthropic
+  subscription, a system prompt that already opens with the Claude Code
+  identity line is split into the sentinel block and the rest, as a prompt
+  without it is: one shape of request either way.
+- **`reasoning: 'off'` reaches OpenAI, the Responses API and Ollama.** The
+  least effort the model takes is sent (`none` from GPT-5.1 on, `minimal`
+  on GPT-5, `low` on the Codex models and the o-series; `low` on the ChatGPT
+  backend, whose accepted levels are not published), nothing for a model
+  not known to reason or for the Pro models, which take only their highest
+  levels; Ollama gets `think: false`, dropped on a refusal like the other
+  optional fields. Before, `off` sent nothing and a thinking model reasoned
+  at full length.
+- **A Gemini prompt block is final.** A stream whose `promptFeedback` names
+  a `blockReason` and brings no candidate fails with "The prompt was blocked
+  (SAFETY…)" and the reason as `providerCode`, never retryable; it was read
+  as a cut stream and retried.
+- **`response.incomplete` says why.** A Responses turn cut by
+  `content_filter` is `stopReason: 'refusal'`; `max_output_tokens`, or no
+  reason, stays `length`.
+- **Google's `RetryInfo` on any status.** A 503 whose body carries
+  `retryDelay` has `retryAfterMs`, as one with a `Retry-After` header does;
+  before, the body was read only on a 429 or a plan window.
+
 ## 0.1.12
 
 - **`withRetry` for a host with its own policy** (#72), all off by default:

@@ -141,9 +141,11 @@ function isBare429(result: AIChatResult): boolean {
   return result.failure?.status === 429 && result.retryAfterMs === undefined && result.quota === undefined;
 }
 
-/** A dropped connection, in the core's own words: nothing reached the server. */
+/** A dropped connection: `failure.kind` says so, or, on a result without the failure data, the core's own words. */
 export function isNetworkFailure(result: AIChatResult): boolean {
-  return !result.ok && /\(network error\)|could not be reached|Could not reach the model server/i.test(result.error ?? '');
+  if (result.ok) return false;
+  if (result.failure) return result.failure.kind === 'network';
+  return /\(network error\)|could not be reached|Could not reach the model server/i.test(result.error ?? '');
 }
 
 /** `setTimeout`, cut short by the signal (the wait ends; the loop then returns `Stopped.`). */

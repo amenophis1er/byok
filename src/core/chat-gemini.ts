@@ -154,6 +154,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   const parts: Part[] = [];
   let announced = 0;
   let finishReason: string | undefined;
+  let blocked: { reason: string; message?: string } | undefined;
   let usage: AIChatResult['usage'];
   let model: string | undefined;
   const queries: string[] = [];
@@ -164,6 +165,11 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     try { chunk = JSON.parse(data) as Record<string, any>; } catch { return streamFailure('Malformed stream chunk.'); }
     if (chunk['error']) return streamFailure(String(chunk['error']['message'] ?? 'the stream reported an error'), chunk['error']['status']);
     if (typeof chunk['modelVersion'] === 'string' && chunk['modelVersion']) model = chunk['modelVersion'];
+    // A blocked prompt: no candidate ever comes, only the feedback that says why.
+    const feedback = chunk['promptFeedback'];
+    if (typeof feedback?.['blockReason'] === 'string' && feedback['blockReason']) {
+      blocked = { reason: feedback['blockReason'], ...(typeof feedback['blockReasonMessage'] === 'string' && feedback['blockReasonMessage'] ? { message: feedback['blockReasonMessage'] } : {}) };
+    }
     const meta = chunk['usageMetadata'];
     if (meta && typeof meta['promptTokenCount'] === 'number') {
       usage = {
@@ -207,6 +213,8 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     }
     if (candidate['finishReason']) finishReason = String(candidate['finishReason']);
   }
+  // The prompt was blocked before any answer: final, not a cut stream to send again.
+  if (!finishReason && blocked) return { ...streamFailure(`The prompt was blocked (${blocked.reason}${blocked.message ? `: ${blocked.message}` : ''}).`, blocked.reason), retryable: false };
   if (!finishReason) return streamFailure('The response stream ended before it finished.');
   if (finishReason === 'MALFORMED_FUNCTION_CALL') return streamFailure('The model made a malformed function call.', finishReason);
 

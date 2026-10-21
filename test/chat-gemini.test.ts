@@ -97,6 +97,15 @@ describe('stream', () => {
     expect(await parse([chunk([{ text: 'No.' }], 'SAFETY')])).toEqual({ ok: true, text: 'No.', stopReason: 'refusal' });
   });
 
+  it('reports a blocked prompt as the final failure it is, naming the reason, not as a cut stream', async () => {
+    expect(await parse([{ promptFeedback: { blockReason: 'SAFETY', blockReasonMessage: 'Unsafe content.' }, usageMetadata: { promptTokenCount: 3 } }]))
+      .toMatchObject({ ok: false, error: 'The prompt was blocked (SAFETY: Unsafe content.).', failure: { kind: 'stream', providerCode: 'SAFETY' } });
+    expect(await parse([{ promptFeedback: { blockReason: 'PROHIBITED_CONTENT' } }])).toMatchObject({ ok: false, error: 'The prompt was blocked (PROHIBITED_CONTENT).' });
+    // Feedback without a reason, or beside a finished candidate, changes nothing.
+    expect(await parse([{ promptFeedback: { safetyRatings: [] } }])).toMatchObject({ ok: false, error: 'The response stream ended before it finished.' });
+    expect(await parse([{ promptFeedback: { blockReason: '' } }, chunk([{ text: 'Hi' }], 'STOP')])).toMatchObject({ ok: true, text: 'Hi' });
+  });
+
   it('fails on an error chunk, a malformed call, or a stream that ends before finishing', async () => {
     expect(await parse([{ error: { code: 429, message: 'Quota exceeded.' } }])).toMatchObject({ ok: false, error: 'Quota exceeded.' });
     expect(await parse([chunk([], 'MALFORMED_FUNCTION_CALL')])).toMatchObject({ ok: false, error: 'The model made a malformed function call.' });

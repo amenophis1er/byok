@@ -135,7 +135,7 @@ export function modelName(id: string): {
 };
 
 // @public
-export function networkCause(error: Error): string;
+export function networkCause(error: unknown): string;
 
 // @public (undocumented)
 export const OLLAMA_BASE = "https://ollama.com";
