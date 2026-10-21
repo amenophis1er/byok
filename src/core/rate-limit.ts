@@ -68,8 +68,9 @@ export function rateLimitOf(status: number, headers: HeaderSource | undefined, b
   const plan = status >= 400 && status < 500 ? planWindow(get, json, status) : undefined;
   const named = status === 429 && !plan ? namedQuota(json, body) : undefined;
   const quota = plan ?? named?.window;
-  // A plan that does not include the model at all has no wait to come back after.
-  const wait = plan === 'excluded' ? undefined : retryAfterHeader(get, now)
+  // A plan that does not include the model at all has no wait to come back after. A `RetryInfo` is read on any status, as the
+  // header is (Google sends one on a 503 too); the rest of the body only where a limit was named.
+  const wait = plan === 'excluded' ? undefined : retryAfterHeader(get, now) ?? retryInfo(json)
     ?? (status === 429 || plan ? bodyWait(json, body, now) ?? codexReset(get, now) ?? resetWindows(get, now) : undefined);
   if (wait !== undefined) {
     out.retryAfterMs = wait;
@@ -119,18 +120,23 @@ function retryAfterHeader(get: (name: string) => string | null, now: number): nu
   return Number.isNaN(date) ? undefined : Math.max(0, date - now);
 }
 
-/**
- * The wait in the body: Gemini's `RetryInfo.retryDelay` ("20s"), ChatGPT's
- * `resets_in_seconds` or, sent alone, its `resets_at` (epoch seconds), or
- * the words "try again in 1h2m3s" / "retry in 20.5s".
- */
-function bodyWait(json: Record<string, unknown> | undefined, body: string, now: number): number | undefined {
+/** Google's `RetryInfo.retryDelay` ("20s") among the error's details, on any status. */
+function retryInfo(json: Record<string, unknown> | undefined): number | undefined {
   for (const detail of details(json)) {
     if (typeof detail['@type'] === 'string' && /RetryInfo$/.test(detail['@type'])) {
       const ms = duration(detail['retryDelay']);
       if (ms !== undefined) return ms;
     }
   }
+  return undefined;
+}
+
+/**
+ * The wait in the body of a named limit: ChatGPT's `resets_in_seconds` or,
+ * sent alone, its `resets_at` (epoch seconds), or the words "try again in
+ * 1h2m3s" / "retry in 20.5s".
+ */
+function bodyWait(json: Record<string, unknown> | undefined, body: string, now: number): number | undefined {
   const error = (json?.['error'] ?? json) as Record<string, unknown> | undefined;
   const seconds = error?.['resets_in_seconds'] ?? json?.['resets_in_seconds'];
   if (typeof seconds === 'number' && seconds >= 0) return Math.ceil(seconds * 1000);

@@ -31,6 +31,11 @@ class SinkError extends Error {
   constructor(public readonly cause: unknown) { super(cause instanceof Error ? cause.message : String(cause)); }
 }
 
+/** The transport threw: `fetch()` rejected, or a body read did. Whatever it threw (a `TypeError`, a host's own error) rides along as the cause. */
+class TransportError extends Error {
+  constructor(public readonly cause: unknown) { super(cause instanceof Error ? cause.message : String(cause)); }
+}
+
 /** The caller's sink, with its exceptions told apart from the provider's, and `seen()` called once output has streamed. */
 function guarded(onEvent: ChatEventSink | undefined, seen: () => void): ChatEventSink {
   return (event) => {
@@ -131,8 +136,11 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     if (options.signal?.aborted) return failed('Stopped.', { kind: 'stopped', ...cause(options.signal.reason) });
     if (controller.signal.aborted) return failed(TIMED_OUT, { kind: 'timeout' });
     if (error instanceof SinkError) return failed(error.message, { kind: 'sink', cause: error.message });
-    // A dropped connection: nothing was acted on, so the caller may send the same request again — unless output had streamed.
-    if (error instanceof TypeError) return failed(networkError(conn), { kind: 'network', cause: networkCause(error) }, { retryable: true });
+    // A dropped connection (the transport rejected, whatever it threw): nothing was acted on, so the caller may send the same
+    // request again — unless output had streamed.
+    if (error instanceof TransportError || error instanceof TypeError) {
+      return failed(networkError(conn), { kind: 'network', cause: networkCause(error instanceof TransportError ? error.cause : error) }, { retryable: true });
+    }
     // The server refused: a 5xx (or an overloaded one) is worth another try, and so is a rate limit that lifts within the minute. It says when.
     if (error instanceof HttpError) {
       const retryable = error.status >= 500 || shortRateLimit(error) || /overloaded|backend failed/i.test(error.message);
@@ -263,16 +271,34 @@ function redactImages(body: unknown): unknown {
 async function post(t: Turn, url: URL, headers: Record<string, string>, body: unknown): Promise<Response> {
   t.debug?.('chat request', { connection: t.conn.label, url: url.origin + url.pathname, body: redactImages(body) });
   t.idle.touch();
-  return t.fetch(url, {
-    method: 'POST', signal: t.signal,
-    headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
-    body: JSON.stringify(body),
-  });
+  try {
+    return await t.fetch(url, {
+      method: 'POST', signal: t.signal,
+      headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new TransportError(error);
+  }
 }
 
 function bodyOf(t: Turn, res: Response): ReadableStream<Uint8Array> {
   if (!res.body) throw new Error('The provider sent no response body.');
-  return t.idle.watch(res.body);
+  return transportGuarded(t.idle.watch(res.body));
+}
+
+/** The body with its read failures marked as the transport's: a connection that drops mid-stream is a network failure, not a request one. */
+function transportGuarded(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    pull: async (controller) => {
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try { next = await reader.read(); } catch (error) { throw new TransportError(error); }
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    cancel: (reason) => reader.cancel(reason),
+  });
 }
 
 /** One model turn in `protocol`, against the connection's server with its credentials. */
@@ -313,29 +339,49 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
   const headers = native
     ? anthropicHeaders(token, subscription)
     : { ...(await authorizerFor(conn, credential)('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
+  // In manual (extended) thinking mode the latest assistant turn must open with a thinking block; a retry that strips it, or a
+  // turn that never had one, runs with thinking off for that one request. Adaptive mode has no such rule.
+  const manual = claudeThinking(t.model) === 'enabled' && req.reasoning !== undefined && req.reasoning !== 'off';
+  const send = (r: ChatRequest) => post(t, url, headers, anthropicBody(manual ? { ...r, reasoning: undefined } : r, t.model, system));
   let res = await post(t, url, headers, anthropicBody(req, t.model, system));
   if (!res.ok) {
     const text = await res.text();
     // The API refused the thinking blocks it had itself signed (an edited prefix, a block bound to another conversation): once more
-    // without them, from the turn it named onward — the turns before keep theirs, as the docs ask.
-    const from = res.status === 400 ? refusedThinkingFrom(text, req.messages) : undefined;
-    if (from !== undefined) {
-      let n = -1;
-      const stripped = { ...req, messages: req.messages.map((m) => {
-        if (m.role !== 'assistant') return m;
-        n += 1;
-        return n >= from && m.providerState !== undefined ? { ...m, providerState: withoutThinking(m.providerState) } : m;
-      }) };
-      // In manual (extended) thinking mode the latest assistant turn must open with a thinking block; stripped of it, the retry
-      // runs with thinking off for this one request. Adaptive mode has no such rule.
-      const manual = claudeThinking(t.model) === 'enabled' && req.reasoning !== undefined && req.reasoning !== 'off';
-      res = await post(t, url, headers, anthropicBody(manual ? { ...stripped, reasoning: undefined } : stripped, t.model, system));
+    // without them, from the turn it named onward — the turns before keep theirs, as the docs ask. A manual-mode turn whose latest
+    // assistant message has no thinking block to open with is refused too: once more with thinking off.
+    const from = res.status === 400 ? refusedThinkingFrom(text, req.messages) ?? (manual && MUST_OPEN.test(text) ? req.messages.filter((m) => m.role === 'assistant').length - 1 : undefined) : undefined;
+    if (from === undefined) throw httpError(res, text);
+    res = await send(withoutThinkingFrom(req, from));
+    if (!res.ok) {
+      // Refused again over thinking: one last request with no thinking block anywhere (and, in manual mode, thinking off) — unless
+      // that is what was just sent.
+      const again = await res.text();
+      if (from <= 0 || !(res.status === 400 && isThinkingRefusal(again))) throw httpError(res, again);
+      res = await send(withoutThinkingFrom(req, 0));
       if (!res.ok) throw httpError(res, await res.text());
-    } else {
-      throw httpError(res, text);
     }
   }
   return anthropicResult(readSse(bodyOf(t, res)), t.onEvent);
+}
+
+/** The request with the thinking blocks dropped from the assistant turn `from` (0-based, counting assistant turns) onward. */
+function withoutThinkingFrom(req: ChatRequest, from: number): ChatRequest {
+  let n = -1;
+  return { ...req, messages: req.messages.map((m) => {
+    if (m.role !== 'assistant') return m;
+    n += 1;
+    return n >= from && m.providerState !== undefined ? { ...m, providerState: withoutThinking(m.providerState) } : m;
+  }) };
+}
+
+const INVALID_SIGNATURE = /messages\.(\d+)\.content\.\d+:[^\n]{0,40}Invalid `signature` in `thinking` block/i;
+const CANNOT_MODIFY = /(?:`thinking`|redacted_thinking)[^\n]{0,80}cannot be modified/i;
+/** The manual-mode rule, refused: "…a final `assistant` message must start with a thinking block…", or a block that "must remain". */
+const MUST_OPEN = /must (?:start|begin) with a `?(?:thinking|redacted_thinking)`? block|thinking[^\n]{0,80}must remain/i;
+
+/** Any of the API's refusals over thinking blocks. */
+function isThinkingRefusal(text: string): boolean {
+  return INVALID_SIGNATURE.test(text) || CANNOT_MODIFY.test(text) || /Invalid `signature` in `thinking` block/i.test(text) || MUST_OPEN.test(text);
 }
 
 /** Responses API: the Codex backend for a ChatGPT sign-in, else `${baseUrl}/responses`. */
@@ -353,7 +399,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
         originator: conn.originator || CODEX_ORIGINATOR, 'openai-beta': 'responses=experimental',
       }
     : await authorizerFor(conn, credential)('POST', url);
-  const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex, cacheKey: !codex && isOpenAi(conn.baseUrl) }));
+  const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex, cacheKey: !codex && isOpenAi(conn.baseUrl), codex }));
   if (!res.ok) {
     const text = await res.text();
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
@@ -374,8 +420,8 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
 function refusedThinkingFrom(text: string, messages: ChatRequest['messages']): number | undefined {
   const thinking = (m: ChatRequest['messages'][number]) => m.role === 'assistant' && (anthropicState(m.providerState) ?? []).some((b) => b['type'] === 'thinking' || b['type'] === 'redacted_thinking');
   if (!messages.some(thinking)) return undefined;
-  const invalid = /messages\.(\d+)\.content\.\d+:[^\n]{0,40}Invalid `signature` in `thinking` block/i.exec(text);
-  const modified = /(?:`thinking`|redacted_thinking)[^\n]{0,80}cannot be modified/i.test(text);
+  const invalid = INVALID_SIGNATURE.exec(text);
+  const modified = CANNOT_MODIFY.test(text);
   if (!invalid && !modified) return undefined;
   const assistants = messages.filter((m) => m.role === 'assistant').length;
   if (!invalid) return assistants - 1;
@@ -411,13 +457,20 @@ async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
 
 /* ── failures ────────────────────────────────────────────────────── */
 
-/** What the transport said, with its code when it has one: "fetch failed (ECONNRESET)". */
-export function networkCause(error: Error): string {
-  const inner = (error as { cause?: unknown }).cause;
-  const code = inner && typeof inner === 'object' ? (inner as { code?: unknown }).code : undefined;
-  const detail = inner instanceof Error && inner.message && inner.message !== error.message ? inner.message : '';
-  const tail = [typeof code === 'string' && code ? code : '', detail].filter(Boolean).join(': ');
-  return tail ? `${error.message} (${tail})` : error.message;
+/**
+ * What the transport said, with its code when it has one: "fetch failed
+ * (ECONNRESET)". The error need not be an `Error`: a host's `fetch` may
+ * reject with its own object, whose `code` and `message` are read the same.
+ */
+export function networkCause(error: unknown): string {
+  const own = error && typeof error === 'object' ? (error as { message?: unknown; code?: unknown; cause?: unknown }) : undefined;
+  const message = typeof own?.message === 'string' ? own.message : typeof error === 'string' ? error : '';
+  const inner = own?.cause && typeof own.cause === 'object' ? (own.cause as { message?: unknown; code?: unknown }) : undefined;
+  const code = [own?.code, inner?.code].find((c): c is string => typeof c === 'string' && c !== '');
+  const detail = typeof inner?.message === 'string' && inner.message && inner.message !== message ? inner.message : '';
+  const tail = [code ?? '', detail].filter(Boolean).join(': ');
+  if (!message) return tail || 'The request failed.';
+  return tail ? `${message} (${tail})` : message;
 }
 
 /** `{ cause }` for an abort reason that says something, else nothing. */

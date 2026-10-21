@@ -169,9 +169,14 @@ async function authError(what: string, res: Response): Promise<AuthError> {
   return authFailure('Claude', what, res.status, body);
 }
 
-/** Ensure the request body's system prompt leads with the Claude Code sentinel. */
+/**
+ * The system prompt as the blocks a subscription request sends: the Claude
+ * Code sentinel in a block of its own, then the caller's prompt. A prompt that
+ * already opens with the sentinel is split the same way, so the sentinel
+ * block is always the first and always whole.
+ */
 export function withClaudeCodeSystem(system: string): { system: { type: 'text'; text: string }[] } {
-  const blocks: { type: 'text'; text: string }[] = system ? [{ type: 'text', text: system }] : [];
-  if (blocks[0]?.text.startsWith(CLAUDE_CODE_SENTINEL)) return { system: blocks };
-  return { system: [{ type: 'text', text: CLAUDE_CODE_SENTINEL }, ...blocks] };
+  const sentinel = { type: 'text' as const, text: CLAUDE_CODE_SENTINEL };
+  const rest = system.startsWith(CLAUDE_CODE_SENTINEL) ? system.slice(CLAUDE_CODE_SENTINEL.length).replace(/^\s*\n/, '') : system;
+  return { system: rest ? [sentinel, { type: 'text', text: rest }] : [sentinel] };
 }

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { anthropicBody, anthropicResult, claudeThinking, thinkingFields } from '../src/core/chat-anthropic.js';
 import { codexBody, codexInput, codexResult } from '../src/core/chat-codex.js';
 import { geminiBody, geminiResult, geminiThinking } from '../src/core/chat-gemini.js';
-import { ThinkSplitter, openaiBody, openaiResult, rejectedField } from '../src/core/chat-openai.js';
+import { ThinkSplitter, lowestEffort, openaiBody, openaiResult, rejectedField } from '../src/core/chat-openai.js';
 import { chat, type Connection, type Fetch } from '../src/core/index.js';
 import { readSse } from '../src/core/sse.js';
 import type { AIChatRequest, AIMessage } from '../src/types.js';
@@ -47,17 +47,50 @@ describe('the request, per provider', () => {
     expect(anthropicBody({ ...req, reasoning: 'medium' }, 'claude-sonnet-5-5', [])).toMatchObject({ output_config: { effort: 'medium' } });
   });
 
-  it('Chat Completions: reasoning_effort to OpenAI, not elsewhere, and left out when refused; off sends nothing', () => {
+  it('Chat Completions: reasoning_effort to OpenAI, not elsewhere, and left out when refused', () => {
     expect(openaiBody({ ...req, reasoning: 'high' }, 'gpt-5', OPENAI)).toMatchObject({ reasoning_effort: 'high' });
-    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5', OPENAI)).not.toHaveProperty('reasoning_effort');
     expect(openaiBody({ ...req, reasoning: 'high' }, 'r1', 'https://api.groq.com/openai/v1')).not.toHaveProperty('reasoning_effort');
     expect(openaiBody({ ...req, reasoning: 'high' }, 'gpt-5', OPENAI, new Set(['reasoning_effort']))).not.toHaveProperty('reasoning_effort');
     expect(rejectedField(400, '{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}')).toBe('reasoning_effort');
   });
 
-  it('Responses: the effort with a summary; the encrypted reasoning always asked for, since nothing is stored; off sends no effort', () => {
+  it('Chat Completions: off sends the least effort the model takes to OpenAI, and think: false to Ollama', () => {
+    expect(lowestEffort('gpt-5.1')).toBe('none');
+    expect(lowestEffort('gpt-5.5-2026-04-01')).toBe('none');
+    expect(lowestEffort('gpt-6')).toBe('none');
+    expect(lowestEffort('gpt-5')).toBe('minimal');
+    expect(lowestEffort('gpt-5-mini')).toBe('minimal');
+    expect(lowestEffort('gpt-5-codex')).toBe('low');
+    expect(lowestEffort('gpt-5.1-codex-max')).toBe('low');
+    expect(lowestEffort('o4-mini')).toBe('low');
+    expect(lowestEffort('gpt-4.1')).toBeUndefined();
+    expect(lowestEffort('gpt-4o')).toBeUndefined();
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5', OPENAI)).toMatchObject({ reasoning_effort: 'minimal' });
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5.2', OPENAI)).toMatchObject({ reasoning_effort: 'none' });
+    // A model not known to reason gets nothing: the field would be refused on every turn.
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-4.1', OPENAI)).not.toHaveProperty('reasoning_effort');
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5', OPENAI, new Set(['reasoning_effort']))).not.toHaveProperty('reasoning_effort');
+    // Ollama's own switch, local or ollama.com; left out when refused, and never sent elsewhere or for a level.
+    for (const base of ['http://localhost:11434/v1', 'http://192.168.1.4:11434/v1', 'https://ollama.com/v1']) {
+      expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', base), base).toMatchObject({ think: false });
+      expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', base), base).not.toHaveProperty('reasoning_effort');
+    }
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', 'http://localhost:11434/v1', new Set(['think']))).not.toHaveProperty('think');
+    expect(openaiBody({ ...req, reasoning: 'low' }, 'qwen3', 'http://localhost:11434/v1')).not.toHaveProperty('think');
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', 'https://api.groq.com/openai/v1')).not.toHaveProperty('think');
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5', OPENAI)).not.toHaveProperty('think');
+    expect(rejectedField(400, '{"error":{"message":"Unrecognized request argument supplied: think"}}')).toBe('think');
+    expect(rejectedField(400, '{"error":{"message":"I think the model is wrong"}}')).toBe('think'); // harmless: the retry drops it only when the request carried it
+  });
+
+  it('Responses: the effort with a summary; the encrypted reasoning always asked for, since nothing is stored; off sends the least effort', () => {
     expect(codexBody({ ...req, reasoning: 'medium' }, 'gpt-5.5')).toMatchObject({ reasoning: { effort: 'medium', summary: 'auto' }, include: ['reasoning.encrypted_content'] });
-    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.5')).not.toHaveProperty('reasoning');
+    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.5')).toMatchObject({ reasoning: { effort: 'none' } });
+    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5')).toMatchObject({ reasoning: { effort: 'minimal' } });
+    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-4.1')).not.toHaveProperty('reasoning');
+    // The Codex backend's accepted levels are not published: low, which every model there takes.
+    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.5', { codex: true })).toMatchObject({ reasoning: { effort: 'low' } });
+    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.5', { codex: true })['reasoning']).not.toHaveProperty('summary');
     expect(codexBody(req, 'gpt-5.5')).toMatchObject({ include: ['reasoning.encrypted_content'] });
     expect(codexBody(req, 'gpt-5.5')).not.toHaveProperty('reasoning');
   });
@@ -268,6 +301,74 @@ describe('when Anthropic refuses the thinking blocks it signed', () => {
     const f2 = vi.fn<Fetch>(async (_url, init) => { adaptive.push(JSON.parse(init!.body as string)); return adaptive.length === 1 ? refuse() : ok(); });
     expect(await chat(conn, 'sk', { ...req, messages: history, reasoning: 'medium' }, { fetch: f2 })).toMatchObject({ ok: true });
     expect(adaptive[1]).toMatchObject({ thinking: { type: 'adaptive' } });
+  });
+
+  it('sends a manual-mode turn whose latest assistant message has no thinking block to open with again, with thinking off', async () => {
+    const manual: Connection = { kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-4-5' };
+    // The latest turn was written with thinking off (or by another model): no block to open with when thinking is turned on.
+    const plain: AIMessage[] = [
+      { role: 'user', content: 'go' },
+      { role: 'assistant', content: 'Done.', providerState: { protocol: 'anthropic', blocks: [{ type: 'text', text: 'Done.' }] } },
+      { role: 'user', content: 'again' },
+    ];
+    const refuse = () => new Response(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'messages.1: When `thinking` is enabled, a final `assistant` message must start with a thinking block (preceeding the lastmost set of `tool_use` and `tool_result` blocks). We recommend you include thinking blocks from previous turns.' } }), { status: 400 });
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn<Fetch>(async (_url, init) => { bodies.push(JSON.parse(init!.body as string)); return bodies.length === 1 ? refuse() : ok(); });
+    expect(await chat(manual, 'sk', { ...req, messages: plain, reasoning: 'medium' }, { fetch })).toMatchObject({ ok: true, text: 'Again.' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(bodies[0]).toHaveProperty('thinking');
+    expect(bodies[1]).not.toHaveProperty('thinking');
+    // Not a retry for an adaptive model, or with thinking off already: the rule is manual mode's.
+    const adaptive = vi.fn<Fetch>(async () => refuse());
+    expect(await chat(conn, 'sk', { ...req, messages: plain, reasoning: 'medium' }, { fetch: adaptive })).toMatchObject({ ok: false, failure: { kind: 'http', status: 400 } });
+    expect(adaptive).toHaveBeenCalledTimes(1);
+    const off = vi.fn<Fetch>(async () => refuse());
+    expect(await chat(manual, 'sk', { ...req, messages: plain }, { fetch: off })).toMatchObject({ ok: false });
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to a turn with no thinking block anywhere when the stripped retry is refused over thinking again', async () => {
+    const thinking = (sig: string) => ({ protocol: 'anthropic', blocks: [{ type: 'thinking', thinking: '…', signature: sig }, { type: 'text', text: 'ok' }] });
+    const two: AIMessage[] = [
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'ok', providerState: thinking('one') },
+      { role: 'user', content: 'b' },
+      { role: 'assistant', content: 'ok', providerState: thinking('two') },
+      { role: 'user', content: 'c' },
+    ];
+    const refuse = (message: string) => new Response(JSON.stringify({ error: { type: 'invalid_request_error', message } }), { status: 400 });
+    const types = (body: Record<string, unknown>, i: number) => (body['messages'] as Array<{ content: Array<{ type: string }> }>)[i]!.content.map((b) => b.type);
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn<Fetch>(async (_url, init) => {
+      bodies.push(JSON.parse(init!.body as string));
+      if (bodies.length === 1) return refuse('messages.3.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.');
+      if (bodies.length === 2) return refuse('`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified.');
+      return ok();
+    });
+    expect(await chat(conn, 'sk', { ...req, messages: two, reasoning: 'medium' }, { fetch })).toMatchObject({ ok: true, text: 'Again.' });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    // The first retry strips from the turn named; the last strips every turn.
+    expect(types(bodies[1]!, 1)).toEqual(['thinking', 'text']);
+    expect(types(bodies[1]!, 3)).toEqual(['text']);
+    expect(types(bodies[2]!, 1)).toEqual(['text']);
+    expect(types(bodies[2]!, 3)).toEqual(['text']);
+    expect(bodies[2]).toMatchObject({ thinking: { type: 'adaptive' } });
+    // On a manual-mode model the last request runs with thinking off as well.
+    const manual: Connection = { kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-4-5' };
+    const sent: Array<Record<string, unknown>> = [];
+    const f2 = vi.fn<Fetch>(async (_url, init) => { sent.push(JSON.parse(init!.body as string)); return sent.length < 3 ? refuse('messages.3.content.0: Invalid `signature` in `thinking` block.') : ok(); });
+    expect(await chat(manual, 'sk', { ...req, messages: two, reasoning: 'medium' }, { fetch: f2 })).toMatchObject({ ok: true });
+    expect(sent[0]).toHaveProperty('thinking');
+    expect(sent[2]).not.toHaveProperty('thinking');
+    expect(types(sent[2]!, 1)).toEqual(['text']);
+    // A second refusal about something else is the failure it is; so is a third refusal.
+    const other = vi.fn<Fetch>(async () => other.mock.calls.length === 1
+      ? refuse('messages.3.content.0: Invalid `signature` in `thinking` block.') : refuse('max_tokens: must be positive'));
+    expect(await chat(conn, 'sk', { ...req, messages: two }, { fetch: other })).toMatchObject({ ok: false, error: expect.stringContaining('max_tokens') });
+    expect(other).toHaveBeenCalledTimes(2);
+    const always = vi.fn<Fetch>(async () => refuse('messages.3.content.0: Invalid `signature` in `thinking` block.'));
+    expect(await chat(conn, 'sk', { ...req, messages: two }, { fetch: always })).toMatchObject({ ok: false, failure: { kind: 'http', status: 400 } });
+    expect(always).toHaveBeenCalledTimes(3);
   });
 
   it('does not retry another 400, or one with no thinking to drop', async () => {

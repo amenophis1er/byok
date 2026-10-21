@@ -192,9 +192,12 @@ What it guarantees:
   support, and read `streamed` to know whether the user already saw part of
   the answer. `retryable: true` means nothing was acted on: the connection
   dropped, the server failed (5xx), or a rate limit lifts within the minute,
-  and nothing had streamed. A rate-limited result also carries what
+  and nothing had streamed. A dropped connection (`network`) is whatever
+  the transport rejected with — a `TypeError`, a host `fetch`'s own error,
+  a body read that failed — with its message and code in `cause`. A
+  rate-limited result also carries what
   the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
-  headers, Anthropic's reset instants, Gemini's `RetryInfo`, ChatGPT's
+  headers, Anthropic's reset instants, Gemini's `RetryInfo` on any status, ChatGPT's
   `resets_in_seconds` or `resets_at` and `x-codex-*-reset-at`) with `resetAt`
   (epoch ms; on a day window only where the provider documents the day's
   end — Gemini's quotas reset at midnight Pacific — else unset),
@@ -334,8 +337,12 @@ result.usage?.reasoningTokens;
 and before; OpenAI's `reasoning_effort` and the Responses API's `reasoning`
 with its encrypted content replayed through `providerState`; Gemini's
 `thinkingLevel` or `thinkingBudget`); absent, nothing is sent and the model
-does what it does by default. A model that writes its thinking inline in
-`<think>` tags has it reported as reasoning, not text.
+does what it does by default. `'off'` sends each family's least: OpenAI's
+`none` (GPT-5.1 on), `minimal` (GPT-5) or `low` (Codex models, o-series;
+and everything on the ChatGPT backend, whose accepted levels are not
+published), nothing for a model not known to reason; Ollama's `think:
+false`. A model that writes its thinking inline in `<think>` tags has it
+reported as reasoning, not text.
 
 Token counts mean the same thing on every provider: `usage.inputTokens` is
 the whole prompt, cached tokens included, with `cacheReadTokens` and

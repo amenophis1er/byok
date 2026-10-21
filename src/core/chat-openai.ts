@@ -100,7 +100,27 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
 }
 
 /** Optional request fields a server has rejected, to leave out of the retry. */
-export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_cache_key' | 'reasoning_effort';
+export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_cache_key' | 'reasoning_effort' | 'think';
+
+/**
+ * The least reasoning an OpenAI model takes, for `reasoning: 'off'`: `none`
+ * from GPT-5.1 on, `minimal` on GPT-5, `low` on the Codex models and the
+ * o-series (which take nothing less). Nothing for a model not known to
+ * reason, which would refuse the field.
+ */
+export function lowestEffort(model: string): 'none' | 'minimal' | 'low' | undefined {
+  const id = model.toLowerCase();
+  if (/codex/.test(id)) return /^(?:o\d|gpt-5)/.test(id) ? 'low' : undefined;
+  if (/^gpt-5\.\d/.test(id) || /^gpt-(?:[6-9]|\d{2})(?:[-.]|$)/.test(id)) return 'none';
+  if (/^gpt-5(?:-|$)/.test(id)) return 'minimal';
+  if (/^o\d(?:-|$)/.test(id)) return 'low';
+  return undefined;
+}
+
+/** Ollama, local (port 11434) or ollama.com: the one Chat Completions server that takes `think`. */
+function isOllama(base: string): boolean {
+  try { const url = new URL(base); return url.hostname === 'ollama.com' || url.port === '11434'; } catch { return false; }
+}
 
 /** The request body, without the `omit`ted fields. */
 export function openaiBody(req: AIChatRequest, model: string, base: string, omit: ReadonlySet<OptionalField> = new Set()): Record<string, unknown> {
@@ -118,8 +138,17 @@ export function openaiBody(req: AIChatRequest, model: string, base: string, omit
     ...(!omit.has('stream_options') ? { stream_options: { include_usage: true } } : {}),
     // OpenAI's own fields; another server that refuses one gets the request again without it.
     ...(req.cacheKey && openai && !omit.has('prompt_cache_key') ? { prompt_cache_key: req.cacheKey } : {}),
-    ...(req.reasoning && req.reasoning !== 'off' && openai && !omit.has('reasoning_effort') ? { reasoning_effort: req.reasoning } : {}),
+    ...(effort(req.reasoning, model, openai, omit)),
+    // Ollama's own switch: `reasoning: 'off'` turns a thinking model's thinking off there; its levels have no Ollama equivalent.
+    ...(req.reasoning === 'off' && isOllama(base) && !omit.has('think') ? { think: false } : {}),
   };
+}
+
+/** OpenAI's `reasoning_effort`: the level asked for, or for `off` the least the model takes. */
+function effort(reasoning: AIChatRequest['reasoning'], model: string, openai: boolean, omit: ReadonlySet<OptionalField>): Record<string, unknown> {
+  if (!reasoning || !openai || omit.has('reasoning_effort')) return {};
+  const value = reasoning === 'off' ? lowestEffort(model) : reasoning;
+  return value ? { reasoning_effort: value } : {};
 }
 
 function safeHost(base: string): string {
@@ -133,6 +162,7 @@ export function rejectedField(status: number, body: string): OptionalField | und
   if (/stream_options|include_usage/i.test(body)) return 'stream_options';
   if (/prompt_cache_key/i.test(body)) return 'prompt_cache_key';
   if (/reasoning_effort/i.test(body)) return 'reasoning_effort';
+  if (/\bthink\b/i.test(body)) return 'think';
   return undefined;
 }
 

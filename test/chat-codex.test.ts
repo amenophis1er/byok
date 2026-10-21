@@ -76,6 +76,15 @@ describe('ChatGPT stream', () => {
       { type: 'response.incomplete', response: { status: 'incomplete' } },
     ));
     expect(result).toEqual({ ok: true, stopReason: 'length' });
+    // The reason given says which: the limit, or a filter (a refusal). Unknown or absent, the limit.
+    const reason = (details: Record<string, unknown> | undefined) => codexResult(events(
+      { type: 'response.output_text.delta', item_id: 'm', delta: 'Part' },
+      { type: 'response.incomplete', response: { status: 'incomplete', ...(details ? { incomplete_details: details } : {}) } },
+    ));
+    expect(await reason({ reason: 'max_output_tokens' })).toEqual({ ok: true, text: 'Part', stopReason: 'length' });
+    expect(await reason({ reason: 'content_filter' })).toEqual({ ok: true, text: 'Part', stopReason: 'refusal' });
+    expect(await reason({ reason: 'something_new' })).toEqual({ ok: true, text: 'Part', stopReason: 'length' });
+    expect(await reason(undefined)).toEqual({ ok: true, text: 'Part', stopReason: 'length' });
   });
 
   it('fails on an error event, a failed response, or a stream that ends before completing', async () => {

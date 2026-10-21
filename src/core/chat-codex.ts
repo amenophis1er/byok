@@ -22,6 +22,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIServerToo
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { streamFailure } from './failure.js';
+import { lowestEffort } from './chat-openai.js';
 import { responsesState, tagged } from './provider-state.js';
 import { approximateLocation, functionTools, webSearchTool } from './tools.js';
 
@@ -74,8 +75,15 @@ export function codexInput(messages: AIMessage[]): Item[] {
   return items;
 }
 
-/** The request body. The Codex backend refuses `max_output_tokens`; a standard Responses endpoint takes it. `cacheKey` sends OpenAI's `prompt_cache_key`: for OpenAI itself, not another server. */
-export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens = false, cacheKey = false } = {}): Record<string, unknown> {
+/**
+ * The request body. The Codex backend refuses `max_output_tokens`; a standard
+ * Responses endpoint takes it. `cacheKey` sends OpenAI's `prompt_cache_key`:
+ * for OpenAI itself, not another server. `reasoning: 'off'` sends the least
+ * effort the model takes (`lowestEffort`); on the Codex backend, whose
+ * accepted levels are not published, `low`, which every model there takes.
+ */
+export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens = false, cacheKey = false, codex = false } = {}): Record<string, unknown> {
+  const off = req.reasoning === 'off' ? (codex ? 'low' : lowestEffort(model)) : undefined;
   return {
     model, store: false, stream: true,
     instructions: req.system || 'You are a helpful assistant.',
@@ -84,7 +92,7 @@ export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens =
     ...(cacheKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
     // Nothing is stored server-side, so the reasoning's encrypted content is always asked for, to replay; a level asks for the effort and a summary too.
     include: ['reasoning.encrypted_content'],
-    ...(req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' } } : {}),
+    ...(req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' } } : off ? { reasoning: { effort: off } } : {}),
     ...(req.tools?.length ? {
       tools: [
         ...functionTools(req).map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
@@ -147,6 +155,8 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   };
   let completed = false;
   let incomplete = false;
+  /** Why the response is incomplete: `max_output_tokens`, or `content_filter`. */
+  let incompleteReason = '';
   let usage: AIChatResult['usage'];
   let model: string | undefined;
   const items: Array<Record<string, unknown>> = [];
@@ -251,6 +261,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
           if (searchCalls > 0) usage.webSearchRequests = searchCalls;
         }
         incomplete = event['type'] === 'response.incomplete' || response.status === 'incomplete';
+        if (typeof response.incomplete_details?.reason === 'string') incompleteReason = response.incomplete_details.reason;
         completed = true;
         break;
       }
@@ -279,8 +290,8 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   if (thought) thoughts.push(thought);
   const reasoning = thoughts.join('\n\n').trim();
   const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
-  // A turn cut off by the limit may carry a truncated call: never hand one out.
-  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}), stopReason: 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
+  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out. The filter is a refusal; the rest is the limit.
+  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}), stopReason: incompleteReason === 'content_filter' ? 'refusal' : 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
   return {
     ok: true,
     ...(text ? { text } : {}),

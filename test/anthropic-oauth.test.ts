@@ -162,7 +162,11 @@ describe('helpers', () => {
     expect(withClaudeCodeSystem('Be terse.')).toEqual({
       system: [{ type: 'text', text: CLAUDE_CODE_SENTINEL }, { type: 'text', text: 'Be terse.' }],
     });
+    // A prompt that already opens with the sentinel is split the same way: the sentinel block whole and first, the rest after it.
     const already = `${CLAUDE_CODE_SENTINEL}\nBe terse.`;
-    expect(withClaudeCodeSystem(already)).toEqual({ system: [{ type: 'text', text: already }] });
+    expect(withClaudeCodeSystem(already)).toEqual({ system: [{ type: 'text', text: CLAUDE_CODE_SENTINEL }, { type: 'text', text: 'Be terse.' }] });
+    expect(withClaudeCodeSystem(`${CLAUDE_CODE_SENTINEL}  \n\nBe terse.`)).toEqual({ system: [{ type: 'text', text: CLAUDE_CODE_SENTINEL }, { type: 'text', text: 'Be terse.' }] });
+    expect(withClaudeCodeSystem(`${CLAUDE_CODE_SENTINEL} Be terse.`)).toEqual({ system: [{ type: 'text', text: CLAUDE_CODE_SENTINEL }, { type: 'text', text: ' Be terse.' }] });
+    expect(withClaudeCodeSystem(CLAUDE_CODE_SENTINEL)).toEqual({ system: [{ type: 'text', text: CLAUDE_CODE_SENTINEL }] });
   });
 });

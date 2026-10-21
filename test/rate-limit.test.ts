@@ -177,6 +177,11 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, h({}), '{"error":"slow down"}', NOW)).toEqual({});
     expect(rateLimitOf(429, undefined, 'not json', NOW)).toEqual({});
     expect(rateLimitOf(500, undefined, JSON.stringify({ error: { message: 'tokens per minute' } }), NOW)).toEqual({});
+    expect(rateLimitOf(503, undefined, JSON.stringify({ error: { message: 'Overloaded. Please try again in 5s.' } }), NOW)).toEqual({});
+    // Google's RetryInfo is read on any status, as the header is: a 503 says when to come back too.
+    const retryInfo = JSON.stringify({ error: { code: 503, status: 'UNAVAILABLE', message: 'The model is overloaded.', details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '37s' }] } });
+    expect(rateLimitOf(503, undefined, retryInfo, NOW)).toEqual({ retryAfterMs: 37_000, resetAt: NOW + 37_000 });
+    expect(rateLimitOf(503, h({ 'retry-after': '2' }), retryInfo, NOW)).toEqual({ retryAfterMs: 2000, resetAt: NOW + 2000 });
     expect(rateLimitOf(400, h({ 'x-ratelimit-remaining-requests': '0', 'x-ratelimit-reset-requests': '1s' }), '', NOW)).toEqual({});
     // Garbage in the headers is ignored, not a crash; a malformed number is not a date in the past.
     expect(rateLimitOf(429, h({ 'retry-after': 'soon', 'retry-after-ms': 'x', 'x-ratelimit-reset-requests': 'later' }), '', NOW)).toEqual({});

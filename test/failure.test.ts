@@ -27,6 +27,29 @@ describe('the kinds', () => {
   it('network: the connection dropped, with what the transport said', async () => {
     const fetch = vi.fn<Fetch>(async () => { throw new TypeError('fetch failed: ECONNRESET'); });
     expect(await chat(conn, 'k', req, { fetch })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'fetch failed: ECONNRESET', streamed: false } });
+    // Whatever a host's fetch rejects with: its own Error, with a code, or a bare object.
+    const own = vi.fn<Fetch>(async () => { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); });
+    expect(await chat(conn, 'k', req, { fetch: own })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'socket hang up (ECONNRESET)', streamed: false } });
+    const chained = vi.fn<Fetch>(async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ETIMEDOUT'), { code: 'ERR_SOCKET_CONNECTION_TIMEOUT' }) }); });
+    expect(await chat(conn, 'k', req, { fetch: chained })).toMatchObject({ failure: { kind: 'network', cause: 'fetch failed (ERR_SOCKET_CONNECTION_TIMEOUT: connect ETIMEDOUT)' } });
+    const bare = vi.fn<Fetch>(async () => { throw { code: 'ECONNRESET' }; });
+    expect(await chat(conn, 'k', req, { fetch: bare })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'ECONNRESET' } });
+    const mute = vi.fn<Fetch>(async () => { throw undefined; });
+    expect(await chat(conn, 'k', req, { fetch: mute })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'The request failed.' } });
+    // A body whose read fails is the transport's too: retryable before anything streamed, not after.
+    const failing = (first?: string) => new ReadableStream<Uint8Array>({
+      pull(controller) { if (first) { controller.enqueue(new TextEncoder().encode(first)); first = undefined; } else controller.error(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })); },
+    });
+    const early = vi.fn<Fetch>(async () => new Response(failing(), { status: 200 }));
+    expect(await chat(conn, 'k', req, { fetch: early })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'read ECONNRESET (ECONNRESET)', streamed: false } });
+    const late = vi.fn<Fetch>(async () => new Response(failing('data: {"choices":[{"index":0,"delta":{"content":"half"}}]}\n\n'), { status: 200 }));
+    const cut = await chat(conn, 'k', req, { fetch: late });
+    expect(cut).toMatchObject({ failure: { kind: 'network', streamed: true } });
+    expect(cut).not.toHaveProperty('retryable');
+    // Not a dropped connection: the caller's abort, or a provider that refused.
+    const stop = new AbortController();
+    const aborted = vi.fn<Fetch>(async (_url, init) => { stop.abort(); throw (init!.signal as AbortSignal).reason; });
+    expect(await chat(conn, 'k', req, { fetch: aborted, signal: stop.signal })).toMatchObject({ failure: { kind: 'stopped' } });
   });
 
   it('http: the status, the provider\'s code and request id', async () => {
