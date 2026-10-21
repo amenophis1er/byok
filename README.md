@@ -335,7 +335,8 @@ the error it got (`max_uses_exceeded`) on Anthropic, which tells them
 apart; the query alone on the Responses API and Gemini, which do not. A
 turn cut off in the middle of a tool call (`stopReason` `length` or
 `refusal`) names it in `truncatedToolCall: { id, name, raw }`, never in
-`toolCalls`.
+`toolCalls` — the call whose arguments did not come whole; Gemini, which
+sends a call whole or not at all, never names one.
 
 Ask for reasoning where the model can, and watch it:
 

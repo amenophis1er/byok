@@ -309,15 +309,14 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   const toolCalls: AIToolCall[] = [];
   const texts: string[] = [];
   const thoughts: string[] = [];
-  /** The last call's arguments as they came, for a turn cut off in the middle of it. */
-  let lastRaw = '';
+  /** The last call cut off: its block never stopped, or its arguments did not come whole. */
+  let cut: { id: string; name: string; raw: string } | undefined;
   for (const [index, block] of blocks.entries()) {
     if (!block) continue;
     if (block.type === 'text') texts.push(String(block['text'] ?? ''));
     if (block.type === 'thinking' && typeof block['thinking'] === 'string' && block['thinking']) thoughts.push(block['thinking']);
     if (block.type !== 'tool_use') continue;
     const raw = partialJson.get(index) ?? '';
-    lastRaw = raw;
     const call: AIToolCall = { id: String(block['id']), name: String(block['name']) };
     try {
       const parsed: unknown = raw.trim() === '' ? {} : JSON.parse(raw);
@@ -332,6 +331,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
       call.argsError = { raw, message: error instanceof Error ? error.message : 'Invalid JSON.' };
       block['input'] = {};
     }
+    if (!ended.has(index) || call.argsError) cut = { id: call.id, name: call.name, raw };
     toolCalls.push(call);
   }
 
@@ -343,15 +343,14 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   const text = texts.join('');
   const reasoning = thoughts.join('\n\n');
   const webSearch = searchesOf(blocks);
-  const cut = !runnable && mapped !== 'pause' ? toolCalls[toolCalls.length - 1] : undefined;
   return {
     ok: true,
     ...(text ? { text } : {}),
     ...(reasoning ? { reasoning } : {}),
     ...(webSearch ? { webSearch } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
-    // The call the turn was cut off in: its arguments as far as they came, never handed out as a call.
-    ...(cut ? { truncatedToolCall: { id: cut.id, name: cut.name, raw: lastRaw } } : {}),
+    // The call a cut-off turn was in the middle of: its arguments as far as they came, never handed out as a call.
+    ...(!runnable && mapped !== 'pause' && cut ? { truncatedToolCall: cut } : {}),
     providerState: tagged.anthropic(state),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),

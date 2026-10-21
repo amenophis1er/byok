@@ -235,10 +235,9 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out, but say which it was (its arguments came whole, as an object).
+  // A turn cut off by the limit or a filter may carry a call: never hand one out. Gemini sends a call whole, as an object, or not at
+  // all, so none is ever known to be cut off in the middle: no `truncatedToolCall` here.
   const runnable = mapped === 'end';
-  const last = toolCalls[toolCalls.length - 1];
-  const cut = !runnable && last ? { id: last.id, name: last.name, raw: last.argsError ? last.argsError.raw : JSON.stringify(last.args ?? {}) } : undefined;
   // Grounding names the queries and the sources of the turn, not which query brought which: each entry is the query alone.
   const webSearch = queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
   // Gemini 3 and later bill each query; before that, grounding is billed once per prompt. Unknown model, no count.
@@ -249,7 +248,6 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ...(reasoning ? { reasoning } : {}),
     ...(webSearch ? { webSearch } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
-    ...(cut ? { truncatedToolCall: cut } : {}),
     // The parts come back as sent, signatures included; thought summaries without one are left out.
     ...(runnable && parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,

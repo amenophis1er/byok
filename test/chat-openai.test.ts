@@ -150,9 +150,12 @@ describe('streamed response', () => {
       expect(result.toolCalls).toBeUndefined();
       expect(result.truncatedToolCall).toEqual({ id: 'c', name: 'browser', raw: '{"action":"nav' });
     }
-    // The last call is the cut one; a whole turn carries none.
-    const two = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }, { index: 1, id: 'b', function: { name: 'browser', arguments: '{"x' } }] }), chunk({}, 'length')]));
-    expect(two.truncatedToolCall).toEqual({ id: 'b', name: 'browser', raw: '{"x' });
+    // The cut call is the one whose arguments did not come whole, wherever it stands; a turn whose calls all came whole (the cut fell after them) names none, nor does a whole turn.
+    const two = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{"x":' } }, { index: 1, id: 'b', function: { name: 'browser', arguments: '{}' } }] }), chunk({}, 'length')]));
+    expect(two.truncatedToolCall).toEqual({ id: 'a', name: 'browser', raw: '{"x":' });
+    const after = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }] }), chunk({ content: 'and then' }, 'length')]));
+    expect(after).not.toHaveProperty('truncatedToolCall');
+    expect(after.toolCalls).toBeUndefined();
     const whole = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }] }), chunk({}, 'tool_calls')]));
     expect(whole).not.toHaveProperty('truncatedToolCall');
   });
@@ -175,6 +178,9 @@ describe('streamed response', () => {
     const own = { google: { thought_signature: 'real' } };
     const kept: AIMessage[] = [history[0]!, { ...(history[1] as Extract<AIMessage, { role: 'assistant' }>), providerState: { protocol: 'chat-completions', extraContent: { c2: own } } }, ...history.slice(2)];
     expect(calls(openaiBody({ ...req, messages: kept }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([undefined, own]);
+    // Kept extra_content without a signature is not a signature: the placeholder is merged into it.
+    const bare: AIMessage[] = [history[0]!, { ...(history[1] as Extract<AIMessage, { role: 'assistant' }>), providerState: { protocol: 'chat-completions', extraContent: { c1: { google: { other: 1 }, vendor: 'x' } } } }, ...history.slice(2)];
+    expect(calls(openaiBody({ ...req, messages: bare }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([{ google: { other: 1, thought_signature: 'skip_thought_signature_validator' }, vendor: 'x' }, undefined]);
   });
 
   it('fails on an error chunk, and when the stream ends before a finish_reason', async () => {

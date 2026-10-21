@@ -76,6 +76,14 @@ describe('ChatGPT stream', () => {
       { type: 'response.incomplete', response: { status: 'incomplete' } },
     ));
     expect(result).toEqual({ ok: true, stopReason: 'length', truncatedToolCall: { id: 'c', name: 'browser', raw: '{"action":"na' } });
+    // A call reported done with whole arguments was not the cut one: the limit fell in the text after it.
+    const after = await codexResult(events(
+      { type: 'response.output_item.added', item: { type: 'function_call', id: 'fc1', call_id: 'c', name: 'browser' } },
+      { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc1', call_id: 'c', name: 'browser', arguments: '{}' } },
+      { type: 'response.output_text.delta', item_id: 'm', delta: 'and' },
+      { type: 'response.incomplete', response: { status: 'incomplete' } },
+    ));
+    expect(after).toEqual({ ok: true, text: 'and', stopReason: 'length' });
     // The reason given says which: the limit, or a filter (a refusal). Unknown or absent, the limit.
     const reason = (details: Record<string, unknown> | undefined) => codexResult(events(
       { type: 'response.output_text.delta', item_id: 'm', delta: 'Part' },

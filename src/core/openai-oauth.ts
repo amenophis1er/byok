@@ -101,7 +101,8 @@ export async function codexModels(input: { accessToken: string; accountId?: stri
       accept: 'application/json',
     },
   });
-  if (!res.ok) throw await httpFailure(res, `Codex model catalog failed (HTTP ${res.status})`);
+  // ChatGPT's wording is never kept, here as on a turn.
+  if (!res.ok) throw await httpFailure(res, `Codex model catalog failed (HTTP ${res.status})`, { providerMessage: false });
   const models = codexCatalogModels(await res.json().catch(() => null));
   if (models.length === 0) throw new Error('Codex model catalog listed no models');
   return models;

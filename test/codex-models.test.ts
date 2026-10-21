@@ -74,6 +74,12 @@ describe('Codex model catalog', () => {
   it('throws on a failed request or an empty catalog, so the caller can fall back', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 401 })));
     await expect(codexModels({ accessToken: 'tok' })).rejects.toThrow('HTTP 401');
+    // ChatGPT's wording is never kept, on the catalog as on a turn: the code, not the message.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'usage_limit_reached', message: 'SECRET BODY' } }), { status: 400 })));
+    const failure = await codexModels({ accessToken: 'tok' }).catch((error: unknown) => error as Error);
+    expect(failure).toMatchObject({ providerCode: 'usage_limit_reached' });
+    expect(JSON.stringify(failure)).not.toContain('SECRET BODY');
+    expect(String(failure)).not.toContain('SECRET BODY');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"models":[]}', { status: 200 })));
     await expect(codexModels({ accessToken: 'tok' })).rejects.toThrow('no models');
   });

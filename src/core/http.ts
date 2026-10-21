@@ -141,10 +141,10 @@ export function failureSource(res: Response, body: string, { message = true } = 
   };
 }
 
-/** A failed response as an `HttpError`: the status and body in words, what it said about coming back, its code and request id. */
-export async function httpFailure(res: Response, message?: string): Promise<HttpError> {
+/** A failed response as an `HttpError`: the status and body in words, what it said about coming back, its code, type, message (unless `providerMessage: false`) and request id. */
+export async function httpFailure(res: Response, message?: string, { providerMessage = true } = {}): Promise<HttpError> {
   const text = await res.text();
-  return new HttpError(res.status, message ?? describeHttpText(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text));
+  return new HttpError(res.status, message ?? describeHttpText(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text, { message: providerMessage }));
 }
 
 /** The rate-limit fields of a failure, only those it carries, for spreading into a result. */

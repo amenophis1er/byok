@@ -138,6 +138,12 @@ export function codexHttpError(status: number, body: string): string {
   return `ChatGPT refused the request (HTTP ${status}${code ? `; ${code}` : ''}).`;
 }
 
+/** Whether a call's arguments parse: whole, as the stream would have finished them. */
+function wholeJson(args: string): boolean {
+  if (args.trim() === '') return true;
+  try { JSON.parse(args); return true; } catch { return false; }
+}
+
 /** A failure event's body in words, the ChatGPT way: without the provider's text. */
 export const codexFailure = (body: string): string => codexHttpError(0, body).replace(' (HTTP 0)', '');
 
@@ -293,12 +299,13 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const reasoning = thoughts.join('\n\n').trim();
   // The Responses API names each search's queries, not its sources: each entry is the query alone.
   const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
-  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out, but say which it was. The filter is a refusal; the rest is the limit.
+  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out, but say which it was — the last one never
+  // reported done, or whose arguments did not come whole; none when every call came whole. The filter is a refusal; the rest is the limit.
   if (incomplete) {
-    const last = [...calls.values()].pop();
+    const broken = [...calls.values()].reverse().find((entry) => !entry.ended || !wholeJson(entry.args));
     return {
       ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}),
-      ...(last ? { truncatedToolCall: { id: last.callId, name: last.name, raw: last.args } } : {}),
+      ...(broken ? { truncatedToolCall: { id: broken.callId, name: broken.name, raw: broken.args } } : {}),
       stopReason: incompleteReason === 'content_filter' ? 'refusal' : 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}),
     };
   }

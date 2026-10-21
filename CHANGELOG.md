@@ -30,9 +30,10 @@ while on 0.x, a breaking change bumps the minor version.
   back for a tag once the answer began; `new ThinkSplitter(emit, true)`
   keeps the old anywhere behaviour.
 - **`truncatedToolCall: { id, name, raw }`** on a turn cut off in the
-  middle of a tool call (`stopReason` `length` or `refusal`), on every
-  protocol: the call `toolCalls` withholds, with its arguments as far as
-  they came.
+  middle of a tool call (`stopReason` `length` or `refusal`): the call
+  whose block never stopped or whose arguments did not come whole, with
+  them as far as they came; none when every call came whole (the cut fell
+  after them). Not on Gemini, which sends a call whole or not at all.
 - **`webSearch.searches`**: each search on its own — its query, sources,
   `resultCount` or `error` (`max_uses_exceeded`) on Anthropic, which tells
   them apart by `tool_use_id`; the query alone on the Responses API and

@@ -95,20 +95,33 @@ export function openaiMessages(system: string, messages: AIMessage[], placeholde
     }
     const calls = message.toolCalls ?? [];
     const extra = chatCompletionsState(message.providerState);
-    // The placeholder on the first call, unless a call of the turn kept its own extra_content.
-    const stub = placeholder && !calls.some((call) => extra[call.id] !== undefined) ? { google: { thought_signature: GEMINI_SIGNATURE_PLACEHOLDER } } : undefined;
+    // The placeholder on the first call, merged into whatever extra_content it kept, unless a call of the turn kept a signature of its own.
+    const stub = placeholder && !calls.some((call) => hasSignature(extra[call.id]));
+    const extraOf = (call: AIToolCall, first: boolean): Record<string, unknown> => {
+      const own = extra[call.id];
+      if (!stub || !first) return own !== undefined ? { extra_content: own } : {};
+      const kept = own && typeof own === 'object' && !Array.isArray(own) ? (own as Record<string, unknown>) : {};
+      const google = kept['google'] && typeof kept['google'] === 'object' ? (kept['google'] as Record<string, unknown>) : {};
+      return { extra_content: { ...kept, google: { ...google, thought_signature: GEMINI_SIGNATURE_PLACEHOLDER } } };
+    };
     out.push({
       role: 'assistant',
       content: message.content ?? (calls.length > 0 ? null : ''),
       ...(calls.length > 0 ? {
         tool_calls: calls.map((call, i) => ({ id: call.id, type: 'function',
           function: { name: call.name, arguments: call.argsError ? call.argsError.raw : JSON.stringify(call.args ?? {}) },
-          ...(extra[call.id] !== undefined ? { extra_content: extra[call.id] } : stub && i === 0 ? { extra_content: stub } : {}) })),
+          ...extraOf(call, i === 0) })),
       } : {}),
     });
   }
   flushImages();
   return out;
+}
+
+/** Whether a call's `extra_content` carries a thought signature of its own (`google.thought_signature`). */
+function hasSignature(extra: unknown): boolean {
+  const google = extra && typeof extra === 'object' ? (extra as { google?: unknown }).google : undefined;
+  return !!google && typeof google === 'object' && typeof (google as { thought_signature?: unknown }).thought_signature === 'string';
 }
 
 /** Optional request fields a server has rejected, to leave out of the retry. */
@@ -336,10 +349,11 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the token limit or a filter may carry a truncated call: never hand one out, but say which it was.
+  // A turn cut off by the token limit or a filter may carry a truncated call: never hand one out, but say which it was — the last
+  // whose arguments did not come whole (one that parses was complete; the cut then fell in the text after it).
   const runnable = mapped === 'tool_use' || mapped === 'end';
-  const last = [...fragments.entries()].sort(([a], [b]) => a - b).pop();
-  const cut = !runnable && last ? { id: settle(last[0], last[1]), name: last[1].name, raw: last[1].args } : undefined;
+  const broken = runnable ? undefined : [...toolCalls].reverse().find((call) => call.argsError);
+  const cut = broken ? { id: broken.id, name: broken.name, raw: broken.argsError!.raw } : undefined;
   const cleaned = text.trim();
   const thoughts = reasoning.trim();
   return {
