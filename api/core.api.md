@@ -191,11 +191,17 @@ export interface RetryOptions {
     maxAttempts?: number;
     maxDelayMs?: number;
     maxNetworkAttempts?: number;
+    maxTotalWaitMs?: number;
     maxWaitMs?: number;
+    minDelayMs?: number;
+    networkWindowMs?: number;
+    now?: () => number;
     onRetry?: (notice: RetryNotice) => void;
     random?: () => number;
+    retryBare429?: boolean;
     signal?: AbortSignal;
     sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+    throwOnAbort?: boolean;
 }
 
 // @public

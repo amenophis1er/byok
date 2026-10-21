@@ -382,8 +382,17 @@ It waits as the provider asked (`retryAfterMs`), else exponentially with
 jitter (1 s, 2 s, 4 s, … ×[0.5, 1.5), never over `maxDelayMs`), and never
 retries a day or plan window, a wait over `maxWaitMs` (60 s), or a turn that already
 produced text or a tool call. The two budgets are separate, so a mix of
-failures may run to `maxAttempts + maxNetworkAttempts − 1` attempts. `sleep`
-and `random` are injectable for tests.
+failures may run to `maxAttempts + maxNetworkAttempts − 1` attempts. A host
+with its own policy has the rest as options, all off by default:
+`maxTotalWaitMs` (the waits' sum; a wait that would pass it ends the
+retries), `minDelayMs` (a floor, a provider's "retry after 0 s" included, never over
+`maxWaitMs`),
+`networkWindowMs` (a dropped connection is retried while the next attempt
+starts within it, from the first attempt; with `maxNetworkAttempts: Infinity`
+the window alone decides), `retryBare429` (a 429 that named neither a wait
+nor a window, retried on the backoff; never a day or plan window) and
+`throwOnAbort` (the signal's reason thrown instead of `Stopped.`). `sleep`,
+`random` and `now` are injectable for tests.
 
 The sign-in flows are at `@amenophis1er/byok/core/auth` for a host that owns
 storage and UI: the Claude subscription PKCE flow (`startLogin`,

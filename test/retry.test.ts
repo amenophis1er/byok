@@ -111,6 +111,112 @@ describe('withRetry', () => {
     expect(await slow).toMatchObject({ ok: false, error: 'Stopped.' });
   });
 
+  it('stops when the waits would add up past maxTotalWaitMs, with the failure as it stands', async () => {
+    // 1000 + 2000 + 4000: the third wait would pass 5000.
+    const h = harness([server, server, server, ok]);
+    expect(await withRetry(h.attempt, { ...h, maxTotalWaitMs: 5000 })).toBe(server);
+    expect(h.waits).toEqual([1000, 2000]);
+    expect(h.attempt).toHaveBeenCalledTimes(3);
+    // A provider's wait counts the same.
+    const asked = harness([limited, limited, limited, ok]);
+    expect(await withRetry(asked.attempt, { ...asked, maxTotalWaitMs: 2000 })).toBe(limited);
+    expect(asked.waits).toEqual([1500]);
+    // Exactly the budget is still within it.
+    const exact = harness([server, server, ok]);
+    expect(await withRetry(exact.attempt, { ...exact, maxTotalWaitMs: 3000 })).toBe(ok);
+    expect(exact.waits).toEqual([1000, 2000]);
+  });
+
+  it('waits at least minDelayMs, a provider\'s shorter hint included', async () => {
+    const h = harness([{ ...limited, retryAfterMs: 0 }, { ...limited, retryAfterMs: 200 }, server, ok]);
+    expect(await withRetry(h.attempt, { ...h, minDelayMs: 500 })).toBe(ok);
+    // The third failure is the third attempt's: its backoff is 1000·2².
+    expect(h.waits).toEqual([500, 500, 4000]);
+    // A hint over maxWaitMs still ends the retries; the floor does not revive it.
+    const long = harness([{ ...server, retryAfterMs: 120_000 }, ok]);
+    expect(await withRetry(long.attempt, { ...long, minDelayMs: 500 })).toMatchObject({ retryAfterMs: 120_000 });
+    // Nor does the floor lift a wait over maxWaitMs: it is capped there.
+    const capped = harness([{ ...limited, retryAfterMs: 0 }, ok]);
+    expect(await withRetry(capped.attempt, { ...capped, minDelayMs: 2000, maxWaitMs: 1000 })).toBe(ok);
+    expect(capped.waits).toEqual([1000]);
+  });
+
+  it('bounds a dropped connection in time with networkWindowMs, from the first attempt', async () => {
+    let clock = 0;
+    const h = harness([dropped, dropped, dropped, dropped, ok]);
+    const sleep = async (ms: number) => { h.waits.push(ms); clock += ms; };
+    // Waits 1000, 2000, 4000: the third (to 7000) would start past a 5000 ms window.
+    expect(await withRetry(h.attempt, { ...h, sleep, now: () => clock, networkWindowMs: 5000, maxNetworkAttempts: Infinity })).toBe(dropped);
+    expect(h.waits).toEqual([1000, 2000]);
+    expect(h.attempt).toHaveBeenCalledTimes(3);
+    // The window lets a long run of short drops through where the count would not.
+    clock = 0;
+    const many = harness([dropped, dropped, dropped, dropped, dropped, dropped, dropped, ok]);
+    const quick = async (ms: number) => { many.waits.push(ms); clock += ms; };
+    expect(await withRetry(many.attempt, { ...many, sleep: quick, now: () => clock, networkWindowMs: 120_000, maxNetworkAttempts: Infinity, maxDelayMs: 1000 })).toBe(ok);
+    expect(many.attempt).toHaveBeenCalledTimes(8);
+    // The window does not bound a server failure; the count still bounds a drop within it.
+    clock = 0;
+    const mixed = harness([server, server, server, ok]);
+    expect(await withRetry(mixed.attempt, { ...mixed, sleep: async (ms) => { mixed.waits.push(ms); clock += ms; }, now: () => clock, networkWindowMs: 10 })).toBe(ok);
+    const counted = harness([dropped, dropped, ok]);
+    expect(await withRetry(counted.attempt, { ...counted, networkWindowMs: 60_000, maxNetworkAttempts: 2 })).toBe(dropped);
+    // A sleep that overran the window (a suspended tab) ends the retries too: the next attempt would start outside it.
+    clock = 0;
+    const overran = harness([dropped, ok]);
+    expect(await withRetry(overran.attempt, { ...overran, sleep: async (ms) => { overran.waits.push(ms); clock += ms + 5000; }, now: () => clock, networkWindowMs: 3000 })).toBe(dropped);
+    expect(overran.attempt).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a 429 that named neither a wait nor a window only when retryBare429 says, never a day or plan window', async () => {
+    const bare: AIChatResult = { ok: false, error: 'HTTP 429: slow down', failure: { kind: 'http', status: 429, streamed: false } };
+    const asIs = harness([bare, ok]);
+    expect(await withRetry(asIs.attempt, asIs)).toBe(bare);
+    const h = harness([bare, bare, ok]);
+    expect(await withRetry(h.attempt, { ...h, retryBare429: true })).toBe(ok);
+    expect(h.waits).toEqual([1000, 2000]);
+    // A 429 naming a window or a wait is not bare: the usual rules apply.
+    for (const named of [{ ...bare, quota: 'day' as const }, { ...bare, quota: 'plan' as const }, { ...bare, retryAfterMs: 120_000 }]) {
+      const n = harness([named, ok]);
+      expect(await withRetry(n.attempt, { ...n, retryBare429: true })).toBe(named);
+    }
+    // Nor is one on which output streamed, or another status.
+    const spoke = harness([{ ...bare, failure: { kind: 'http', status: 429, streamed: true } }, ok]);
+    expect(await withRetry(spoke.attempt, { ...spoke, retryBare429: true })).toMatchObject({ error: 'HTTP 429: slow down' });
+    const other = harness([{ ...bare, error: 'HTTP 418', failure: { kind: 'http', status: 418, streamed: false } }, ok]);
+    expect(await withRetry(other.attempt, { ...other, retryBare429: true })).toMatchObject({ error: 'HTTP 418' });
+  });
+
+  it('throws the signal\'s reason on abort when throwOnAbort says, an AbortError when it has none', async () => {
+    const controller = new AbortController();
+    const attempt = vi.fn(async () => server);
+    const sleep = async (_ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+    const pending = withRetry(attempt, { sleep, signal: controller.signal, throwOnAbort: true });
+    await vi.waitFor(() => expect(attempt).toHaveBeenCalledTimes(1));
+    controller.abort(new Error('user left'));
+    await expect(pending).rejects.toThrow('user left');
+    // Already aborted, with no reason given: an AbortError, before any attempt.
+    const bare = new AbortController();
+    bare.abort();
+    await expect(withRetry(attempt, { signal: bare.signal, throwOnAbort: true })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(attempt).toHaveBeenCalledTimes(1);
+    // An explicit reason is thrown as given, null included.
+    const nulled = new AbortController();
+    nulled.abort(null);
+    await expect(withRetry(attempt, { signal: nulled.signal, throwOnAbort: true })).rejects.toBeNull();
+    // An attempt that saw the abort itself (chat() returns Stopped.) throws the same way; a success that came back as the abort landed is still a success.
+    const inner = new AbortController();
+    const sawIt = vi.fn(async () => { inner.abort(new Error('closed')); return { ok: false, error: 'Stopped.' } as AIChatResult; });
+    await expect(withRetry(sawIt, { signal: inner.signal, throwOnAbort: true })).rejects.toThrow('closed');
+    const late = new AbortController();
+    const won = vi.fn(async () => { late.abort(); return ok; });
+    expect(await withRetry(won, { signal: late.signal, throwOnAbort: true })).toBe(ok);
+    // Without throwOnAbort the result is handed back as it came.
+    const quiet = new AbortController();
+    const sawQuiet = vi.fn(async () => { quiet.abort(); return { ok: false, error: 'Stopped.' } as AIChatResult; });
+    expect(await withRetry(sawQuiet, { signal: quiet.signal })).toMatchObject({ error: 'Stopped.' });
+  });
+
   it('lets an exception from the attempt through', async () => {
     await expect(withRetry(async () => { throw new Error('boom'); })).rejects.toThrow('boom');
   });

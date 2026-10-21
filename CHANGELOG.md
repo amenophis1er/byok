@@ -5,6 +5,19 @@ while on 0.x, a breaking change bumps the minor version.
 
 ## 0.1.12
 
+- **`withRetry` for a host with its own policy** (#72), all off by default:
+  `maxTotalWaitMs` (the waits' sum; a wait that would pass it ends the
+  retries with the failure as it stands), `minDelayMs` (a floor on every
+  wait, a provider's shorter hint included, never over `maxWaitMs`),
+  `networkWindowMs` (a dropped connection is retried while the next attempt
+  would start within it, measured from the first attempt, a sleep that
+  overran included; `maxNetworkAttempts: Infinity` leaves it to the window),
+  `retryBare429` (a 429 that named neither a wait nor a window, which
+  `retryable` leaves out, retried on the backoff; never a day or plan
+  window, never after output streamed) and `throwOnAbort` (the signal's
+  reason thrown, an `AbortError` when it has none, instead of
+  `{ ok: false, error: 'Stopped.' }`, whether the loop or the attempt saw
+  the abort). `now` is injectable for tests.
 - **The quota Gemini names** (#68): a rate-limited result, an `HttpError`
   and `rateLimitOf` carry `limit: { value?, unit?, freeTier?, model? }` read
   from the `QuotaFailure` violation that named the window — "the free tier
