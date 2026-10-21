@@ -338,7 +338,7 @@ and before; OpenAI's `reasoning_effort` and the Responses API's `reasoning`
 with its encrypted content replayed through `providerState`; Gemini's
 `thinkingLevel` or `thinkingBudget`); absent, nothing is sent and the model
 does what it does by default. `'off'` sends each family's least: OpenAI's
-`none` (GPT-5.1 on), `minimal` (GPT-5) or `low` (Codex models, o-series;
+`none` (GPT-5.1 on), `minimal` (GPT-5) or `low` (Codex models, o-series; nothing on the Pro models;
 and everything on the ChatGPT backend, whose accepted levels are not
 published), nothing for a model not known to reason; Ollama's `think:
 false`. A model that writes its thinking inline in `<think>` tags has it

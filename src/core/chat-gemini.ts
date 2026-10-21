@@ -214,7 +214,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     if (candidate['finishReason']) finishReason = String(candidate['finishReason']);
   }
   // The prompt was blocked before any answer: final, not a cut stream to send again.
-  if (!finishReason && blocked) return streamFailure(`The prompt was blocked (${blocked.reason}${blocked.message ? `: ${blocked.message}` : ''}).`, blocked.reason);
+  if (!finishReason && blocked) return { ...streamFailure(`The prompt was blocked (${blocked.reason}${blocked.message ? `: ${blocked.message}` : ''}).`, blocked.reason), retryable: false };
   if (!finishReason) return streamFailure('The response stream ended before it finished.');
   if (finishReason === 'MALFORMED_FUNCTION_CALL') return streamFailure('The model made a malformed function call.', finishReason);
 

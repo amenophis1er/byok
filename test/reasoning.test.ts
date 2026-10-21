@@ -65,6 +65,13 @@ describe('the request, per provider', () => {
     expect(lowestEffort('o4-mini')).toBe('low');
     expect(lowestEffort('gpt-4.1')).toBeUndefined();
     expect(lowestEffort('gpt-4o')).toBeUndefined();
+    expect(lowestEffort('gpt-5-chat-latest')).toBeUndefined();
+    // The Pro models take only their highest levels (GPT-5 Pro: high; GPT-5.2 Pro: medium and up): nothing is the least.
+    expect(lowestEffort('gpt-5-pro')).toBeUndefined();
+    expect(lowestEffort('gpt-5.2-pro')).toBeUndefined();
+    expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.2-pro')).not.toHaveProperty('reasoning');
+    expect(lowestEffort('o1-mini')).toBeUndefined();
+    expect(lowestEffort('o1')).toBe('low');
     expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5', OPENAI)).toMatchObject({ reasoning_effort: 'minimal' });
     expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5.2', OPENAI)).toMatchObject({ reasoning_effort: 'none' });
     // A model not known to reason gets nothing: the field would be refused on every turn.
@@ -361,6 +368,11 @@ describe('when Anthropic refuses the thinking blocks it signed', () => {
     expect(sent[0]).toHaveProperty('thinking');
     expect(sent[2]).not.toHaveProperty('thinking');
     expect(types(sent[2]!, 1)).toEqual(['text']);
+    // No fallback when the first retry already stripped every thinking block there was: the same request is not sent twice.
+    const laterOnly: AIMessage[] = [two[0]!, { role: 'assistant', content: 'ok', providerState: { protocol: 'anthropic', blocks: [{ type: 'text', text: 'ok' }] } }, ...two.slice(2)];
+    const dup = vi.fn<Fetch>(async () => refuse(dup.mock.calls.length === 1 ? 'messages.3.content.0: Invalid `signature` in `thinking` block.' : '`thinking` blocks in the latest assistant message cannot be modified.'));
+    expect(await chat(conn, 'sk', { ...req, messages: laterOnly }, { fetch: dup })).toMatchObject({ ok: false });
+    expect(dup).toHaveBeenCalledTimes(2);
     // A second refusal about something else is the failure it is; so is a third refusal.
     const other = vi.fn<Fetch>(async () => other.mock.calls.length === 1
       ? refuse('messages.3.content.0: Invalid `signature` in `thinking` block.') : refuse('max_tokens: must be positive'));

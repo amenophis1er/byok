@@ -282,6 +282,11 @@ async function post(t: Turn, url: URL, headers: Record<string, string>, body: un
   }
 }
 
+/** A refused response's body, with a read that fails marked as the transport's. */
+async function errorText(res: Response): Promise<string> {
+  try { return await res.text(); } catch (error) { throw new TransportError(error); }
+}
+
 function bodyOf(t: Turn, res: Response): ReadableStream<Uint8Array> {
   if (!res.body) throw new Error('The provider sent no response body.');
   return transportGuarded(t.idle.watch(res.body));
@@ -322,7 +327,7 @@ async function geminiTurn(t: Turn): Promise<AIChatResult> {
     ? await authorizerFor(conn, credential)('POST', url)
     : token ? { 'x-goog-api-key': token } : {};
   const res = await post(t, url, headers, geminiBody(t.req, t.model));
-  if (!res.ok) throw httpError(res, await res.text());
+  if (!res.ok) throw httpError(res, await errorText(res));
   return geminiResult(readSse(bodyOf(t, res)), t.onEvent);
 }
 
@@ -345,7 +350,7 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
   const send = (r: ChatRequest) => post(t, url, headers, anthropicBody(manual ? { ...r, reasoning: undefined } : r, t.model, system));
   let res = await post(t, url, headers, anthropicBody(req, t.model, system));
   if (!res.ok) {
-    const text = await res.text();
+    const text = await errorText(res);
     // The API refused the thinking blocks it had itself signed (an edited prefix, a block bound to another conversation): once more
     // without them, from the turn it named onward — the turns before keep theirs, as the docs ask. A manual-mode turn whose latest
     // assistant message has no thinking block to open with is refused too: once more with thinking off.
@@ -354,15 +359,20 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
     res = await send(withoutThinkingFrom(req, from));
     if (!res.ok) {
       // Refused again over thinking: one last request with no thinking block anywhere (and, in manual mode, thinking off) — unless
-      // that is what was just sent.
-      const again = await res.text();
-      if (from <= 0 || !(res.status === 400 && isThinkingRefusal(again))) throw httpError(res, again);
+      // that is what was just sent, no earlier turn having kept any.
+      const again = await errorText(res);
+      const kept = req.messages.filter((m) => m.role === 'assistant').slice(0, Math.max(0, from)).some(hasThinking);
+      if (!kept || !(res.status === 400 && isThinkingRefusal(again))) throw httpError(res, again);
       res = await send(withoutThinkingFrom(req, 0));
-      if (!res.ok) throw httpError(res, await res.text());
+      if (!res.ok) throw httpError(res, await errorText(res));
     }
   }
   return anthropicResult(readSse(bodyOf(t, res)), t.onEvent);
 }
+
+/** An assistant turn replaying a thinking block. */
+const hasThinking = (m: ChatRequest['messages'][number]): boolean =>
+  m.role === 'assistant' && (anthropicState(m.providerState) ?? []).some((b) => b['type'] === 'thinking' || b['type'] === 'redacted_thinking');
 
 /** The request with the thinking blocks dropped from the assistant turn `from` (0-based, counting assistant turns) onward. */
 function withoutThinkingFrom(req: ChatRequest, from: number): ChatRequest {
@@ -401,7 +411,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
     : await authorizerFor(conn, credential)('POST', url);
   const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex, cacheKey: !codex && isOpenAi(conn.baseUrl), codex }));
   if (!res.ok) {
-    const text = await res.text();
+    const text = await errorText(res);
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
     throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text)) : httpError(res, text);
   }
@@ -418,8 +428,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
  * of messages, where consecutive tool results share one).
  */
 function refusedThinkingFrom(text: string, messages: ChatRequest['messages']): number | undefined {
-  const thinking = (m: ChatRequest['messages'][number]) => m.role === 'assistant' && (anthropicState(m.providerState) ?? []).some((b) => b['type'] === 'thinking' || b['type'] === 'redacted_thinking');
-  if (!messages.some(thinking)) return undefined;
+  if (!messages.some(hasThinking)) return undefined;
   const invalid = INVALID_SIGNATURE.exec(text);
   const modified = CANNOT_MODIFY.test(text);
   if (!invalid && !modified) return undefined;
@@ -446,7 +455,7 @@ async function chatCompletionsTurn(t: Turn): Promise<AIChatResult> {
   // A server that rejects an optional field gets the request again without it, once per field — only a field the request carried, not one its answer merely names.
   let res = await send();
   while (!res.ok) {
-    const text = await res.text();
+    const text = await errorText(res);
     const field = rejectedField(res.status, text);
     if (!field || omit.has(field) || !(field in body)) throw httpError(res, text);
     omit.add(field);
@@ -479,9 +488,10 @@ function cause(reason: unknown): Pick<AIFailure, 'cause'> {
   return text ? { cause: text } : {};
 }
 
-/** A stream cut short or an overloaded provider mid-answer: worth one more try, like a dropped connection. */
+/** A stream cut short or an overloaded provider mid-answer: worth one more try, like a dropped connection. A module that said `retryable: false` is final, whatever its words. */
 function transient(result: AIChatResult): AIChatResult {
-  return !result.ok && /ended before it finished|overloaded/i.test(result.error ?? '') ? { ...result, retryable: true } : result;
+  if (result.ok || result.retryable === false) return result;
+  return /ended before it finished|overloaded/i.test(result.error ?? '') ? { ...result, retryable: true } : result;
 }
 
 /** A network failure, naming who could not be reached; the local-server hint only for local servers. */

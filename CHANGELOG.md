@@ -25,9 +25,11 @@ while on 0.x, a breaking change bumps the minor version.
   least effort the model takes is sent (`none` from GPT-5.1 on, `minimal`
   on GPT-5, `low` on the Codex models and the o-series; `low` on the ChatGPT
   backend, whose accepted levels are not published), nothing for a model
-  not known to reason; Ollama gets `think: false`, dropped on a refusal like
-  the other optional fields. Before, `off` sent nothing and a thinking model
-  reasoned at full length.
+  not known to reason or for the Pro models, which take only their highest
+  levels; Ollama gets `think: false`, dropped on a refusal like the other
+  optional fields. Before, `off` sent nothing and a thinking model reasoned
+  at full length. A body read that fails on a refused response is a network
+  failure too.
 - **A Gemini prompt block is final.** A stream whose `promptFeedback` names
   a `blockReason` and brings no candidate fails with "The prompt was blocked
   (SAFETY…)" and the reason as `providerCode`, never retryable; it was read

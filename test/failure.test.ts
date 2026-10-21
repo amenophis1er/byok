@@ -46,6 +46,9 @@ describe('the kinds', () => {
     const cut = await chat(conn, 'k', req, { fetch: late });
     expect(cut).toMatchObject({ failure: { kind: 'network', streamed: true } });
     expect(cut).not.toHaveProperty('retryable');
+    // A refused response whose body cannot be read is the transport's failure too.
+    const refusedCut = vi.fn<Fetch>(async () => new Response(failing(), { status: 503 }));
+    expect(await chat(conn, 'k', req, { fetch: refusedCut })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'read ECONNRESET (ECONNRESET)' } });
     // Not a dropped connection: the caller's abort, or a provider that refused.
     const stop = new AbortController();
     const aborted = vi.fn<Fetch>(async (_url, init) => { stop.abort(); throw (init!.signal as AbortSignal).reason; });
@@ -68,6 +71,12 @@ describe('the kinds', () => {
       .toMatchObject({ failure: { kind: 'stream', providerCode: 'overloaded_error', streamed: false } });
     const cut = vi.fn<Fetch>(async () => sse(openaiSse([{ choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] }], false)));
     expect(await chat(conn, 'k', req, { fetch: cut })).toMatchObject({ retryable: true, failure: { kind: 'stream', streamed: false } });
+    // A Gemini prompt block is final, whatever its message says.
+    const gemini: Connection = { kind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', protocol: 'gemini', model: 'gemini-2.5-flash' };
+    const blocked = vi.fn<Fetch>(async () => sse(openaiSse([{ promptFeedback: { blockReason: 'SAFETY', blockReasonMessage: 'The prompt contains the phrase overloaded.' } }], false)));
+    const block = await chat(gemini, 'k', req, { fetch: blocked });
+    expect(block).toMatchObject({ ok: false, error: 'The prompt was blocked (SAFETY: The prompt contains the phrase overloaded.).', failure: { kind: 'stream', providerCode: 'SAFETY', streamed: false } });
+    expect(block).not.toHaveProperty('retryable');
   });
 
   it('timeout, stopped and sink', async () => {

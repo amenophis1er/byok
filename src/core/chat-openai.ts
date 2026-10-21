@@ -110,6 +110,8 @@ export type OptionalField = 'parallel_tool_calls' | 'stream_options' | 'prompt_c
  */
 export function lowestEffort(model: string): 'none' | 'minimal' | 'low' | undefined {
   const id = model.toLowerCase();
+  // The chat-tuned GPT-5 and the first o1 previews take no effort at all; the Pro models take only their highest levels, so `off` sends nothing there.
+  if (/-chat(?:-|$)/.test(id) || /-pro(?:-|$)/.test(id) || /^o1-(?:mini|preview)/.test(id)) return undefined;
   if (/codex/.test(id)) return /^(?:o\d|gpt-5)/.test(id) ? 'low' : undefined;
   if (/^gpt-5\.\d/.test(id) || /^gpt-(?:[6-9]|\d{2})(?:[-.]|$)/.test(id)) return 'none';
   if (/^gpt-5(?:-|$)/.test(id)) return 'minimal';
