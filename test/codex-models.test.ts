@@ -50,6 +50,18 @@ describe('Codex model catalog', () => {
     expect(init.method ?? 'GET').toBe('GET');
   });
 
+  it('claims the client version given, and the built-in one for none or junk', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(catalog), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await codexModels({ accessToken: 'tok', clientVersion: '0.170.0' });
+    await codexModels({ accessToken: 'tok', clientVersion: '' });
+    await codexModels({ accessToken: 'tok', clientVersion: '1.0 OR 1=1' });
+    const urls = fetchMock.mock.calls.map((call) => String((call as unknown as [string])[0]));
+    expect(urls[0]).toBe('https://chatgpt.com/backend-api/codex/models?client_version=0.170.0');
+    expect(urls[1]).toBe(`https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`);
+    expect(urls[2]).toBe(`https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`);
+  });
+
   it('leaves the account header out when there is no account id', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(catalog), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

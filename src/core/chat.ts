@@ -87,10 +87,12 @@ export const TIMED_OUT = 'Timed out waiting for the model.';
  */
 export async function chat(conn: Connection, credential: ConnectionCredential, req: ChatRequest, options: ChatOptions = {}): Promise<AIChatResult> {
   const controller = new AbortController();
-  const timeout = () => controller.abort(new DOMException('timeout', 'TimeoutError'));
+  // Which limit passed, when one did: the whole-request one, or the idle one.
+  let timedOut: 'idle' | 'total' | undefined;
+  const timeout = (which: 'idle' | 'total') => () => { timedOut ??= which; controller.abort(new DOMException('timeout', 'TimeoutError')); };
   const limit = delayMs(req.timeoutMs ?? options.timeoutMs ?? CHAT_TIMEOUT_MS);
-  const timer = limit > 0 ? setTimeout(timeout, limit) : undefined;
-  const idle = new Idle(delayMs(req.idleTimeoutMs ?? options.idleTimeoutMs ?? 0), timeout);
+  const timer = limit > 0 ? setTimeout(timeout('total'), limit) : undefined;
+  const idle = new Idle(delayMs(req.idleTimeoutMs ?? options.idleTimeoutMs ?? 0), timeout('idle'));
   const onAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
   const hint = options.settingsHint ? ` ${options.settingsHint}` : '';
@@ -134,7 +136,7 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
       : mismatch?.message);
   } catch (error) {
     if (options.signal?.aborted) return failed('Stopped.', { kind: 'stopped', ...cause(options.signal.reason) });
-    if (controller.signal.aborted) return failed(TIMED_OUT, { kind: 'timeout' });
+    if (controller.signal.aborted) return failed(TIMED_OUT, { kind: 'timeout', ...(timedOut ? { timeout: timedOut } : {}) });
     if (error instanceof SinkError) return failed(error.message, { kind: 'sink', cause: error.message });
     // A dropped connection (the transport rejected, whatever it threw): nothing was acted on, so the caller may send the same
     // request again — unless output had streamed.
@@ -340,7 +342,8 @@ async function anthropicTurn(t: Turn): Promise<AIChatResult> {
   if (native && typeof credential === 'function') throw new Error('Anthropic takes a key or token, not a request signer.');
   if (native && !token) throw new Error(`The AI connection has no key.${t.hint}`);
   const system = subscription ? withClaudeCodeSystem(req.system).system : req.system ? [{ type: 'text' as const, text: req.system }] : [];
-  const url = new URL(native ? `${ANTHROPIC_BASE}/v1/messages` : `${apiRoot(conn.baseUrl)}/messages`);
+  // A native connection with a base URL (a proxy, a gateway serving the Messages API) is posted to there, else to Anthropic.
+  const url = new URL(native && !conn.baseUrl ? `${ANTHROPIC_BASE}/v1/messages` : `${apiRoot(conn.baseUrl)}/messages`);
   const headers = native
     ? anthropicHeaders(token, subscription)
     : { ...(await authorizerFor(conn, credential)('POST', url)), 'anthropic-version': ANTHROPIC_VERSION };
@@ -409,7 +412,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
         originator: conn.originator || CODEX_ORIGINATOR, 'openai-beta': 'responses=experimental',
       }
     : await authorizerFor(conn, credential)('POST', url);
-  const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex, cacheKey: !codex && isOpenAi(conn.baseUrl), codex }));
+  const res = await post(t, url, headers, codexBody(req, t.model, { maxOutputTokens: !codex, cacheKey: codex || isOpenAi(conn.baseUrl), codex }));
   if (!res.ok) {
     const text = await errorText(res);
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.

@@ -234,7 +234,8 @@ What it guarantees:
   ChatGPT connection asks `chatgpt.com/backend-api/codex/models` for the
   account's own list, hidden entries left out, and a new sign-in starts on the
   first one. The backend hides models from clients it deems old, so the request
-  claims the Codex CLI version in `CODEX_CLIENT_VERSION`: bump it with releases.
+  claims the Codex CLI version in `CODEX_CLIENT_VERSION`: bump it with releases,
+  or pass `codexModels({ clientVersion })` your own.
   When the catalog cannot be fetched the built-in `CODEX_MODELS` list stands in.
 - **Images and PDFs.** Content can be `{type:'image', mediaType, data}`
   (PNG, JPEG, GIF or WebP; the Gemini API takes no GIF) or
@@ -249,7 +250,11 @@ What it guarantees:
   unchanged. It is tagged with the protocol that wrote it and replayed only
   there: move a conversation to another provider and each assistant turn is
   replayed from its text and tool calls instead. `stripProviderState(messages)`
-  from the core drops it outright.
+  from the core drops it outright. A host that keeps its own transcript
+  blocks builds the state with `providerState.anthropic(blocks)` (`.gemini`,
+  `.chatCompletions`, `.responses`) and reads one back with
+  `readProviderState(state)`, which says the protocol and what it holds;
+  the shapes are part of the API.
 - **Pinned connection.** With `connectionId` + `connectionRevision`, a deleted
   or edited connection fails the call instead of sending the conversation to a
   different provider.
@@ -302,7 +307,8 @@ turn whatever the stream is doing; `0` turns it off, and your `signal` still
 stops it. The idle one (`idleTimeoutMs`, off by default) fails the turn only
 when nothing arrives from the server for that long, from the request going
 out and between chunks. Either is `Timed out waiting for the model.`
-(`TIMED_OUT`). For a long thinking turn, pair them:
+(`TIMED_OUT`), and `failure.timeout` says which (`'idle'` or `'total'`), the
+retry policy being yours. For a long thinking turn, pair them:
 
 ```ts
 const result = await chat(conn, key, request, { timeoutMs: 0, idleTimeoutMs: 120_000, signal });
@@ -437,7 +443,8 @@ const result = await chat(conn, key, request, { fetch, signal });
 The global `fetch` of Node, Bun, Deno and the browser is itself a `Fetch`.
 
 A connection is `{ kind, baseUrl, protocol?, model?, auth?, accountId?, issuer?, orgId?, originator? }`:
-`kind: 'anthropic'` with `baseUrl: ''` for the Messages API, `'openai-compatible'`
+`kind: 'anthropic'` with `baseUrl: ''` for the Messages API at Anthropic (or a
+root such as `https://gateway.example/anthropic/v1` to post there instead), `'openai-compatible'`
 with `protocol` `'chat-completions'` (default), `'responses'` or `'gemini'`, and
 `'chatgpt'` for a Codex token (`originator` names your client in its requests;
 default `codex_cli_rs`, the Codex CLI's). The credential is the key or token, or a

@@ -64,7 +64,7 @@ describe('request body', () => {
         { id: 'c2', type: 'function', function: { name: 'browser', arguments: '{"act' } },
       ] },
       { role: 'tool', tool_call_id: 'c1', content: 'page' },
-      { role: 'tool', tool_call_id: 'c2', content: 'invalid' },
+      { role: 'tool', tool_call_id: 'c2', content: 'Error: invalid' },
       { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] },
     ]);
   });

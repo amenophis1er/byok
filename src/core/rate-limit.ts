@@ -214,7 +214,26 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Na
   const day = /\bper day\b|\bdaily (?:limit|quota)\b|\b[RT]PD\b/i.exec(message)?.index;
   const minute = /\bper min(?:ute)?\b|\b(?:[RT]PM|ITPM|OTPM)\b/i.exec(message)?.index;
   if (day === undefined && minute === undefined) return undefined;
-  return { window: minute === undefined || (day !== undefined && day < minute) ? 'day' : 'minute', documented: false };
+  const limit = wordsQuota(message);
+  return { window: minute === undefined || (day !== undefined && day < minute) ? 'day' : 'minute', documented: false, ...(limit ? { limit } : {}) };
+}
+
+/**
+ * The quota as the words say it: OpenAI's "on requests per min (RPM): Limit
+ * 3, Used 3, Requested 1" and "on tokens per min. Limit: 20.000000 / min",
+ * Anthropic's "of 50,000 input tokens per minute". The size after "Limit"
+ * or before the unit, the unit from the first window named.
+ */
+function wordsQuota(message: string): RateLimitQuota | undefined {
+  const out: RateLimitQuota = {};
+  const limit = /\blimit:?\s*(\d[\d,]*(?:\.\d+)?)/i.exec(message) ?? /\b(\d[\d,]*(?:\.\d+)?)\s+(?:input |output )?(?:requests?|tokens?)\s+per\s+(?:min|minute|day)\b/i.exec(message);
+  const n = limit ? Number(limit[1]!.replace(/,/g, '')) : NaN;
+  // A unit without a size says nothing the window does not: no quota then.
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  out.value = Math.floor(n);
+  const unit = /\b(requests?|tokens?)\s+per\s+(?:min|minute|day)\b|\b([RT])P[MD]\b|\b[IO](T)PM\b/i.exec(message);
+  if (unit) out.unit = /^t/i.test(unit[1] ?? unit[2] ?? unit[3] ?? '') ? 'tokens' : 'requests';
+  return out;
 }
 
 /** A violation's names, joined: its `quotaId`, `quotaMetric`, `subject` and `description`, those that are strings. */

@@ -84,9 +84,15 @@ export function codexCatalogModels(body: unknown): ModelInfo[] {
   return listed.sort((a, b) => a.priority - b.priority).map(({ priority: _priority, ...model }) => model);
 }
 
-/** GET the Codex model catalog for a signed-in account, as `originator` (default `CODEX_ORIGINATOR`). Throws on a failed request or an empty catalog. */
-export async function codexModels(input: { accessToken: string; accountId?: string; originator?: string }, options: RequestOptions = {}): Promise<ModelInfo[]> {
-  const res = await fetchOf(options)(`${CODEX_MODELS_URL}?client_version=${CODEX_CLIENT_VERSION}`, {
+/**
+ * GET the Codex model catalog for a signed-in account, as `originator`
+ * (default `CODEX_ORIGINATOR`), claiming `clientVersion` (default
+ * `CODEX_CLIENT_VERSION`; a host tracking the Codex CLI's releases passes
+ * its own). Throws on a failed request or an empty catalog.
+ */
+export async function codexModels(input: { accessToken: string; accountId?: string; originator?: string; clientVersion?: string }, options: RequestOptions = {}): Promise<ModelInfo[]> {
+  const version = input.clientVersion && /^[0-9A-Za-z.+-]{1,40}$/.test(input.clientVersion) ? input.clientVersion : CODEX_CLIENT_VERSION;
+  const res = await fetchOf(options)(`${CODEX_MODELS_URL}?client_version=${encodeURIComponent(version)}`, {
     headers: {
       authorization: `Bearer ${input.accessToken}`,
       ...(input.accountId ? { 'chatgpt-account-id': input.accountId } : {}),

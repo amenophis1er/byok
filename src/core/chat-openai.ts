@@ -74,7 +74,9 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
   };
   for (const message of messages) {
     if (message.role === 'tool') {
-      out.push({ role: 'tool', tool_call_id: message.toolCallId, content: textOf(message.content) });
+      // A failed result is marked as one, as the Responses items mark theirs: Chat Completions has no flag for it.
+      const text = textOf(message.content);
+      out.push({ role: 'tool', tool_call_id: message.toolCallId, content: message.isError ? `Error: ${text}` : text });
       pendingImages.push(...mediaOf(message.content));
       continue;
     }

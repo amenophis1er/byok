@@ -78,7 +78,8 @@ export function codexInput(messages: AIMessage[]): Item[] {
 /**
  * The request body. The Codex backend refuses `max_output_tokens`; a standard
  * Responses endpoint takes it. `cacheKey` sends OpenAI's `prompt_cache_key`:
- * for OpenAI itself, not another server. `reasoning: 'off'` sends the least
+ * for OpenAI itself and the Codex backend (as the Codex CLI does), not
+ * another server. `reasoning: 'off'` sends the least
  * effort the model takes (`lowestEffort`); on the Codex backend, whose
  * accepted levels are not published, `low`, which every model there takes.
  */
