@@ -105,12 +105,13 @@ export function geminiContents(messages: AIMessage[], model = ''): Content[] {
   return out;
 }
 
-const BUDGETS: Record<AIReasoning, number> = { off: 0, low: 1024, medium: 8192, high: 24576 };
+const BUDGETS: Record<Exclude<AIReasoning, 'on'>, number> = { off: 0, low: 1024, medium: 8192, high: 24576 };
 
 /**
  * Gemini's thinking config for a level: `thinkingLevel` on Gemini 3 and
  * later, a `thinkingBudget` before that, with the thought summaries asked
- * for when thinking is on. The Pro models cannot stop thinking: Gemini 3 Pro
+ * for when thinking is on; `on` asks for the summaries alone, at the
+ * model's own level. The Pro models cannot stop thinking: Gemini 3 Pro
  * (3.0) takes `LOW` and `HIGH` only (off and low are `LOW`, medium and high
  * `HIGH`; 3.1 Pro and later take every level, with `off` as `LOW`), a 2.5 Pro
  * refuses a zero budget, so `off` sends it nothing. Nothing for a model that
@@ -118,6 +119,7 @@ const BUDGETS: Record<AIReasoning, number> = { off: 0, low: 1024, medium: 8192, 
  */
 export function geminiThinking(reasoning: AIReasoning | undefined, model: string): Record<string, unknown> {
   if (!reasoning || !/^gemini-/.test(model)) return {};
+  if (reasoning === 'on') return { thinkingConfig: { includeThoughts: true } };
   const third = /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model);
   const pro = /-pro(?:-|$)/.test(model);
   const lowHighOnly = /^gemini-3-pro(?:-|$)/.test(model);
@@ -233,9 +235,12 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out.
+  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out, but say which it was (its arguments came whole, as an object).
   const runnable = mapped === 'end';
-  const webSearch = queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
+  const last = toolCalls[toolCalls.length - 1];
+  const cut = !runnable && last ? { id: last.id, name: last.name, raw: last.argsError ? last.argsError.raw : JSON.stringify(last.args ?? {}) } : undefined;
+  // Grounding names the queries and the sources of the turn, not which query brought which: each entry is the query alone.
+  const webSearch = queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
   // Gemini 3 and later bill each query; before that, grounding is billed once per prompt. Unknown model, no count.
   if (webSearch && usage && model) usage.webSearchRequests = /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model) ? queries.length : 1;
   return {
@@ -244,6 +249,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ...(reasoning ? { reasoning } : {}),
     ...(webSearch ? { webSearch } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(cut ? { truncatedToolCall: cut } : {}),
     // The parts come back as sent, signatures included; thought summaries without one are left out.
     ...(runnable && parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,

@@ -25,6 +25,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIStopReaso
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { chatCompletionsState, tagged } from './provider-state.js';
+import { GEMINI_SIGNATURE_PLACEHOLDER, checksSignatures } from './chat-gemini.js';
 import { streamFailure } from './failure.js';
 import { functionTools, webSearchTool } from './tools.js';
 
@@ -62,7 +63,14 @@ function userContent(content: string | AIContentPart[]): string | Array<Record<s
   });
 }
 
-export function openaiMessages(system: string, messages: AIMessage[]): ChatMessage[] {
+/**
+ * The history as Chat Completions messages. With `placeholder`, an
+ * assistant turn's first call without a kept `thought_signature` gets
+ * Google's placeholder in `extra_content`, as the native Gemini path adds
+ * it: Gemini 3 over Google's OpenAI-compatible root refuses the replay
+ * without one.
+ */
+export function openaiMessages(system: string, messages: AIMessage[], placeholder = false): ChatMessage[] {
   const out: ChatMessage[] = system ? [{ role: 'system', content: system }] : [];
   // Tool messages cannot carry images or documents in Chat Completions: they
   // follow the tool results as one user message instead.
@@ -87,13 +95,15 @@ export function openaiMessages(system: string, messages: AIMessage[]): ChatMessa
     }
     const calls = message.toolCalls ?? [];
     const extra = chatCompletionsState(message.providerState);
+    // The placeholder on the first call, unless a call of the turn kept its own extra_content.
+    const stub = placeholder && !calls.some((call) => extra[call.id] !== undefined) ? { google: { thought_signature: GEMINI_SIGNATURE_PLACEHOLDER } } : undefined;
     out.push({
       role: 'assistant',
       content: message.content ?? (calls.length > 0 ? null : ''),
       ...(calls.length > 0 ? {
-        tool_calls: calls.map((call) => ({ id: call.id, type: 'function',
+        tool_calls: calls.map((call, i) => ({ id: call.id, type: 'function',
           function: { name: call.name, arguments: call.argsError ? call.argsError.raw : JSON.stringify(call.args ?? {}) },
-          ...(extra[call.id] !== undefined ? { extra_content: extra[call.id] } : {}) })),
+          ...(extra[call.id] !== undefined ? { extra_content: extra[call.id] } : stub && i === 0 ? { extra_content: stub } : {}) })),
       } : {}),
     });
   }
@@ -132,25 +142,27 @@ export function openaiBody(req: AIChatRequest, model: string, base: string, omit
   if (webSearchTool(req)) throw new Error('This server speaks Chat Completions, which has no web search tool: leave the web_search tool out for it.'); // chat() skips the protocol first; this guards a direct caller
   const tools = functionTools(req).map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }));
   const openai = /(^|\.)openai\.com$/i.test(safeHost(base));
+  // Google's OpenAI-compatible root serving a model that checks thought signatures: the replay needs the placeholder.
+  const google = /(^|\.)(?:generativelanguage|aiplatform)\.googleapis\.com$/i.test(safeHost(base)) && checksSignatures(model);
   return {
     model,
     stream: true,
     [openai ? 'max_completion_tokens' : 'max_tokens']: req.maxTokens ?? OPENAI_DEFAULT_MAX_TOKENS,
-    messages: openaiMessages(req.system, req.messages),
+    messages: openaiMessages(req.system, req.messages, google),
     ...(tools.length > 0 ? { tools } : {}),
     ...(tools.length > 0 && !omit.has('parallel_tool_calls') ? { parallel_tool_calls: req.parallelToolCalls === true } : {}),
     ...(!omit.has('stream_options') ? { stream_options: { include_usage: true } } : {}),
     // OpenAI's own fields; another server that refuses one gets the request again without it.
     ...(req.cacheKey && openai && !omit.has('prompt_cache_key') ? { prompt_cache_key: req.cacheKey } : {}),
     ...(effort(req.reasoning, model, openai, omit)),
-    // Ollama's own switch: `reasoning: 'off'` turns a thinking model's thinking off there; its levels have no Ollama equivalent.
-    ...(req.reasoning === 'off' && isOllama(base) && !omit.has('think') ? { think: false } : {}),
+    // Ollama's own switch: `reasoning: 'off'` turns a thinking model's thinking off there, `'on'` on; its levels have no Ollama equivalent.
+    ...((req.reasoning === 'off' || req.reasoning === 'on') && isOllama(base) && !omit.has('think') ? { think: req.reasoning === 'on' } : {}),
   };
 }
 
-/** OpenAI's `reasoning_effort`: the level asked for, or for `off` the least the model takes. */
+/** OpenAI's `reasoning_effort`: the level asked for, or for `off` the least the model takes; nothing for `on`, the model's own default. */
 function effort(reasoning: AIChatRequest['reasoning'], model: string, openai: boolean, omit: ReadonlySet<OptionalField>): Record<string, unknown> {
-  if (!reasoning || !openai || omit.has('reasoning_effort')) return {};
+  if (!reasoning || reasoning === 'on' || !openai || omit.has('reasoning_effort')) return {};
   const value = reasoning === 'off' ? lowestEffort(model) : reasoning;
   return value ? { reasoning_effort: value } : {};
 }
@@ -175,41 +187,54 @@ const STOP: Record<string, AIStopReason> = {
 };
 
 /**
- * Splits a model's text from the reasoning it writes inline in `<think>` or
- * `<reasoning>` tags, as it streams: text outside the tags is text, text
- * inside is reasoning, and a chunk that ends on what may be the start of a
- * tag is held until the next one says.
+ * Splits a model's text from the reasoning it writes inline in `<think>`,
+ * `<thinking>` or `<reasoning>` tags, as it streams: text inside the tags is
+ * reasoning, text outside is text, and a chunk that ends on what may be the
+ * start of a tag is held until the next one says. Only a block that opens
+ * the answer (whitespace before it allowed) is reasoning: a tag the model
+ * quotes partway through its answer is text, as is everything after it —
+ * unless `anywhere` says a block may open anywhere.
  */
 export class ThinkSplitter {
   private inside = false;
   /** The tag that opened the reasoning; only its own close ends it. */
   private opened = '';
   private held = '';
-  constructor(private readonly emit: (kind: 'text' | 'reasoning', delta: string) => void) {}
+  /** Whether any text proper has been emitted: a tag after it is literal, unless `anywhere`. */
+  private textSeen = false;
+  constructor(private readonly emit: (kind: 'text' | 'reasoning', delta: string) => void, private readonly anywhere = false) {}
 
   push(chunk: string): void {
     let s = this.held + chunk;
     this.held = '';
     for (;;) {
-      const tag = /<(\/?)(think|reasoning)>/i.exec(s);
+      if (this.literal()) break;
+      const tag = /<(\/?)(think|thinking|reasoning)>/i.exec(s);
       if (!tag) break;
       const closing = tag[1] === '/';
       const name = tag[2]!.toLowerCase();
-      // A close outside, an open inside, or a close of the other tag inside: literal text of whatever is current.
-      if (closing !== this.inside || (closing && name !== this.opened)) {
+      const before = s.slice(0, tag.index);
+      // A close outside, an open inside, a close of the other tag inside, or an open after the answer began: literal text of whatever is current.
+      if (closing !== this.inside || (closing && name !== this.opened) || (!closing && !this.anywhere && (this.textSeen || /\S/.test(before)))) {
         this.out(s.slice(0, tag.index + tag[0].length));
         s = s.slice(tag.index + tag[0].length);
         continue;
       }
-      this.out(s.slice(0, tag.index));
+      this.out(before);
       this.inside = !closing;
       this.opened = closing ? '' : name;
       s = s.slice(tag.index + tag[0].length);
     }
-    // Hold back a tail that may be the start of a tag ("<", "</thi"), up to a tag's length.
-    const tail = /<\/?[a-z]{0,9}$/i.exec(s);
-    if (tail) { this.held = s.slice(tail.index); s = s.slice(0, tail.index); }
+    // Hold back a tail that may be the start of a tag ("<", "</thi"), up to a tag's length — unless no tag can matter any more,
+    // the answer having begun (in this very chunk included).
+    const tail = this.literal() ? null : /<\/?[a-z]{0,9}$/i.exec(s);
+    if (tail && (this.inside || this.anywhere || !/\S/.test(s.slice(0, tail.index)))) { this.held = s.slice(tail.index); s = s.slice(0, tail.index); }
     this.out(s);
+  }
+
+  /** Whether tags have stopped mattering: outside a block, after the answer began, with no block allowed anywhere. */
+  private literal(): boolean {
+    return !this.inside && !this.anywhere && this.textSeen;
   }
 
   /** The end of the stream: what was held is what it is. */
@@ -219,7 +244,9 @@ export class ThinkSplitter {
   }
 
   private out(delta: string): void {
-    if (delta) this.emit(this.inside ? 'reasoning' : 'text', delta);
+    if (!delta) return;
+    if (!this.inside && /\S/.test(delta)) this.textSeen = true;
+    this.emit(this.inside ? 'reasoning' : 'text', delta);
   }
 }
 
@@ -309,8 +336,10 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the token limit or a filter may carry a truncated call: never hand one out.
+  // A turn cut off by the token limit or a filter may carry a truncated call: never hand one out, but say which it was.
   const runnable = mapped === 'tool_use' || mapped === 'end';
+  const last = [...fragments.entries()].sort(([a], [b]) => a - b).pop();
+  const cut = !runnable && last ? { id: settle(last[0], last[1]), name: last[1].name, raw: last[1].args } : undefined;
   const cleaned = text.trim();
   const thoughts = reasoning.trim();
   return {
@@ -318,6 +347,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ...(cleaned ? { text: cleaned } : {}),
     ...(thoughts ? { reasoning: thoughts } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(cut ? { truncatedToolCall: cut } : {}),
     ...(runnable && Object.keys(extraContent).length > 0 ? { providerState: tagged.chatCompletions(extraContent) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),

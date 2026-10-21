@@ -11,7 +11,7 @@
  *   );
  */
 
-export { chat, protocolCandidates, networkCause, TIMED_OUT, type ChatOptions, type ChatRequest } from './chat.js';
+export { chat, protocolCandidates, networkCause, transportCode, TIMED_OUT, type ChatOptions, type ChatRequest } from './chat.js';
 export type { ChatEvent, ChatEventSink } from './events.js';
 export { listModels, getModelInfo } from './models.js';
 export { knownModelInfo, knownModelInfoByName, modelName, type ModelFacts } from './model-info.js';

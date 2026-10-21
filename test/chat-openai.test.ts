@@ -143,12 +143,38 @@ describe('streamed response', () => {
     expect(result.toolCalls![0]).toMatchObject({ id: 'c', argsError: { raw: '{"action": nav' } });
   });
 
-  it('hands out no tool call from a turn cut off by the length limit or a filter', async () => {
+  it('hands out no tool call from a turn cut off by the length limit or a filter, but says which it was cut off in', async () => {
     for (const [finish, mapped] of [['length', 'length'], ['content_filter', 'refusal']] as const) {
       const result = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'c', function: { name: 'browser', arguments: '{"action":"nav' } }] }), chunk({}, finish)]));
       expect(result.stopReason).toBe(mapped);
       expect(result.toolCalls).toBeUndefined();
+      expect(result.truncatedToolCall).toEqual({ id: 'c', name: 'browser', raw: '{"action":"nav' });
     }
+    // The last call is the cut one; a whole turn carries none.
+    const two = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }, { index: 1, id: 'b', function: { name: 'browser', arguments: '{"x' } }] }), chunk({}, 'length')]));
+    expect(two.truncatedToolCall).toEqual({ id: 'b', name: 'browser', raw: '{"x' });
+    const whole = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }] }), chunk({}, 'tool_calls')]));
+    expect(whole).not.toHaveProperty('truncatedToolCall');
+  });
+
+  it("adds Google's placeholder signature on Google's OpenAI-compatible root for a model that checks, where a call kept none", () => {
+    const google = 'https://generativelanguage.googleapis.com/v1beta/openai';
+    const req: AIChatRequest = { system: '', messages: [], tools: [TOOL] };
+    const history: AIMessage[] = [
+      { role: 'user', content: 'go' },
+      { role: 'assistant', toolCalls: [{ id: 'c1', name: 'browser', args: {} }, { id: 'c2', name: 'browser', args: {} }] },
+      { role: 'tool', toolCallId: 'c1', name: 'browser', content: 'ok' },
+      { role: 'tool', toolCallId: 'c2', name: 'browser', content: 'ok' },
+    ];
+    const calls = (body: Record<string, unknown>) => (body['messages'] as Array<{ tool_calls?: Array<Record<string, unknown>> }>)[1]!.tool_calls!;
+    const stub = { google: { thought_signature: 'skip_thought_signature_validator' } };
+    expect(calls(openaiBody({ ...req, messages: history }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([stub, undefined]);
+    // Not for a model before Gemini 3, another host, or a turn that kept a signature of its own.
+    expect(calls(openaiBody({ ...req, messages: history }, 'gemini-2.5-flash', google)).map((c) => c['extra_content'])).toEqual([undefined, undefined]);
+    expect(calls(openaiBody({ ...req, messages: history }, 'gemini-3-flash', 'https://openrouter.ai/api/v1')).map((c) => c['extra_content'])).toEqual([undefined, undefined]);
+    const own = { google: { thought_signature: 'real' } };
+    const kept: AIMessage[] = [history[0]!, { ...(history[1] as Extract<AIMessage, { role: 'assistant' }>), providerState: { protocol: 'chat-completions', extraContent: { c2: own } } }, ...history.slice(2)];
+    expect(calls(openaiBody({ ...req, messages: kept }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([undefined, own]);
   });
 
   it('fails on an error chunk, and when the stream ends before a finish_reason', async () => {

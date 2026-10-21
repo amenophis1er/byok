@@ -68,9 +68,13 @@ describe('what a turn searched', () => {
     ])), (e) => seen.push(e));
     expect(result).toMatchObject({
       ok: true, text: 'Two things.', stopReason: 'end',
-      webSearch: { queries: ['news today'], sources: [{ url: 'https://example.com/a', title: 'A' }, { url: 'https://example.com/b', title: 'B' }] },
+      webSearch: {
+        queries: ['news today'], sources: [{ url: 'https://example.com/a', title: 'A' }, { url: 'https://example.com/b', title: 'B' }],
+        searches: [{ query: 'news today', sources: [{ url: 'https://example.com/a', title: 'A' }, { url: 'https://example.com/b', title: 'B' }], resultCount: 2 }],
+      },
       usage: { webSearchRequests: 1 },
     });
+    expect(result.webSearch!.searches![0]).not.toHaveProperty('error');
     expect(result.toolCalls).toBeUndefined();
     expect(seen).toEqual([{ type: 'search', query: 'news today' }, { type: 'text', delta: 'Two things.' }]);
     // The server tool's call and result go back as they came, encrypted content included.
@@ -90,7 +94,8 @@ describe('what a turn searched', () => {
       { type: 'message_delta', delta: { stop_reason: 'pause_turn' }, usage: { output_tokens: 5 } },
       { type: 'message_stop' },
     ])));
-    expect(result).toMatchObject({ ok: true, stopReason: 'pause', webSearch: { queries: ['q'], sources: [] } });
+    expect(result).toMatchObject({ ok: true, stopReason: 'pause', webSearch: { queries: ['q'], sources: [], searches: [{ query: 'q', sources: [], error: 'max_uses_exceeded' }] } });
+    expect(result).not.toHaveProperty('truncatedToolCall');
     const history: AIMessage[] = [{ role: 'user', content: 'go' }, { role: 'assistant', providerState: result.providerState }];
     const replayed = anthropicMessages(history);
     expect(replayed[1]).toEqual({ role: 'assistant', content: (result.providerState as { blocks: unknown[] }).blocks });
@@ -121,7 +126,7 @@ describe('what a turn searched', () => {
       ] }] } },
       { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 5, output_tokens: 9 } } },
     ], false)), undefined, (e) => seen.push(e));
-    expect(result).toMatchObject({ text: 'Two things.', webSearch: { queries: ['news today'], sources: [{ url: 'https://example.com/a', title: 'A' }] }, usage: { webSearchRequests: 2 } });
+    expect(result).toMatchObject({ text: 'Two things.', webSearch: { queries: ['news today'], sources: [{ url: 'https://example.com/a', title: 'A' }], searches: [{ query: 'news today', sources: [] }] }, usage: { webSearchRequests: 2 } });
     expect(seen).toEqual([{ type: 'search', query: 'news today' }, { type: 'text', delta: 'Two things.' }]);
     expect((result.providerState as { items: Array<{ type: string }> }).items.map((i) => i.type)).toEqual(['web_search_call', 'web_search_call', 'message']);
   });
@@ -142,7 +147,7 @@ describe('what a turn searched', () => {
         groundingChunks: [{ web: { uri: 'https://example.com/a', title: 'A' } }, { web: { uri: 'https://example.com/a', title: 'A' } }, { retrievedContext: { uri: 'x' } }],
       } }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 3 } },
     ], false)), (e) => seen.push(e));
-    expect(result).toMatchObject({ text: 'Two things.', webSearch: { queries: ['news today'], sources: [{ url: 'https://example.com/a', title: 'A' }] }, usage: { webSearchRequests: 1 } });
+    expect(result).toMatchObject({ text: 'Two things.', webSearch: { queries: ['news today'], sources: [{ url: 'https://example.com/a', title: 'A' }], searches: [{ query: 'news today', sources: [] }] }, usage: { webSearchRequests: 1 } });
     // The grounding is read before the chunk's parts, so the search is announced before the text it arrived with.
     expect(seen).toEqual([{ type: 'text', delta: 'Two ' }, { type: 'search', query: 'news today' }, { type: 'text', delta: 'things.' }]);
   });

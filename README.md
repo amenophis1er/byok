@@ -185,16 +185,19 @@ What it guarantees:
   (`parallelToolCalls: false`); servers that reject the field are retried
   without it.
 - **A failure says what it was, and whether, and when, to try again.** Every
-  failed result carries `failure: { kind, status?, providerCode?, requestId?,
-  cause?, streamed }`: route on `kind` (`request`, `network`, `http`,
-  `stream`, `timeout`, `stopped`, `sink`) and the provider's own code rather
-  than on the sentence in `error`, quote `requestId` to the provider's
+  failed result carries `failure: { kind, status?, providerCode?, providerType?,
+  providerMessage?, requestId?, cause?, code?, timeout?, streamed }`: route on
+  `kind` (`request`, `network`, `http`, `stream`, `timeout`, `stopped`,
+  `sink`) and the provider's own code rather than on the sentence in
+  `error`, log `providerType` and `providerMessage` as the provider wrote
+  them (never ChatGPT's), quote `requestId` to the provider's
   support, and read `streamed` to know whether the user already saw part of
   the answer. `retryable: true` means nothing was acted on: the connection
   dropped, the server failed (5xx), or a rate limit lifts within the minute,
   and nothing had streamed. A dropped connection (`network`) is whatever
   the transport rejected with — a `TypeError`, a host `fetch`'s own error,
-  a body read that failed — with its message and code in `cause`. A
+  a body read that failed — with its message in `cause` and the innermost
+  code of its cause chain (`ECONNRESET`) in `code`. A
   rate-limited result also carries what
   the provider said: `retryAfterMs` (its `Retry-After`, OpenAI's reset
   headers, Anthropic's reset instants, Gemini's `RetryInfo` on any status, ChatGPT's
@@ -319,14 +322,20 @@ Let the provider search the web, where it can:
 const result = await chat(conn, key, { ...request, tools: [...tools, { type: 'web_search', maxUses: 3 }] }, {
   onEvent: (e) => { if (e.type === 'search') status(`Searching: ${e.query}`); },
 });
-result.webSearch;                // { queries, sources: [{ url, title }] }, when it searched
+result.webSearch;                // { queries, sources: [{ url, title }], searches: [{ query, sources, resultCount?, error? }] }, when it searched
 if (result.stopReason === 'pause') { /* Anthropic paused a long search turn: push the assistant message, providerState and all, and call again */ }
 ```
 
 Anthropic runs its `web_search` server tool, the Responses API its
 `web_search` tool, Gemini its Google Search grounding; a Chat Completions
 server has none, and a turn that asks it for one fails before any request. The results stay with the provider and
-in `providerState`; the turn reports the queries and sources it used.
+in `providerState`; the turn reports the queries and sources it used, and
+each search on its own in `searches` — with its sources, their count or
+the error it got (`max_uses_exceeded`) on Anthropic, which tells them
+apart; the query alone on the Responses API and Gemini, which do not. A
+turn cut off in the middle of a tool call (`stopReason` `length` or
+`refusal`) names it in `truncatedToolCall: { id, name, raw }`, never in
+`toolCalls`.
 
 Ask for reasoning where the model can, and watch it:
 
@@ -338,17 +347,23 @@ result.reasoning;             // what the provider showed of it, when it showed 
 result.usage?.reasoningTokens;
 ```
 
-`reasoning` is `'off'` or a level, mapped to each provider's own control
-(Anthropic's adaptive thinking and effort, or a budget on the 4.5 generation
-and before; OpenAI's `reasoning_effort` and the Responses API's `reasoning`
-with its encrypted content replayed through `providerState`; Gemini's
-`thinkingLevel` or `thinkingBudget`); absent, nothing is sent and the model
-does what it does by default. `'off'` sends each family's least: OpenAI's
-`none` (GPT-5.1 on), `minimal` (GPT-5) or `low` (Codex models, o-series; nothing on the Pro models;
-and everything on the ChatGPT backend, whose accepted levels are not
-published), nothing for a model not known to reason; Ollama's `think:
-false`. A model that writes its thinking inline in `<think>` tags has it
-reported as reasoning, not text.
+`reasoning` is `'off'`, `'on'` or a level, mapped to each provider's own
+control (Anthropic's adaptive thinking and effort, or a budget on the 4.5
+generation and before; OpenAI's `reasoning_effort` and the Responses API's
+`reasoning` with its encrypted content replayed through `providerState`;
+Gemini's `thinkingLevel` or `thinkingBudget`); absent, nothing is sent and
+the model does what it does by default. `'on'` asks for thinking and its
+summaries at the provider's own default, no effort or budget named
+(Anthropic: adaptive with no effort, or the medium budget; Responses: the
+summary alone; Gemini: `includeThoughts`; Ollama: `think: true`; OpenAI's
+Chat Completions: nothing). `'off'` sends each family's least: OpenAI's
+`none` (GPT-5.1 on), `minimal` (GPT-5) or `low` (Codex models, o-series;
+nothing on the Pro models; and everything on the ChatGPT backend, whose
+accepted levels are not published), nothing for a model not known to
+reason; Ollama's `think: false`. A model that opens its answer with
+inline thinking in `<think>`, `<thinking>` or `<reasoning>` tags has it
+reported as reasoning, not text; a tag quoted partway through the answer is
+text.
 
 Token counts mean the same thing on every provider: `usage.inputTokens` is
 the whole prompt, cached tokens included, with `cacheReadTokens` and
@@ -579,8 +594,9 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "Origin: chrome-extension://x" local
   **not** a 401 on `/api/me` (it returns an all-zero user), so pairing is
   detected by a real user ID. Removing the connection un-pairs the key on
   ollama.com and deletes it. Needs WebCrypto Ed25519 (Chrome 137+).
-- `<think>…</think>` / `<reasoning>…</reasoning>` blocks are stripped from
-  completions (local models emit them despite instructions).
+- `<think>…</think>` / `<thinking>…</thinking>` / `<reasoning>…</reasoning>`
+  blocks opening a completion are stripped from it and reported as reasoning
+  (local models emit them despite instructions); one quoted mid-answer is text.
 - Debug logging: `chrome.storage.local.set({ <debugFlagKey>: true })` in the
   SW console logs full request/response bodies (never keys).
 

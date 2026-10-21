@@ -5,8 +5,8 @@
  * leaves it alone.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chat, HttpError, listModels, withRetry, type Connection, type Fetch } from '../src/core/index.js';
-import { providerCodeOf, requestIdOf } from '../src/core/failure.js';
+import { chat, HttpError, listModels, transportCode, withRetry, type Connection, type Fetch } from '../src/core/index.js';
+import { providerCodeOf, providerDetailsOf, requestIdOf } from '../src/core/failure.js';
 import { describeHttpText } from '../src/core/http.js';
 import { anthropicSse, openaiSse, streamOf } from './helpers.js';
 
@@ -32,9 +32,15 @@ describe('the kinds', () => {
     const own = vi.fn<Fetch>(async () => { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); });
     expect(await chat(conn, 'k', req, { fetch: own })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'socket hang up (ECONNRESET)', streamed: false } });
     const chained = vi.fn<Fetch>(async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ETIMEDOUT'), { code: 'ERR_SOCKET_CONNECTION_TIMEOUT' }) }); });
-    expect(await chat(conn, 'k', req, { fetch: chained })).toMatchObject({ failure: { kind: 'network', cause: 'fetch failed (ERR_SOCKET_CONNECTION_TIMEOUT: connect ETIMEDOUT)' } });
+    expect(await chat(conn, 'k', req, { fetch: chained })).toMatchObject({ failure: { kind: 'network', cause: 'fetch failed (ERR_SOCKET_CONNECTION_TIMEOUT: connect ETIMEDOUT)', code: 'ERR_SOCKET_CONNECTION_TIMEOUT' } });
+    // The code is the innermost down the chain, however deep; none when no link has one; a cycle ends the walk.
+    const deep = vi.fn<Fetch>(async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('transport'), { code: 'OUTER', cause: { code: 'ECONNRESET' } }) }); });
+    expect(await chat(conn, 'k', req, { fetch: deep })).toMatchObject({ failure: { kind: 'network', code: 'ECONNRESET' } });
+    expect(transportCode(new TypeError('fetch failed'))).toBeUndefined();
+    const loop: { code: string; cause?: unknown } = { code: 'A' }; loop.cause = loop;
+    expect(transportCode(loop)).toBe('A');
     const bare = vi.fn<Fetch>(async () => { throw { code: 'ECONNRESET' }; });
-    expect(await chat(conn, 'k', req, { fetch: bare })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'ECONNRESET' } });
+    expect(await chat(conn, 'k', req, { fetch: bare })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'ECONNRESET', code: 'ECONNRESET' } });
     const mute = vi.fn<Fetch>(async () => { throw undefined; });
     expect(await chat(conn, 'k', req, { fetch: mute })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'The request failed.' } });
     // A body whose read fails is the transport's too: retryable before anything streamed, not after.
@@ -59,11 +65,25 @@ describe('the kinds', () => {
   it('http: the status, the provider\'s code and request id', async () => {
     const fetch = vi.fn<Fetch>(async () => json({ error: { type: 'insufficient_quota', code: 'insufficient_quota', message: 'You exceeded your current quota.' } }, 429, { 'x-request-id': 'req_123' }));
     const result = await chat(conn, 'k', req, { fetch });
-    expect(result.failure).toEqual({ kind: 'http', status: 429, providerCode: 'insufficient_quota', requestId: 'req_123', streamed: false });
+    expect(result.failure).toEqual({ kind: 'http', status: 429, providerCode: 'insufficient_quota', providerMessage: 'You exceeded your current quota.', requestId: 'req_123', streamed: false });
     expect(result.retryable).toBeUndefined();
     const anthropic = vi.fn<Fetch>(async () => json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, 529, { 'request-id': 'req_abc' }));
     expect(await chat({ kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-5-5' }, 'sk', req, { fetch: anthropic }))
-      .toMatchObject({ retryable: true, failure: { kind: 'http', status: 529, providerCode: 'overloaded_error', requestId: 'req_abc' } });
+      .toMatchObject({ retryable: true, failure: { kind: 'http', status: 529, providerCode: 'overloaded_error', providerMessage: 'Overloaded', requestId: 'req_abc' } });
+    // The type apart from the code when both are given; the message as written, cut at 2000 characters; nothing of ChatGPT's wording.
+    const typed = vi.fn<Fetch>(async () => json({ error: { type: 'invalid_request_error', code: 'context_length_exceeded', message: 'x'.repeat(2500) } }, 400));
+    const long = await chat(conn, 'k', req, { fetch: typed });
+    expect(long.failure).toMatchObject({ providerCode: 'context_length_exceeded', providerType: 'invalid_request_error' });
+    expect(long.failure!.providerMessage).toBe(`${'x'.repeat(2000)}…`);
+    expect((await chat({ kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-5-5' }, 'sk', req, { fetch: anthropic })).failure).not.toHaveProperty('providerType');
+    const codex = vi.fn<Fetch>(async () => json({ error: { type: 'usage_limit_reached', message: 'secret prompt echo' } }, 429));
+    const hidden = await chat({ kind: 'chatgpt', baseUrl: '', model: 'gpt-5.5' }, 'tok', req, { fetch: codex });
+    expect(hidden.failure).toMatchObject({ kind: 'http', status: 429, providerCode: 'usage_limit_reached' });
+    expect(hidden.failure).not.toHaveProperty('providerMessage');
+    expect(JSON.stringify(hidden)).not.toContain('secret prompt echo');
+    expect(providerDetailsOf(JSON.stringify({ error: 'plain words' }))).toEqual({ providerMessage: 'plain words' });
+    expect(providerDetailsOf(JSON.stringify({ error: { message: '  ' } }))).toEqual({});
+    expect(providerDetailsOf('nope')).toEqual({});
   });
 
   it('stream: a failure event with the provider\'s code, or a stream that ended early', async () => {

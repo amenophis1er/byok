@@ -75,7 +75,7 @@ describe('ChatGPT stream', () => {
       { type: 'response.function_call_arguments.delta', item_id: 'fc1', delta: '{"action":"na' },
       { type: 'response.incomplete', response: { status: 'incomplete' } },
     ));
-    expect(result).toEqual({ ok: true, stopReason: 'length' });
+    expect(result).toEqual({ ok: true, stopReason: 'length', truncatedToolCall: { id: 'c', name: 'browser', raw: '{"action":"na' } });
     // The reason given says which: the limit, or a filter (a refusal). Unknown or absent, the limit.
     const reason = (details: Record<string, unknown> | undefined) => codexResult(events(
       { type: 'response.output_text.delta', item_id: 'm', delta: 'Part' },

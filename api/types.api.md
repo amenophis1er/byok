@@ -117,6 +117,11 @@ export interface AIChatResult {
     text?: string;
     // (undocumented)
     toolCalls?: AIToolCall[];
+    truncatedToolCall?: {
+        id: string;
+        name: string;
+        raw: string;
+    };
     usage?: {
         inputTokens: number;
         outputTokens: number;
@@ -178,9 +183,12 @@ export interface AIDeleteConnectionRequest {
 // @public
 export interface AIFailure {
     cause?: string;
+    code?: string;
     // (undocumented)
     kind: AIFailureKind;
     providerCode?: string;
+    providerMessage?: string;
+    providerType?: string;
     requestId?: string;
     status?: number;
     streamed: boolean;
@@ -289,7 +297,7 @@ export type AIOpencodePoll = {
 };
 
 // @public
-export type AIReasoning = 'off' | 'low' | 'medium' | 'high';
+export type AIReasoning = 'off' | 'on' | 'low' | 'medium' | 'high';
 
 // @public (undocumented)
 export interface AIResult<T> {
@@ -379,6 +387,20 @@ export interface AIToolSpec {
 export interface AIWebSearch {
     // (undocumented)
     queries: string[];
+    searches?: AIWebSearchCall[];
+    // (undocumented)
+    sources: Array<{
+        url: string;
+        title?: string;
+    }>;
+}
+
+// @public
+export interface AIWebSearchCall {
+    error?: string;
+    // (undocumented)
+    query: string;
+    resultCount?: number;
     // (undocumented)
     sources: Array<{
         url: string;

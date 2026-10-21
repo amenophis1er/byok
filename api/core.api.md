@@ -108,12 +108,11 @@ export type HeaderSource = {
 
 // @public
 export class HttpError extends Error {
-    constructor(status: number, message: string, rateLimit?: RateLimit, source?: {
-        providerCode?: string;
-        requestId?: string;
-    });
+    constructor(status: number, message: string, rateLimit?: RateLimit, source?: FailureSource);
     readonly limit?: RateLimitQuota;
     readonly providerCode?: string;
+    readonly providerMessage?: string;
+    readonly providerType?: string;
     readonly quota?: RateLimitWindow;
     readonly requestId?: string;
     readonly resetAt?: number;
@@ -246,6 +245,9 @@ export function stripProviderState<T extends AIMessage>(messages: readonly T[]):
 
 // @public (undocumented)
 export const TIMED_OUT = "Timed out waiting for the model.";
+
+// @public
+export function transportCode(error: unknown): string | undefined;
 
 // @public
 export function withRetry(attempt: (n: number) => Promise<AIChatResult>, options?: RetryOptions): Promise<AIChatResult>;

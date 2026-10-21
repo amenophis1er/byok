@@ -23,19 +23,37 @@ export function code(value: unknown): Pick<AIFailure, 'providerCode'> {
  * `error.type`/`code`, a top-level `code`. Nothing when there is none.
  */
 export function providerCodeOf(body: string): string | undefined {
+  return providerDetailsOf(body).providerCode;
+}
+
+/** The longest provider message kept, as it was written. */
+const MESSAGE_MAX = 2000;
+
+/**
+ * What a failed body says of itself: the code (`providerCodeOf`), the
+ * `error.type` when it is a code-shaped string that the code did not come
+ * from, and the message (`error.message`, a string `error`, `message`,
+ * `detail`), cut to 2000 characters. Each only when there.
+ */
+export function providerDetailsOf(body: string): Pick<AIFailure, 'providerCode' | 'providerType' | 'providerMessage'> {
   let json: unknown;
-  try { json = JSON.parse(body); } catch { return undefined; }
+  try { json = JSON.parse(body); } catch { return {}; }
   // A body wrapped in an array (Gemini, at times): its first object.
   if (Array.isArray(json)) json = json.find((item) => item && typeof item === 'object' && !Array.isArray(item));
-  if (!json || typeof json !== 'object') return undefined;
+  if (!json || typeof json !== 'object') return {};
   const top = json as Record<string, unknown>;
   const error = top['error'] && typeof top['error'] === 'object' ? (top['error'] as Record<string, unknown>) : undefined;
   const detail = top['detail'] && typeof top['detail'] === 'object' ? (top['detail'] as Record<string, unknown>) : undefined;
+  const out: Pick<AIFailure, 'providerCode' | 'providerType' | 'providerMessage'> = {};
   for (const value of [error?.['code'], error?.['type'], error?.['status'], detail?.['code'], top['code']]) {
     const found = code(value).providerCode;
-    if (found) return found;
+    if (found) { out.providerCode = found; break; }
   }
-  return undefined;
+  const type = code(error?.['type']).providerCode;
+  if (type && type !== out.providerCode) out.providerType = type;
+  const message = typeof top['error'] === 'string' ? top['error'] : error?.['message'] ?? top['message'] ?? top['detail'];
+  if (typeof message === 'string' && message.trim()) out.providerMessage = message.length > MESSAGE_MAX ? `${message.slice(0, MESSAGE_MAX)}…` : message;
+  return out;
 }
 
 /** The provider's request id from its headers (`request-id`, `x-request-id`), for its support. */
