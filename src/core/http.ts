@@ -4,7 +4,7 @@
  */
 
 import { normalizeBaseUrl } from '../types.js';
-import { rateLimitOf, type RateLimit, type RateLimitWindow } from './rate-limit.js';
+import { rateLimitOf, type RateLimit, type RateLimitQuota, type RateLimitWindow } from './rate-limit.js';
 import { providerCodeOf, requestIdOf } from './failure.js';
 
 export const ANTHROPIC_BASE = 'https://api.anthropic.com';
@@ -92,10 +92,12 @@ export class HttpError extends Error {
   readonly status: number;
   /** How long the server asked us to wait, when it said. */
   readonly retryAfterMs?: number;
-  /** When that wait ends, epoch ms. */
+  /** When that wait ends, epoch ms; on a day window, the day's end where the server documents it (Gemini: midnight Pacific), else unset. */
   readonly resetAt?: number;
   /** Which rate-limit window ran out, when the server said. */
   readonly quota?: RateLimitWindow;
+  /** The quota that ran out — its size, unit, tier and model — when the server named it. */
+  readonly limit?: RateLimitQuota;
   /** The provider's own code, when the body carried one (`rate_limit_error`, `insufficient_quota`, …). */
   readonly providerCode?: string;
   /** The provider's request id, when a header carried one. */
@@ -107,6 +109,7 @@ export class HttpError extends Error {
     if (rateLimit.retryAfterMs !== undefined) this.retryAfterMs = rateLimit.retryAfterMs;
     if (rateLimit.resetAt !== undefined) this.resetAt = rateLimit.resetAt;
     if (rateLimit.quota !== undefined) this.quota = rateLimit.quota;
+    if (rateLimit.limit !== undefined) this.limit = rateLimit.limit;
     if (source.providerCode !== undefined) this.providerCode = source.providerCode;
     if (source.requestId !== undefined) this.requestId = source.requestId;
   }
@@ -131,6 +134,7 @@ export function rateLimitFields(error: HttpError): RateLimit {
     ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
     ...(error.resetAt !== undefined ? { resetAt: error.resetAt } : {}),
     ...(error.quota !== undefined ? { quota: error.quota } : {}),
+    ...(error.limit !== undefined ? { limit: error.limit } : {}),
   };
 }
 

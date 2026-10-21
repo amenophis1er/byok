@@ -436,10 +436,21 @@ export interface AIChatResult {
   retryable?: boolean;
   /** How long the provider asked us to wait before trying again, when it said (`Retry-After`, OpenAI's reset headers, Gemini's `RetryInfo`). On a day window it is the provider's words, which may not be the day's end: `quota` is the authority. */
   retryAfterMs?: number;
-  /** When the wait ends, epoch ms, whenever `retryAfterMs` is given: for showing "resets at 14:00". */
+  /** When the wait ends, epoch ms, whenever `retryAfterMs` is given, for showing "resets at 14:00" — except on a day window, where it is the day's end only where the provider documents it (Gemini: midnight Pacific), else unset. */
   resetAt?: number;
-  /** Which rate-limit window ran out, when the provider said: a minute window heals by itself, a day window not before tomorrow, a plan window (a subscription's hours-to-a-week usage limit) when `resetAt` says. */
+  /** Which rate-limit window ran out, when the provider said: a minute window heals by itself, a day window not before tomorrow, a plan window (a subscription's hours-to-a-week usage limit, or a plan that does not include the model at all) when `resetAt` says. */
   quota?: 'minute' | 'day' | 'plan';
+  /** The quota that ran out, as far as the provider named it (Gemini's `QuotaFailure`): for "the free tier allows 50 requests a day on gemini-2.5-pro". Each field only when said. */
+  limit?: {
+    /** The quota's size: 50 requests, 250,000 tokens. */
+    value?: number;
+    /** What it counts. */
+    unit?: 'requests' | 'tokens';
+    /** Whether the quota is the free tier's, when the provider said so. */
+    freeTier?: boolean;
+    /** The model the quota is on, when the provider named it. */
+    model?: string;
+  };
 }
 
 /** `${prefix}:ai-chat` — the same request as `chat()`, for hosts whose caller is a page. */
