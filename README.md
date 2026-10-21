@@ -385,7 +385,8 @@ produced text or a tool call. The two budgets are separate, so a mix of
 failures may run to `maxAttempts + maxNetworkAttempts − 1` attempts. A host
 with its own policy has the rest as options, all off by default:
 `maxTotalWaitMs` (the waits' sum; a wait that would pass it ends the
-retries), `minDelayMs` (a floor, a provider's "retry after 0 s" included),
+retries), `minDelayMs` (a floor, a provider's "retry after 0 s" included, never over
+`maxWaitMs`),
 `networkWindowMs` (a dropped connection is retried while the next attempt
 starts within it, from the first attempt; with `maxNetworkAttempts: Infinity`
 the window alone decides), `retryBare429` (a 429 that named neither a wait

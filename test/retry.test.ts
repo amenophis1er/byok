@@ -135,6 +135,10 @@ describe('withRetry', () => {
     // A hint over maxWaitMs still ends the retries; the floor does not revive it.
     const long = harness([{ ...server, retryAfterMs: 120_000 }, ok]);
     expect(await withRetry(long.attempt, { ...long, minDelayMs: 500 })).toMatchObject({ retryAfterMs: 120_000 });
+    // Nor does the floor lift a wait over maxWaitMs: it is capped there.
+    const capped = harness([{ ...limited, retryAfterMs: 0 }, ok]);
+    expect(await withRetry(capped.attempt, { ...capped, minDelayMs: 2000, maxWaitMs: 1000 })).toBe(ok);
+    expect(capped.waits).toEqual([1000]);
   });
 
   it('bounds a dropped connection in time with networkWindowMs, from the first attempt', async () => {
@@ -157,6 +161,11 @@ describe('withRetry', () => {
     expect(await withRetry(mixed.attempt, { ...mixed, sleep: async (ms) => { mixed.waits.push(ms); clock += ms; }, now: () => clock, networkWindowMs: 10 })).toBe(ok);
     const counted = harness([dropped, dropped, ok]);
     expect(await withRetry(counted.attempt, { ...counted, networkWindowMs: 60_000, maxNetworkAttempts: 2 })).toBe(dropped);
+    // A sleep that overran the window (a suspended tab) ends the retries too: the next attempt would start outside it.
+    clock = 0;
+    const overran = harness([dropped, ok]);
+    expect(await withRetry(overran.attempt, { ...overran, sleep: async (ms) => { overran.waits.push(ms); clock += ms + 5000; }, now: () => clock, networkWindowMs: 3000 })).toBe(dropped);
+    expect(overran.attempt).toHaveBeenCalledTimes(1);
   });
 
   it('retries a 429 that named neither a wait nor a window only when retryBare429 says, never a day or plan window', async () => {
@@ -191,6 +200,21 @@ describe('withRetry', () => {
     bare.abort();
     await expect(withRetry(attempt, { signal: bare.signal, throwOnAbort: true })).rejects.toMatchObject({ name: 'AbortError' });
     expect(attempt).toHaveBeenCalledTimes(1);
+    // An explicit reason is thrown as given, null included.
+    const nulled = new AbortController();
+    nulled.abort(null);
+    await expect(withRetry(attempt, { signal: nulled.signal, throwOnAbort: true })).rejects.toBeNull();
+    // An attempt that saw the abort itself (chat() returns Stopped.) throws the same way; a success that came back as the abort landed is still a success.
+    const inner = new AbortController();
+    const sawIt = vi.fn(async () => { inner.abort(new Error('closed')); return { ok: false, error: 'Stopped.' } as AIChatResult; });
+    await expect(withRetry(sawIt, { signal: inner.signal, throwOnAbort: true })).rejects.toThrow('closed');
+    const late = new AbortController();
+    const won = vi.fn(async () => { late.abort(); return ok; });
+    expect(await withRetry(won, { signal: late.signal, throwOnAbort: true })).toBe(ok);
+    // Without throwOnAbort the result is handed back as it came.
+    const quiet = new AbortController();
+    const sawQuiet = vi.fn(async () => { quiet.abort(); return { ok: false, error: 'Stopped.' } as AIChatResult; });
+    expect(await withRetry(sawQuiet, { signal: quiet.signal })).toMatchObject({ error: 'Stopped.' });
   });
 
   it('lets an exception from the attempt through', async () => {

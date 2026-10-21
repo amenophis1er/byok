@@ -35,7 +35,7 @@ export interface RetryOptions {
   baseDelayMs?: number;
   /** The longest backoff, jitter included. Default 30 000 ms. */
   maxDelayMs?: number;
-  /** The shortest wait, a provider's hint included: "retry after 0 s" waits this long. Default 0. */
+  /** The shortest wait, a provider's hint included: "retry after 0 s" waits this long. Never over `maxWaitMs`. Default 0. */
   minDelayMs?: number;
   /** The longest wait honoured: a provider asking for more ends the retries. Default 60 000 ms. */
   maxWaitMs?: number;
@@ -79,14 +79,15 @@ export async function withRetry(attempt: (n: number) => Promise<AIChatResult>, o
   const maxNetworkAttempts = options.maxNetworkAttempts ?? DEFAULTS.maxNetworkAttempts;
   const baseDelayMs = options.baseDelayMs ?? DEFAULTS.baseDelayMs;
   const maxDelayMs = options.maxDelayMs ?? DEFAULTS.maxDelayMs;
-  const minDelayMs = options.minDelayMs ?? 0;
   const maxWaitMs = options.maxWaitMs ?? DEFAULTS.maxWaitMs;
+  // The floor never lifts a wait over the longest honoured.
+  const minDelayMs = Math.min(options.minDelayMs ?? 0, maxWaitMs);
   const sleep = options.sleep ?? defaultSleep;
   const random = options.random ?? Math.random;
   const now = options.now ?? Date.now;
   const { signal, onRetry, maxTotalWaitMs, networkWindowMs, retryBare429, throwOnAbort } = options;
   const stopped = (): AIChatResult => {
-    if (throwOnAbort) throw signal?.reason ?? new DOMException('The retry loop was aborted.', 'AbortError');
+    if (throwOnAbort) throw signal?.reason !== undefined ? signal.reason : new DOMException('The retry loop was aborted.', 'AbortError');
     return STOPPED;
   };
   // Each kind of failure spends its own budget: at most maxAttempts + maxNetworkAttempts − 1 attempts in all.
@@ -97,6 +98,8 @@ export async function withRetry(attempt: (n: number) => Promise<AIChatResult>, o
   for (let n = 1; ; n++) {
     if (signal?.aborted) return stopped();
     const result = await attempt(n);
+    // An attempt that saw the abort itself (chat() returns Stopped.) throws the same way when asked; a success is still a success.
+    if (!result.ok && signal?.aborted && throwOnAbort) return stopped();
     if (!shouldRetry(result, retryBare429 === true)) return result;
     const network = isNetworkFailure(result);
     const failures = network ? ++networkFailures : ++statusFailures;
@@ -112,6 +115,8 @@ export async function withRetry(attempt: (n: number) => Promise<AIChatResult>, o
     await sleep(waitMs, signal);
     waited += waitMs;
     if (signal?.aborted) return stopped();
+    // A sleep that overran (a suspended tab, a busy loop) may have taken the next attempt past the window.
+    if (network && networkWindowMs !== undefined && now() - started > networkWindowMs) return result;
   }
 }
 
