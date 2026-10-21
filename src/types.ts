@@ -367,7 +367,7 @@ export interface AIChatRequest {
    * reads 90% less). The other providers cache the prefix on their own.
    */
   cacheConversation?: boolean;
-  /** OpenAI's `prompt_cache_key`: routes requests with the same key to the same cache. Sent on Chat Completions and Responses to OpenAI; left out elsewhere. */
+  /** OpenAI's `prompt_cache_key`: routes requests with the same key to the same cache. Sent on Chat Completions and Responses to OpenAI, and to the ChatGPT backend; left out elsewhere. */
   cacheKey?: string;
   /** Whole-request timeout, default 120000 ms; `0` turns it off in the core (the worker keeps 120 s for the token refresh, and none for the turn). */
   timeoutMs?: number;
@@ -401,6 +401,8 @@ export interface AIFailure {
   requestId?: string;
   /** The underlying exception's message, when there was one (what the network said, what the sink threw). */
   cause?: string;
+  /** On `timeout`: which limit passed — the idle one (`idleTimeoutMs`: nothing arrived for that long) or the whole-request one (`timeoutMs`). */
+  timeout?: 'idle' | 'total';
   /** Whether text or a tool call had streamed to `onEvent` before the failure: the user may have seen it, so the turn is never `retryable`. */
   streamed: boolean;
 }

@@ -153,12 +153,15 @@ export async function describeHttp(res: Response): Promise<string> {
   return describeHttpText(res.status, await res.text());
 }
 
+/** The status and the provider's message: `error.message` or a string `error`, from the body's object or, in a body wrapped in an array (Gemini, at times), its first; else the first 200 characters of the body. */
 export function describeHttpText(status: number, body: string): string {
   let detail = '';
   try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } | string };
-    detail =
-      typeof parsed.error === 'string' ? parsed.error : (parsed.error?.message ?? body.slice(0, 200));
+    let parsed: unknown = JSON.parse(body);
+    if (Array.isArray(parsed)) parsed = parsed.find((item) => item && typeof item === 'object' && !Array.isArray(item));
+    const error = parsed && typeof parsed === 'object' ? (parsed as { error?: { message?: unknown } | string }).error : undefined;
+    const message = typeof error === 'string' ? error : error && typeof error === 'object' && typeof error.message === 'string' ? error.message : '';
+    detail = message || body.slice(0, 200);
   } catch {
     detail = body.slice(0, 200);
   }

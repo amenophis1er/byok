@@ -62,9 +62,11 @@ describe('the whole-request limit', () => {
     expect(await chat(conn, 'k', req, { timeoutMs: NaN, idleTimeoutMs: 2 ** 40 })).toMatchObject({ ok: true, text: 'Hello.' });
   });
 
-  it('still cuts a slow stream when set', async () => {
+  it('still cuts a slow stream when set, and says which limit passed', async () => {
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => new Response(slowBody(30, init.signal), { status: 200 })));
-    expect(await chat(conn, 'k', req, { timeoutMs: 40 })).toMatchObject({ ok: false, error: TIMED_OUT });
+    expect(await chat(conn, 'k', req, { timeoutMs: 40 })).toMatchObject({ ok: false, error: TIMED_OUT, failure: { kind: 'timeout', timeout: 'total' } });
+    // With both set, the one that fired is named: a busy stream outlives the idle limit and meets the whole-request one.
+    expect(await chat(conn, 'k', req, { timeoutMs: 40, idleTimeoutMs: 200 })).toMatchObject({ ok: false, failure: { kind: 'timeout', timeout: 'total' } });
   });
 });
 
@@ -78,7 +80,7 @@ describe('the idle limit', () => {
     vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => new Response(slowBody(5, init.signal, true), { status: 200 })));
     const seen: string[] = [];
     expect(await chat(conn, 'k', req, { timeoutMs: 0, idleTimeoutMs: 40, onEvent: (e) => { if (e.type === 'text') seen.push(e.delta); } }))
-      .toMatchObject({ ok: false, error: TIMED_OUT });
+      .toMatchObject({ ok: false, error: TIMED_OUT, failure: { kind: 'timeout', timeout: 'idle', streamed: true } });
     expect(seen).toEqual(['Hello.']);
   });
 

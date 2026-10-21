@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chat, HttpError, listModels, withRetry, type Connection, type Fetch } from '../src/core/index.js';
 import { providerCodeOf, requestIdOf } from '../src/core/failure.js';
+import { describeHttpText } from '../src/core/http.js';
 import { anthropicSse, openaiSse, streamOf } from './helpers.js';
 
 const conn: Connection = { kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5' };
@@ -132,6 +133,12 @@ describe('reading the code and the request id', () => {
     expect(providerCodeOf(JSON.stringify({ error: { code: 'a code with spaces, far too long to be one: '.repeat(3) } }))).toBeUndefined();
     expect(providerCodeOf('not json')).toBeUndefined();
     expect(providerCodeOf('[1]')).toBeUndefined();
+    // The message is read from the same shapes, a body wrapped in an array included.
+    expect(describeHttpText(429, JSON.stringify([{ error: { code: 429, message: 'Quota exceeded.' } }]))).toBe('HTTP 429: Quota exceeded.');
+    expect(describeHttpText(400, JSON.stringify({ error: 'bad request' }))).toBe('HTTP 400: bad request');
+    expect(describeHttpText(500, '[]')).toBe('HTTP 500: []');
+    expect(describeHttpText(502, 'Bad gateway')).toBe('HTTP 502: Bad gateway');
+    expect(describeHttpText(500, JSON.stringify({ error: { message: 7 } }))).toBe('HTTP 500: {"error":{"message":7}}');
     expect(requestIdOf(new Headers({ 'x-request-id': ' req_1 ' }))).toBe('req_1');
     expect(requestIdOf(new Headers({ 'request-id': 'req_2', 'x-request-id': 'req_3' }))).toBe('req_2');
     expect(requestIdOf(new Headers())).toBeUndefined();

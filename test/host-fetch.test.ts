@@ -64,6 +64,28 @@ describe('chat() with the host fetch', () => {
     expect(urlOf(codex)).toBe('https://chatgpt.com/backend-api/codex/responses');
   });
 
+  it('posts a native Anthropic connection to its base URL when it has one, Anthropic itself otherwise', async () => {
+    const gateway = own(json({ error: { message: 'nope' } }, 500));
+    await chat({ kind: 'anthropic', baseUrl: 'https://gateway.example/anthropic/v1', model: 'claude-sonnet-5-5' }, 'sk', req, { fetch: gateway });
+    expect(urlOf(gateway)).toBe('https://gateway.example/anthropic/v1/messages');
+    expect((gateway.mock.calls[0]![1]!.headers as Record<string, string>)['x-api-key']).toBe('sk');
+    const direct = own(json({ error: { message: 'nope' } }, 500));
+    await chat({ kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-5-5' }, 'sk', req, { fetch: direct });
+    expect(urlOf(direct)).toBe('https://api.anthropic.com/v1/messages');
+    const listing = own(json({ data: [{ id: 'claude-sonnet-5-5', display_name: 'Sonnet' }] }));
+    await listModels({ kind: 'anthropic', baseUrl: 'https://gateway.example/anthropic/v1' }, 'sk', { fetch: listing });
+    expect(urlOf(listing)).toBe('https://gateway.example/anthropic/v1/models?limit=100');
+  });
+
+  it('sends prompt_cache_key to the ChatGPT backend as the Codex CLI does, and to OpenAI, not elsewhere', async () => {
+    const codex = own(json({ error: { message: 'down' } }, 503));
+    await chat({ kind: 'chatgpt', baseUrl: '', model: 'gpt-5.5' }, 'tok', { ...req, cacheKey: 'conv-1' }, { fetch: codex });
+    expect(JSON.parse(codex.mock.calls[0]![1]!.body as string)).toMatchObject({ prompt_cache_key: 'conv-1' });
+    const other = own(json({ error: { message: 'down' } }, 503));
+    await chat({ kind: 'openai-compatible', baseUrl: 'https://opencode.ai/inference/v1', protocol: 'responses', model: 'gpt-5.5' }, 'k', { ...req, cacheKey: 'conv-1' }, { fetch: other });
+    expect(JSON.parse(other.mock.calls[0]![1]!.body as string)).not.toHaveProperty('prompt_cache_key');
+  });
+
   it('reports a transport that throws as the usual dropped connection, when it throws a TypeError', async () => {
     const fetch = vi.fn<Fetch>(async () => { throw new TypeError('socket hang up'); });
     expect(await chat({ kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-5-5' }, 'sk', req, { fetch }))

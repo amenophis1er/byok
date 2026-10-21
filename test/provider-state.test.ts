@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { anthropicMessages } from '../src/core/chat-anthropic.js';
 import { geminiContents } from '../src/core/chat-gemini.js';
 import { openaiMessages } from '../src/core/chat-openai.js';
-import { stripProviderState } from '../src/core/index.js';
+import { providerState, readProviderState, stripProviderState } from '../src/core/index.js';
 import type { AIMessage } from '../src/types.js';
 
 const anthropic = { protocol: 'anthropic', blocks: [{ type: 'thinking', thinking: 'plan', signature: 's' }, { type: 'tool_use', id: 't1', name: 'browser', input: { a: 1 } }] };
@@ -53,6 +53,30 @@ describe('each protocol replays only the state it wrote', () => {
       expect(anthropicMessages(turn(junk))[1]!.content).toHaveLength(2);
       expect(geminiContents(turn(junk))[1]!.parts).toHaveLength(2);
     }
+  });
+});
+
+describe('the public constructors and reader', () => {
+  it('build what the protocols write, and read any state back with its protocol', () => {
+    expect(providerState.anthropic(anthropic.blocks)).toEqual(anthropic);
+    expect(providerState.gemini(gemini.parts)).toEqual(gemini);
+    expect(providerState.chatCompletions(chatCompletions.extraContent)).toEqual(chatCompletions);
+    const items = [{ type: 'reasoning', encrypted_content: 'enc', summary: [] }];
+    expect(providerState.responses(items)).toEqual({ protocol: 'responses', items });
+    expect(readProviderState(anthropic)).toEqual(anthropic);
+    expect(readProviderState(gemini)).toEqual(gemini);
+    expect(readProviderState(chatCompletions)).toEqual(chatCompletions);
+    expect(readProviderState({ protocol: 'responses', items })).toEqual({ protocol: 'responses', items });
+    // The shapes written before the tag read the same; junk reads as nothing.
+    expect(readProviderState(anthropic.blocks)).toEqual(anthropic);
+    expect(readProviderState(gemini.parts)).toEqual(gemini);
+    expect(readProviderState({ extraContent: chatCompletions.extraContent })).toEqual(chatCompletions);
+    for (const junk of [undefined, null, 'x', 7, {}, [1], { protocol: 'anthropic' }, { protocol: 'gemini', parts: 'x' }, { protocol: 'other', blocks: [] },
+      { protocol: 'anthropic', blocks: [null] }, { protocol: 'gemini', parts: [{ text: 'a' }, 7] }, { protocol: 'responses', items: ['x'] }]) expect(readProviderState(junk), JSON.stringify(junk)).toBeUndefined();
+    // An untagged empty array reads as the Messages API's empty block list, as the replay reads it.
+    expect(readProviderState([])).toEqual({ protocol: 'anthropic', blocks: [] });
+    // What chat() wrote is what the reader says, protocol by protocol.
+    expect(anthropicMessages(turn(providerState.anthropic(anthropic.blocks)))[1]!.content).toEqual(anthropic.blocks);
   });
 });
 

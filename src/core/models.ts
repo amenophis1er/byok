@@ -30,7 +30,7 @@ export async function listModels(conn: Connection, credential: ConnectionCredent
   if (conn.kind === 'anthropic') {
     if (signer) throw new Error('Anthropic takes a key or token, not a request signer.');
     if (!token) throw new Error('Enter an API key first.');
-    return withKnown(conn, await anthropicModels(fetch, token, conn.auth === 'oauth' || conn.auth === 'setup-token'));
+    return withKnown(conn, await anthropicModels(fetch, token, conn.auth === 'oauth' || conn.auth === 'setup-token', conn.baseUrl));
   }
   const base = apiRoot(conn.baseUrl);
   const authorize = authorizerFor(conn, credential);
@@ -66,12 +66,12 @@ function keyHeader(name: string, value: string): Authorizer | undefined {
   return value ? async () => ({ [name]: value }) : undefined;
 }
 
-/** Anthropic's catalog, across its pages (`has_more` / `last_id`). */
-async function anthropicModels(fetch: Fetch, token: string, subscription: boolean): Promise<ModelInfo[]> {
+/** Anthropic's catalog, across its pages (`has_more` / `last_id`), at the connection's base URL when it has one. */
+async function anthropicModels(fetch: Fetch, token: string, subscription: boolean, baseUrl = ''): Promise<ModelInfo[]> {
   const models: ModelInfo[] = [];
   let after = '';
   for (let page = 0; page < 20; page++) {
-    const url = new URL(`${ANTHROPIC_BASE}/v1/models`);
+    const url = new URL(baseUrl ? `${apiRoot(baseUrl)}/models` : `${ANTHROPIC_BASE}/v1/models`);
     url.searchParams.set('limit', '100');
     if (after) url.searchParams.set('after_id', after);
     const res = await fetch(url, { headers: anthropicHeaders(token, subscription) });

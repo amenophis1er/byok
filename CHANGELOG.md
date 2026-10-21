@@ -5,6 +5,32 @@ while on 0.x, a breaking change bumps the minor version.
 
 ## 0.1.13
 
+- **A failed tool result is marked on Chat Completions.** A tool message
+  with `isError` goes as `Error: …`, as the Responses items go; it went as
+  bare text.
+- **`cacheKey` reaches the ChatGPT backend.** `prompt_cache_key` is sent
+  there as the Codex CLI sends it, besides OpenAI itself.
+- **The quota in OpenAI's and Anthropic's words.** A 429 whose message says
+  "requests per min (RPM): Limit 3", "Limit: 20.000000 / min" or "of 50,000
+  input tokens per minute" carries `limit: { value, unit }`; the words alone
+  never name a tier or a model.
+- **An error body wrapped in an array reads its message.** `HTTP 429: Quota
+  exceeded.` from `[{ error: { message } }]`, as the code already was.
+- **`providerState` built and read through the API.** `providerState.anthropic(blocks)`
+  (`.gemini`, `.chatCompletions`, `.responses`) builds what `chat()` writes
+  and replays, `readProviderState(state)` says the protocol and what it holds
+  (the shapes written before the tag included), `ProviderState` is the type;
+  the shapes are covered by semver.
+- **A native Anthropic connection honours its `baseUrl`.** `chat()` posts to
+  `${baseUrl}/messages` and `listModels()` reads `${baseUrl}/models` when it
+  is set (a gateway serving the Messages API), Anthropic's own when it is `''`.
+- **`codexModels({ clientVersion })`**, exported from the core: the Codex CLI
+  version the catalog request claims, for a host tracking its releases;
+  `CODEX_CLIENT_VERSION` otherwise.
+- **`failure.timeout`** on a `timeout`: `'idle'` (nothing arrived for
+  `idleTimeoutMs`) or `'total'` (`timeoutMs` passed), the retry policy being
+  the host's.
+
 - **A dropped connection is whatever the transport rejected with.** A host
   `fetch` that rejects with its own error (`{ code: 'ECONNRESET' }`, not a
   `TypeError`), or a body read that fails (a refused response's included),

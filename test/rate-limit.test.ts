@@ -22,13 +22,28 @@ describe('rateLimitOf', () => {
     });
     const body = JSON.stringify({ error: { message: 'Rate limit reached for gpt-5 in organization org-1 on requests per min (RPM): Limit 3, Used 3, Requested 1. Please try again in 20s.', type: 'requests' } });
     // The words name the wait before the reset headers do.
-    expect(rateLimitOf(429, headers, body, NOW)).toEqual({ retryAfterMs: 20_000, resetAt: NOW + (20_000), quota: 'minute' });
+    expect(rateLimitOf(429, headers, body, NOW)).toEqual({ retryAfterMs: 20_000, resetAt: NOW + (20_000), quota: 'minute', limit: { value: 3, unit: 'requests' } });
     expect(rateLimitOf(429, headers, '', NOW)).toEqual({ retryAfterMs: 360_000, resetAt: NOW + (360_000) });
+    // The quota's size and unit in the words: after "Limit", in either of OpenAI's spellings, or before the unit.
+    const tpm = JSON.stringify({ error: { message: 'Rate limit reached for gpt-5 on tokens per min. Limit: 20.000000 / min. Please try again in 1s.' } });
+    expect(rateLimitOf(429, undefined, tpm, NOW)).toEqual({ retryAfterMs: 1000, resetAt: NOW + 1000, quota: 'minute', limit: { value: 20, unit: 'tokens' } });
+    const sized = JSON.stringify({ error: { message: 'Rate limit of 1,000 requests per minute exceeded.' } });
+    expect(rateLimitOf(429, undefined, sized, NOW)).toEqual({ quota: 'minute', limit: { value: 1000, unit: 'requests' } });
+    // A unit without a size says nothing the window does not.
+    expect(rateLimitOf(429, undefined, JSON.stringify({ error: { message: 'Too many tokens per minute.' } }), NOW)).toEqual({ quota: 'minute' });
+    // A number inside a name, a usage, or a size from another window's clause is not the size.
+    const words = (message: string) => rateLimitOf(429, undefined, JSON.stringify({ error: { message } }), NOW);
+    expect(words('Rate limit reached for model limit3 on tokens per min: Used 20000.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached on requests per minute. Request id: limit123abc.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached on requests per minute. Your daily limit: 10000 tokens per day.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached on requests per minute: Used 8 requests per minute.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached for model limit3 on tokens per min: Limit 20000, Used 20000.')).toEqual({ quota: 'minute', limit: { value: 20000, unit: 'tokens' } });
+    expect(words('Your plan allows 100 requests per day. Rate limit reached on tokens per minute: Limit 5000.')).toEqual({ quota: 'day', limit: { value: 100, unit: 'requests' } });
     // A healthy window's reset says nothing about the wait; without remaining counts, the latest reset given does.
     expect(rateLimitOf(429, h({ 'x-ratelimit-remaining-requests': '5', 'x-ratelimit-reset-requests': '6m0s' }), '', NOW)).toEqual({});
     expect(rateLimitOf(429, h({ 'x-ratelimit-reset-requests': '6m0s', 'x-ratelimit-reset-tokens': '8s' }), '', NOW)).toEqual({ retryAfterMs: 360_000, resetAt: NOW + (360_000) });
     const daily = JSON.stringify({ error: { message: 'Rate limit reached for gpt-5-mini on requests per day (RPD): Limit 200, Used 200, Requested 1. Please try again in 7h12m3s.' } });
-    expect(rateLimitOf(429, undefined, daily, NOW)).toEqual({ retryAfterMs: 7 * 3_600_000 + 12 * 60_000 + 3000, quota: 'day' });
+    expect(rateLimitOf(429, undefined, daily, NOW)).toEqual({ retryAfterMs: 7 * 3_600_000 + 12 * 60_000 + 3000, quota: 'day', limit: { value: 200, unit: 'requests' } });
   });
 
   it('reads Anthropic\'s reset instants for the exhausted window', () => {
@@ -37,7 +52,7 @@ describe('rateLimitOf', () => {
       'anthropic-ratelimit-input-tokens-remaining': '0', 'anthropic-ratelimit-input-tokens-reset': '2026-10-18T12:00:41Z',
     });
     const body = JSON.stringify({ type: 'error', error: { type: 'rate_limit_error', message: 'This request would exceed the rate limit for your organization of 50,000 input tokens per minute.' } });
-    expect(rateLimitOf(429, headers, body, NOW)).toEqual({ retryAfterMs: 41_000, resetAt: NOW + (41_000), quota: 'minute' });
+    expect(rateLimitOf(429, headers, body, NOW)).toEqual({ retryAfterMs: 41_000, resetAt: NOW + (41_000), quota: 'minute', limit: { value: 50_000, unit: 'tokens' } });
     // Anthropic also sends retry-after; it wins.
     expect(rateLimitOf(429, h({ 'retry-after': '41', 'anthropic-ratelimit-input-tokens-reset': '2026-10-18T12:05:00Z' }), '', NOW)).toEqual({ retryAfterMs: 41_000, resetAt: NOW + (41_000) });
   });
@@ -106,8 +121,9 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, undefined, bare, NOW)).not.toHaveProperty('limit');
     const odd = JSON.stringify({ error: { details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'PerMinute', quotaValue: 'many', quotaDimensions: 'global' }] }] } });
     expect(rateLimitOf(429, undefined, odd, NOW)).toEqual({ quota: 'minute' });
-    // Not on a result from words alone.
-    expect(rateLimitOf(429, undefined, JSON.stringify({ error: { message: 'requests per day (RPD): Limit 200' } }), NOW)).toEqual({ quota: 'day' });
+    // From words alone, only what the words say: the size and unit, never a tier or a model.
+    expect(rateLimitOf(429, undefined, JSON.stringify({ error: { message: 'requests per day (RPD): Limit 200' } }), NOW)).toEqual({ quota: 'day', limit: { value: 200, unit: 'requests' } });
+    expect(rateLimitOf(429, undefined, JSON.stringify({ error: { message: 'requests per day (RPD) exhausted' } }), NOW)).toEqual({ quota: 'day' });
   });
 
   it('claims a day window\'s end only where the provider documents it: Gemini\'s, at the next midnight Pacific, a clock change included', () => {
@@ -199,7 +215,7 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, undefined, message('Rate limit reached on requests per min (RPM). Please try again in 2s. Your plan also has a daily quota of 10000 requests.'), NOW))
       .toEqual({ retryAfterMs: 2000, resetAt: NOW + (2000), quota: 'minute' });
     expect(rateLimitOf(429, undefined, message('Rate limit reached on requests per day (RPD): Limit 200. Also 3 RPM. Please try again in 1m 30s.'), NOW))
-      .toEqual({ retryAfterMs: 90_000, quota: 'day' });
+      .toEqual({ retryAfterMs: 90_000, quota: 'day', limit: { value: 200, unit: 'requests' } });
     expect(rateLimitOf(429, undefined, message('slow down'), NOW)).toEqual({});
     // A body that is not JSON is read as the message.
     expect(rateLimitOf(429, undefined, 'Too many requests per minute. Retry in 500ms', NOW)).toEqual({ retryAfterMs: 500, resetAt: NOW + (500), quota: 'minute' });

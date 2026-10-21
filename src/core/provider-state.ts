@@ -52,13 +52,50 @@ export function responsesState(state: unknown): Array<Record<string, unknown>> |
   return undefined;
 }
 
-/** The state as written: tagged with its protocol. */
+/**
+ * A `providerState`, read: the protocol it was written under and what it
+ * holds — Anthropic's content blocks, Gemini's parts, a Chat Completions
+ * turn's `extra_content` by call id, the Responses API's output items.
+ */
+export type ProviderState =
+  | { protocol: 'anthropic'; blocks: Array<Record<string, unknown>> }
+  | { protocol: 'gemini'; parts: Array<Record<string, unknown>> }
+  | { protocol: 'chat-completions'; extraContent: Record<string, unknown> }
+  | { protocol: 'responses'; items: Array<Record<string, unknown>> };
+
+/**
+ * The constructors of a `providerState`, for a host that keeps its own
+ * transcript blocks and builds the state itself: `providerState.anthropic(blocks)`
+ * is what `chat()` returns on the Messages API, and what it replays. The
+ * shapes are part of the API.
+ */
 export const tagged = {
-  anthropic: (blocks: unknown[]) => ({ protocol: 'anthropic' as const, blocks }),
-  gemini: (parts: unknown[]) => ({ protocol: 'gemini' as const, parts }),
-  chatCompletions: (extraContent: Record<string, unknown>) => ({ protocol: 'chat-completions' as const, extraContent }),
-  responses: (items: unknown[]) => ({ protocol: 'responses' as const, items }),
+  anthropic: (blocks: Array<Record<string, unknown>>): ProviderState => ({ protocol: 'anthropic', blocks }),
+  gemini: (parts: Array<Record<string, unknown>>): ProviderState => ({ protocol: 'gemini', parts }),
+  chatCompletions: (extraContent: Record<string, unknown>): ProviderState => ({ protocol: 'chat-completions', extraContent }),
+  responses: (items: Array<Record<string, unknown>>): ProviderState => ({ protocol: 'responses', items }),
 };
+
+/** Every element an object: what a list of blocks, parts or items must be for the reader to vouch for it. */
+const objects = (list: unknown[] | undefined): list is Array<Record<string, unknown>> => list !== undefined && list.every(isObject);
+
+/**
+ * A `providerState` read back, whichever protocol wrote it (the shapes
+ * written before the tag included); undefined for anything else, a list
+ * with an element that is not an object included.
+ */
+export function readProviderState(state: unknown): ProviderState | undefined {
+  const blocks = anthropicState(state);
+  if (blocks) return objects(blocks) ? { protocol: 'anthropic', blocks } : undefined;
+  const parts = geminiState(state);
+  if (parts) return objects(parts) ? { protocol: 'gemini', parts } : undefined;
+  const items = responsesState(state);
+  if (items) return objects(items) ? { protocol: 'responses', items } : undefined;
+  if (isTagged(state) ? state.protocol === 'chat-completions' && isObject(state['extraContent']) : isObject(state) && isObject(state['extraContent'])) {
+    return { protocol: 'chat-completions', extraContent: chatCompletionsState(state) };
+  }
+  return undefined;
+}
 
 /** An Anthropic state without its thinking blocks, for a retry after the API refused them; other state untouched. */
 export function withoutThinking(state: unknown): unknown {

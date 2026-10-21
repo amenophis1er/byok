@@ -68,6 +68,14 @@ export const CODEX_MODELS: string[];
 // @public
 export const CODEX_ORIGINATOR = "codex_cli_rs";
 
+// @public
+export function codexModels(input: {
+    accessToken: string;
+    accountId?: string;
+    originator?: string;
+    clientVersion?: string;
+}, options?: RequestOptions): Promise<ModelInfo[]>;
+
 // @public (undocumented)
 export interface Connection {
     accountId?: string;
@@ -153,6 +161,29 @@ export function protocolCandidates(conn: Connection, model: string): Protocol[];
 export function protocolOf(conn: Pick<Connection, 'kind' | 'protocol'>): Protocol;
 
 // @public
+export type ProviderState = {
+    protocol: 'anthropic';
+    blocks: Array<Record<string, unknown>>;
+} | {
+    protocol: 'gemini';
+    parts: Array<Record<string, unknown>>;
+} | {
+    protocol: 'chat-completions';
+    extraContent: Record<string, unknown>;
+} | {
+    protocol: 'responses';
+    items: Array<Record<string, unknown>>;
+};
+
+// @public
+export const providerState: {
+    anthropic: (blocks: Array<Record<string, unknown>>) => ProviderState;
+    gemini: (parts: Array<Record<string, unknown>>) => ProviderState;
+    chatCompletions: (extraContent: Record<string, unknown>) => ProviderState;
+    responses: (items: Array<Record<string, unknown>>) => ProviderState;
+};
+
+// @public
 export type ProviderStateProtocol = 'anthropic' | 'gemini' | 'chat-completions' | 'responses';
 
 // @public
@@ -171,6 +202,9 @@ export type RateLimitQuota = NonNullable<AIChatResult['limit']>;
 
 // @public
 export type RateLimitWindow = NonNullable<AIChatResult['quota']>;
+
+// @public
+export function readProviderState(state: unknown): ProviderState | undefined;
 
 // @public
 export interface RequestOptions {

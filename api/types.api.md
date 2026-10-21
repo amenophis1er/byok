@@ -184,6 +184,7 @@ export interface AIFailure {
     requestId?: string;
     status?: number;
     streamed: boolean;
+    timeout?: 'idle' | 'total';
 }
 
 // @public
