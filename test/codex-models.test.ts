@@ -55,11 +55,12 @@ describe('Codex model catalog', () => {
     vi.stubGlobal('fetch', fetchMock);
     await codexModels({ accessToken: 'tok', clientVersion: '0.170.0' });
     await codexModels({ accessToken: 'tok', clientVersion: '' });
-    await codexModels({ accessToken: 'tok', clientVersion: '1.0 OR 1=1' });
+    for (const junk of ['1.0 OR 1=1', 'garbage', '...', '1.2', 'v1.2.3', '1.2.3.4']) await codexModels({ accessToken: 'tok', clientVersion: junk });
+    await codexModels({ accessToken: 'tok', clientVersion: '0.171.0-alpha.1' });
     const urls = fetchMock.mock.calls.map((call) => String((call as unknown as [string])[0]));
     expect(urls[0]).toBe('https://chatgpt.com/backend-api/codex/models?client_version=0.170.0');
-    expect(urls[1]).toBe(`https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`);
-    expect(urls[2]).toBe(`https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`);
+    for (const url of urls.slice(1, 8)) expect(url).toBe(`https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`);
+    expect(urls[8]).toBe('https://chatgpt.com/backend-api/codex/models?client_version=0.171.0-alpha.1');
   });
 
   it('leaves the account header out when there is no account id', async () => {

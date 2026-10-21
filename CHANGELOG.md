@@ -21,9 +21,9 @@ while on 0.x, a breaking change bumps the minor version.
   and replays, `readProviderState(state)` says the protocol and what it holds
   (the shapes written before the tag included), `ProviderState` is the type;
   the shapes are covered by semver.
-- **A native Anthropic connection honours its `baseUrl`.** `chat()` and
-  `listModels()` post to `${baseUrl}/messages` and `/models` when it is set
-  (a gateway serving the Messages API), to Anthropic when it is `''`.
+- **A native Anthropic connection honours its `baseUrl`.** `chat()` posts to
+  `${baseUrl}/messages` and `listModels()` reads `${baseUrl}/models` when it
+  is set (a gateway serving the Messages API), Anthropic's own when it is `''`.
 - **`codexModels({ clientVersion })`**, exported from the core: the Codex CLI
   version the catalog request claims, for a host tracking its releases;
   `CODEX_CLIENT_VERSION` otherwise.

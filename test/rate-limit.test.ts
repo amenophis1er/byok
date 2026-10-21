@@ -31,6 +31,14 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, undefined, sized, NOW)).toEqual({ quota: 'minute', limit: { value: 1000, unit: 'requests' } });
     // A unit without a size says nothing the window does not.
     expect(rateLimitOf(429, undefined, JSON.stringify({ error: { message: 'Too many tokens per minute.' } }), NOW)).toEqual({ quota: 'minute' });
+    // A number inside a name, a usage, or a size from another window's clause is not the size.
+    const words = (message: string) => rateLimitOf(429, undefined, JSON.stringify({ error: { message } }), NOW);
+    expect(words('Rate limit reached for model limit3 on tokens per min: Used 20000.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached on requests per minute. Request id: limit123abc.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached on requests per minute. Your daily limit: 10000 tokens per day.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached on requests per minute: Used 8 requests per minute.')).toEqual({ quota: 'minute' });
+    expect(words('Rate limit reached for model limit3 on tokens per min: Limit 20000, Used 20000.')).toEqual({ quota: 'minute', limit: { value: 20000, unit: 'tokens' } });
+    expect(words('Your plan allows 100 requests per day. Rate limit reached on tokens per minute: Limit 5000.')).toEqual({ quota: 'day', limit: { value: 100, unit: 'requests' } });
     // A healthy window's reset says nothing about the wait; without remaining counts, the latest reset given does.
     expect(rateLimitOf(429, h({ 'x-ratelimit-remaining-requests': '5', 'x-ratelimit-reset-requests': '6m0s' }), '', NOW)).toEqual({});
     expect(rateLimitOf(429, h({ 'x-ratelimit-reset-requests': '6m0s', 'x-ratelimit-reset-tokens': '8s' }), '', NOW)).toEqual({ retryAfterMs: 360_000, resetAt: NOW + (360_000) });

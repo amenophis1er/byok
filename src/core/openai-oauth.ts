@@ -91,7 +91,8 @@ export function codexCatalogModels(body: unknown): ModelInfo[] {
  * its own). Throws on a failed request or an empty catalog.
  */
 export async function codexModels(input: { accessToken: string; accountId?: string; originator?: string; clientVersion?: string }, options: RequestOptions = {}): Promise<ModelInfo[]> {
-  const version = input.clientVersion && /^[0-9A-Za-z.+-]{1,40}$/.test(input.clientVersion) ? input.clientVersion : CODEX_CLIENT_VERSION;
+  // A version as the Codex CLI numbers its releases (`0.170.0`, a pre-release suffix allowed); anything else is the built-in one.
+  const version = input.clientVersion && /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[0-9A-Za-z.-]{1,20})?$/.test(input.clientVersion) ? input.clientVersion : CODEX_CLIENT_VERSION;
   const res = await fetchOf(options)(`${CODEX_MODELS_URL}?client_version=${encodeURIComponent(version)}`, {
     headers: {
       authorization: `Bearer ${input.accessToken}`,

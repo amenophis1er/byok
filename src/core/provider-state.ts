@@ -70,23 +70,27 @@ export type ProviderState =
  * shapes are part of the API.
  */
 export const tagged = {
-  anthropic: (blocks: unknown[]): ProviderState => ({ protocol: 'anthropic', blocks: blocks as Array<Record<string, unknown>> }),
-  gemini: (parts: unknown[]): ProviderState => ({ protocol: 'gemini', parts: parts as Array<Record<string, unknown>> }),
+  anthropic: (blocks: Array<Record<string, unknown>>): ProviderState => ({ protocol: 'anthropic', blocks }),
+  gemini: (parts: Array<Record<string, unknown>>): ProviderState => ({ protocol: 'gemini', parts }),
   chatCompletions: (extraContent: Record<string, unknown>): ProviderState => ({ protocol: 'chat-completions', extraContent }),
-  responses: (items: unknown[]): ProviderState => ({ protocol: 'responses', items: items as Array<Record<string, unknown>> }),
+  responses: (items: Array<Record<string, unknown>>): ProviderState => ({ protocol: 'responses', items }),
 };
+
+/** Every element an object: what a list of blocks, parts or items must be for the reader to vouch for it. */
+const objects = (list: unknown[] | undefined): list is Array<Record<string, unknown>> => list !== undefined && list.every(isObject);
 
 /**
  * A `providerState` read back, whichever protocol wrote it (the shapes
- * written before the tag included); undefined for anything else.
+ * written before the tag included); undefined for anything else, a list
+ * with an element that is not an object included.
  */
 export function readProviderState(state: unknown): ProviderState | undefined {
   const blocks = anthropicState(state);
-  if (blocks) return { protocol: 'anthropic', blocks };
+  if (blocks) return objects(blocks) ? { protocol: 'anthropic', blocks } : undefined;
   const parts = geminiState(state);
-  if (parts) return { protocol: 'gemini', parts };
+  if (parts) return objects(parts) ? { protocol: 'gemini', parts } : undefined;
   const items = responsesState(state);
-  if (items) return { protocol: 'responses', items };
+  if (items) return objects(items) ? { protocol: 'responses', items } : undefined;
   if (isTagged(state) ? state.protocol === 'chat-completions' && isObject(state['extraContent']) : isObject(state) && isObject(state['extraContent'])) {
     return { protocol: 'chat-completions', extraContent: chatCompletionsState(state) };
   }

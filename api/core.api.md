@@ -177,10 +177,10 @@ export type ProviderState = {
 
 // @public
 export const providerState: {
-    anthropic: (blocks: unknown[]) => ProviderState;
-    gemini: (parts: unknown[]) => ProviderState;
+    anthropic: (blocks: Array<Record<string, unknown>>) => ProviderState;
+    gemini: (parts: Array<Record<string, unknown>>) => ProviderState;
     chatCompletions: (extraContent: Record<string, unknown>) => ProviderState;
-    responses: (items: unknown[]) => ProviderState;
+    responses: (items: Array<Record<string, unknown>>) => ProviderState;
 };
 
 // @public

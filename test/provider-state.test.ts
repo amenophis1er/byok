@@ -71,7 +71,8 @@ describe('the public constructors and reader', () => {
     expect(readProviderState(anthropic.blocks)).toEqual(anthropic);
     expect(readProviderState(gemini.parts)).toEqual(gemini);
     expect(readProviderState({ extraContent: chatCompletions.extraContent })).toEqual(chatCompletions);
-    for (const junk of [undefined, null, 'x', 7, {}, [1], { protocol: 'anthropic' }, { protocol: 'gemini', parts: 'x' }, { protocol: 'other', blocks: [] }]) expect(readProviderState(junk), JSON.stringify(junk)).toBeUndefined();
+    for (const junk of [undefined, null, 'x', 7, {}, [1], { protocol: 'anthropic' }, { protocol: 'gemini', parts: 'x' }, { protocol: 'other', blocks: [] },
+      { protocol: 'anthropic', blocks: [null] }, { protocol: 'gemini', parts: [{ text: 'a' }, 7] }, { protocol: 'responses', items: ['x'] }]) expect(readProviderState(junk), JSON.stringify(junk)).toBeUndefined();
     // An untagged empty array reads as the Messages API's empty block list, as the replay reads it.
     expect(readProviderState([])).toEqual({ protocol: 'anthropic', blocks: [] });
     // What chat() wrote is what the reader says, protocol by protocol.

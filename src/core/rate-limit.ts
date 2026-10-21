@@ -214,24 +214,38 @@ function namedQuota(json: Record<string, unknown> | undefined, body: string): Na
   const day = /\bper day\b|\bdaily (?:limit|quota)\b|\b[RT]PD\b/i.exec(message)?.index;
   const minute = /\bper min(?:ute)?\b|\b(?:[RT]PM|ITPM|OTPM)\b/i.exec(message)?.index;
   if (day === undefined && minute === undefined) return undefined;
-  const limit = wordsQuota(message);
-  return { window: minute === undefined || (day !== undefined && day < minute) ? 'day' : 'minute', documented: false, ...(limit ? { limit } : {}) };
+  const first = day === undefined ? minute! : minute === undefined ? day : Math.min(day, minute);
+  const limit = wordsQuota(message, first);
+  return { window: first === day ? 'day' : 'minute', documented: false, ...(limit ? { limit } : {}) };
 }
 
+const WINDOW_WORDS = /\bper day\b|\bdaily (?:limit|quota)\b|\b[RT]PD\b|\bper min(?:ute)?\b|\b(?:[RT]PM|ITPM|OTPM)\b/gi;
+
 /**
- * The quota as the words say it: OpenAI's "on requests per min (RPM): Limit
- * 3, Used 3, Requested 1" and "on tokens per min. Limit: 20.000000 / min",
- * Anthropic's "of 50,000 input tokens per minute". The size after "Limit"
- * or before the unit, the unit from the first window named.
+ * The quota as the words say it, read from the clause that named the
+ * window at `at` (its sentence, up to the next window named): OpenAI's "on
+ * requests per min (RPM): Limit 3, Used 3, Requested 1" and "on tokens per
+ * min. Limit: 20.000000 / min", Anthropic's "of 50,000 input tokens per
+ * minute". The size after a standalone "Limit", or before the unit after
+ * "of"/"allows"/"maximum"; the unit from the window's words. A number
+ * inside a name (`limit3`, a request id) is not a size, nor is a usage.
  */
-function wordsQuota(message: string): RateLimitQuota | undefined {
-  const out: RateLimitQuota = {};
-  const limit = /\blimit:?\s*(\d[\d,]*(?:\.\d+)?)/i.exec(message) ?? /\b(\d[\d,]*(?:\.\d+)?)\s+(?:input |output )?(?:requests?|tokens?)\s+per\s+(?:min|minute|day)\b/i.exec(message);
+function wordsQuota(message: string, at: number): RateLimitQuota | undefined {
+  // The clause runs to the next window of the other kind: "per min (RPM)" names the same one twice.
+  const isDay = (words: string) => /day|daily|PD$/i.test(words);
+  WINDOW_WORDS.lastIndex = at;
+  const own = isDay(WINDOW_WORDS.exec(message)?.[0] ?? '');
+  let next = WINDOW_WORDS.exec(message);
+  while (next && isDay(next[0]) === own) next = WINDOW_WORDS.exec(message);
+  const boundary = Math.max(message.lastIndexOf('. ', at), message.lastIndexOf('\n', at));
+  const segment = message.slice(boundary === -1 ? 0 : boundary + 1, next ? next.index : message.length);
+  const limit = /\blimit:?\s+(\d[\d,]*(?:\.\d+)?)(?![\w-]|\.\d)/i.exec(segment)
+    ?? /\b(?:of|allows?|max(?:imum)?)\s+(\d[\d,]*(?:\.\d+)?)\s+(?:input |output )?(?:requests?|tokens?)\s+per\s+(?:min|minute|day)\b/i.exec(segment);
   const n = limit ? Number(limit[1]!.replace(/,/g, '')) : NaN;
   // A unit without a size says nothing the window does not: no quota then.
   if (!Number.isFinite(n) || n < 0) return undefined;
-  out.value = Math.floor(n);
-  const unit = /\b(requests?|tokens?)\s+per\s+(?:min|minute|day)\b|\b([RT])P[MD]\b|\b[IO](T)PM\b/i.exec(message);
+  const out: RateLimitQuota = { value: Math.floor(n) };
+  const unit = /\b(requests?|tokens?)\s+per\s+(?:min|minute|day)\b|\b([RT])P[MD]\b|\b[IO](T)PM\b/i.exec(segment);
   if (unit) out.unit = /^t/i.test(unit[1] ?? unit[2] ?? unit[3] ?? '') ? 'tokens' : 'requests';
   return out;
 }

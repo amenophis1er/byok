@@ -794,7 +794,7 @@ export async function chat(req: AIChatRequest, options: { signal?: AbortSignal }
   } catch (error) {
     // The worker's own failures, before the turn went out: as data too, with nothing streamed.
     if (options.signal?.aborted) return { ok: false, error: 'Stopped.', failure: { kind: 'stopped', streamed: false } };
-    if (error === TIMEOUT) return { ok: false, error: TIMED_OUT, failure: { kind: 'timeout', streamed: false } };
+    if (error === TIMEOUT) return { ok: false, error: TIMED_OUT, failure: { kind: 'timeout', timeout: 'total', streamed: false } };
     // The token refresh could not reach its server, or its server failed: nothing was acted on.
     if (error instanceof TypeError) return { ok: false, error: errMessage(error), retryable: true, failure: { kind: 'network', cause: networkCause(error), streamed: false } };
     const message = errMessage(error);
