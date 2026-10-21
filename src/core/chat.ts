@@ -141,14 +141,19 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     // A dropped connection (the transport rejected, whatever it threw): nothing was acted on, so the caller may send the same
     // request again — unless output had streamed.
     if (error instanceof TransportError || error instanceof TypeError) {
-      return failed(networkError(conn), { kind: 'network', cause: networkCause(error instanceof TransportError ? error.cause : error) }, { retryable: true });
+      const thrown = error instanceof TransportError ? error.cause : error;
+      const code = transportCode(thrown);
+      return failed(networkError(conn), { kind: 'network', cause: networkCause(thrown), ...(code ? { code } : {}) }, { retryable: true });
     }
     // The server refused: a 5xx (or an overloaded one) is worth another try, and so is a rate limit that lifts within the minute. It says when.
     if (error instanceof HttpError) {
       const retryable = error.status >= 500 || shortRateLimit(error) || /overloaded|backend failed/i.test(error.message);
       return failed(error.message, {
         kind: 'http', status: error.status,
-        ...(error.providerCode ? { providerCode: error.providerCode } : {}), ...(error.requestId ? { requestId: error.requestId } : {}),
+        ...(error.providerCode ? { providerCode: error.providerCode } : {}),
+        ...(error.providerType ? { providerType: error.providerType } : {}),
+        ...(error.providerMessage ? { providerMessage: error.providerMessage } : {}),
+        ...(error.requestId ? { requestId: error.requestId } : {}),
       }, { ...rateLimitFields(error), ...(retryable ? { retryable: true } : {}) });
     }
     const message = errMessage(error);
@@ -416,7 +421,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
   if (!res.ok) {
     const text = await errorText(res);
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
-    throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text)) : httpError(res, text);
+    throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text, { message: false })) : httpError(res, text);
   }
   return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent);
 }
@@ -483,6 +488,22 @@ export function networkCause(error: unknown): string {
   const tail = [code ?? '', detail].filter(Boolean).join(': ');
   if (!message) return tail || 'The request failed.';
   return tail ? `${message} (${tail})` : message;
+}
+
+/**
+ * The innermost `code` down a transport error's cause chain: Node's
+ * `TypeError: fetch failed` → `TransportError` → `{ code: 'ECONNRESET' }`
+ * gives `ECONNRESET`. Nothing when no link carries one.
+ */
+export function transportCode(error: unknown): string | undefined {
+  let found: string | undefined;
+  const seen = new Set<unknown>();
+  for (let link = error; link && typeof link === 'object' && !seen.has(link); link = (link as { cause?: unknown }).cause) {
+    seen.add(link);
+    const code = (link as { code?: unknown }).code;
+    if (typeof code === 'string' && code) found = code;
+  }
+  return found;
 }
 
 /** `{ cause }` for an abort reason that says something, else nothing. */

@@ -16,7 +16,7 @@
  * verbatim on the next request, as the API requires for thinking blocks.
  */
 
-import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIReasoning, AIStopReason, AIToolCall } from '../types.js';
+import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIReasoning, AIStopReason, AIToolCall, AIWebSearchCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { anthropicState, tagged } from './provider-state.js';
@@ -107,15 +107,17 @@ export function claudeThinking(model: string): 'adaptive' | 'enabled' | 'none' {
   return 'none';
 }
 
-const BUDGETS: Record<Exclude<AIReasoning, 'off'>, number> = { low: 2048, medium: 8192, high: 16000 };
+const BUDGETS: Record<Exclude<AIReasoning, 'off' | 'on'>, number> = { low: 2048, medium: 8192, high: 16000 };
 
 /**
  * The thinking fields for a reasoning level: adaptive thinking with
  * `output_config.effort` where the model takes it, a budget where it takes
- * extended thinking only, nothing where it takes neither. `off` is sent only
- * where the model thinks by default and can be told not to (Opus 5, Sonnet 5,
- * Haiku 5.5: `disabled`; Sonnet 5.5: `between_tools`); the always-on models
- * and the off-by-default ones get nothing.
+ * extended thinking only, nothing where it takes neither. `on` asks for
+ * adaptive thinking with no effort (the model's own default), or the medium
+ * budget where it takes a budget only. `off` is sent only where the model
+ * thinks by default and can be told not to (Opus 5, Sonnet 5, Haiku 5.5:
+ * `disabled`; Sonnet 5.5: `between_tools`); the always-on models and the
+ * off-by-default ones get nothing.
  */
 export function thinkingFields(reasoning: AIReasoning | undefined, model: string, maxTokens: number): Record<string, unknown> {
   if (!reasoning) return {};
@@ -127,8 +129,8 @@ export function thinkingFields(reasoning: AIReasoning | undefined, model: string
     if (/claude-(?:opus|sonnet)-5(?:-\d{8})?$|claude-haiku-5-5(?:-|$)/.test(model)) return { thinking: { type: 'disabled' } };
     return {};
   }
-  if (mode === 'adaptive') return { thinking: { type: 'adaptive', display: 'summarized' }, output_config: { effort: reasoning } };
-  const budget = Math.min(BUDGETS[reasoning], maxTokens - 1024);
+  if (mode === 'adaptive') return { thinking: { type: 'adaptive', display: 'summarized' }, ...(reasoning === 'on' ? {} : { output_config: { effort: reasoning } }) };
+  const budget = Math.min(BUDGETS[reasoning === 'on' ? 'medium' : reasoning], maxTokens - 1024);
   return budget >= 1024 ? { thinking: { type: 'enabled', budget_tokens: budget } } : {};
 }
 
@@ -170,25 +172,44 @@ const STOP: Record<string, AIStopReason> = {
   tool_use: 'tool_use', max_tokens: 'length', model_context_window_exceeded: 'length', refusal: 'refusal',
 };
 
-/** The web searches in a turn's blocks: each `server_tool_use` query, and the sources its `web_search_tool_result` lists. */
+/**
+ * The web searches in a turn's blocks: each `server_tool_use` query with
+ * the sources (or the error) its `web_search_tool_result` brought, matched
+ * by `tool_use_id`; and the queries and sources over the turn, each once.
+ */
 function searchesOf(blocks: Block[]): AIChatResult['webSearch'] {
   const queries: string[] = [];
   const sources = new Map<string, { url: string; title?: string }>();
+  const searches: AIWebSearchCall[] = [];
+  const byId = new Map<string, AIWebSearchCall>();
   for (const block of blocks) {
     if (!block) continue;
     if (block.type === 'server_tool_use' && block['name'] === 'web_search') {
       const query = (block['input'] as Record<string, unknown> | undefined)?.['query'];
-      if (typeof query === 'string' && query) queries.push(query);
+      if (typeof query !== 'string' || !query) continue;
+      queries.push(query);
+      const search: AIWebSearchCall = { query, sources: [] };
+      searches.push(search);
+      if (typeof block['id'] === 'string') byId.set(block['id'], search);
     }
-    if (block.type === 'web_search_tool_result' && Array.isArray(block['content'])) {
-      for (const result of block['content'] as Array<Record<string, unknown>>) {
-        if (result && typeof result['url'] === 'string' && !sources.has(result['url'])) {
-          sources.set(result['url'], { url: result['url'], ...(typeof result['title'] === 'string' ? { title: result['title'] } : {}) });
+    if (block.type === 'web_search_tool_result') {
+      const search = typeof block['tool_use_id'] === 'string' ? byId.get(block['tool_use_id']) : undefined;
+      const content = block['content'];
+      if (Array.isArray(content)) {
+        if (search) search.resultCount = content.length;
+        for (const result of content as Array<Record<string, unknown>>) {
+          if (!result || typeof result['url'] !== 'string') continue;
+          const source = { url: result['url'], ...(typeof result['title'] === 'string' ? { title: result['title'] } : {}) };
+          if (!sources.has(source.url)) sources.set(source.url, source);
+          if (search && !search.sources.some((s) => s.url === source.url)) search.sources.push(source);
         }
+      } else if (search && content && typeof content === 'object') {
+        const code = (content as Record<string, unknown>)['error_code'];
+        if (typeof code === 'string' && code) search.error = code;
       }
     }
   }
-  return queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
+  return queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches } : undefined;
 }
 
 /** Rebuild the response from its SSE events. Anything short of a clean `message_stop` is a failure. */
@@ -288,6 +309,8 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   const toolCalls: AIToolCall[] = [];
   const texts: string[] = [];
   const thoughts: string[] = [];
+  /** The last call cut off: its block never stopped, or its arguments did not come whole. */
+  let cut: { id: string; name: string; raw: string } | undefined;
   for (const [index, block] of blocks.entries()) {
     if (!block) continue;
     if (block.type === 'text') texts.push(String(block['text'] ?? ''));
@@ -308,6 +331,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
       call.argsError = { raw, message: error instanceof Error ? error.message : 'Invalid JSON.' };
       block['input'] = {};
     }
+    if (!ended.has(index) || call.argsError) cut = { id: call.id, name: call.name, raw };
     toolCalls.push(call);
   }
 
@@ -325,6 +349,8 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
     ...(reasoning ? { reasoning } : {}),
     ...(webSearch ? { webSearch } : {}),
     ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    // The call a cut-off turn was in the middle of: its arguments as far as they came, never handed out as a call.
+    ...(!runnable && mapped !== 'pause' && cut ? { truncatedToolCall: cut } : {}),
     providerState: tagged.anthropic(state),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),

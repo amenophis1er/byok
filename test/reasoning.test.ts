@@ -90,6 +90,20 @@ describe('the request, per provider', () => {
     expect(rejectedField(400, '{"error":{"message":"I think the model is wrong"}}')).toBe('think'); // harmless: the retry drops it only when the request carried it
   });
 
+  it('on: thinking at the provider\'s own default — no effort, budget or level named, the summaries asked for', () => {
+    expect(thinkingFields('on', 'claude-opus-5-5', 16000)).toEqual({ thinking: { type: 'adaptive', display: 'summarized' } });
+    expect(thinkingFields('on', 'claude-sonnet-4-5', 16000)).toEqual({ thinking: { type: 'enabled', budget_tokens: 8192 } });
+    expect(thinkingFields('on', 'claude-3-5-haiku', 16000)).toEqual({});
+    expect(openaiBody({ ...req, reasoning: 'on' }, 'gpt-5', OPENAI)).not.toHaveProperty('reasoning_effort');
+    expect(openaiBody({ ...req, reasoning: 'on' }, 'qwen3', 'http://localhost:11434/v1')).toMatchObject({ think: true });
+    expect(openaiBody({ ...req, reasoning: 'on' }, 'qwen3', 'https://api.groq.com/openai/v1')).not.toHaveProperty('think');
+    expect(codexBody({ ...req, reasoning: 'on' }, 'gpt-5.5')).toMatchObject({ reasoning: { summary: 'auto' } });
+    expect(codexBody({ ...req, reasoning: 'on' }, 'gpt-5.5')['reasoning']).not.toHaveProperty('effort');
+    expect(geminiBody({ ...req, reasoning: 'on' }, 'gemini-3-flash')['generationConfig']).toMatchObject({ thinkingConfig: { includeThoughts: true } });
+    expect((geminiBody({ ...req, reasoning: 'on' }, 'gemini-2.5-pro')['generationConfig'] as { thinkingConfig: object }).thinkingConfig).toEqual({ includeThoughts: true });
+    expect(geminiBody({ ...req, reasoning: 'on' }, 'gemma-3')['generationConfig']).not.toHaveProperty('thinkingConfig');
+  });
+
   it('Responses: the effort with a summary; the encrypted reasoning always asked for, since nothing is stored; off sends the least effort', () => {
     expect(codexBody({ ...req, reasoning: 'medium' }, 'gpt-5.5')).toMatchObject({ reasoning: { effort: 'medium', summary: 'auto' }, include: ['reasoning.encrypted_content'] });
     expect(codexBody({ ...req, reasoning: 'off' }, 'gpt-5.5')).toMatchObject({ reasoning: { effort: 'none' } });
@@ -178,20 +192,28 @@ describe('reasoning reported as it streams and on the result', () => {
 
     const events: ChatEvent[] = [];
     const inline = await openaiResult(sse(openaiSse([
-      { choices: [{ index: 0, delta: { content: 'Sure. <thi' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: '\n<thi' }, finish_reason: null }] },
       { choices: [{ index: 0, delta: { content: 'nk>hmm, 2 <' }, finish_reason: null }] },
       { choices: [{ index: 0, delta: { content: ' 3</think>' }, finish_reason: null }] },
-      { choices: [{ index: 0, delta: { content: ' Yes.' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: ' Sure. Yes.' }, finish_reason: null }] },
       { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
     ])), (e) => events.push(e));
-    expect(inline).toMatchObject({ text: 'Sure.  Yes.', reasoning: 'hmm, 2 < 3' });
+    expect(inline).toMatchObject({ text: 'Sure. Yes.', reasoning: 'hmm, 2 < 3' });
     expect(events.filter((e) => e.type === 'reasoning').map((e) => (e as { delta: string }).delta).join('')).toBe('hmm, 2 < 3');
-    expect(events.filter((e) => e.type === 'text').map((e) => (e as { delta: string }).delta).join('')).toBe('Sure.  Yes.');
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { delta: string }).delta).join('')).toBe('\n Sure. Yes.');
+    // A tag the model quotes partway through its answer is text, as is everything after it.
+    const quoted = await openaiResult(sse(openaiSse([
+      { choices: [{ index: 0, delta: { content: 'Sure. <think>hmm</think> Yes.' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    ])));
+    expect(quoted).toMatchObject({ text: 'Sure. <think>hmm</think> Yes.' });
+    expect(quoted.reasoning).toBeUndefined();
   });
 
   it('the splitter holds a possible tag start, keeps a stray close as text, and flushes at the end', () => {
+    // With a block allowed anywhere: the tag mechanics alone.
     const out: string[] = [];
-    const s = new ThinkSplitter((kind, delta) => out.push(`${kind}:${delta}`));
+    const s = new ThinkSplitter((kind, delta) => out.push(`${kind}:${delta}`), true);
     s.push('a <'); s.push('b </think> c <reasoning>'); s.push('deep</reas'); s.push('oning> d <'); s.end();
     expect(out.join('|')).toBe('text:a |text:<b </think>|text: c |reasoning:deep|text: d |text:<');
     // Only the tag that opened the reasoning closes it; the other tag's close inside is reasoning text.
@@ -199,6 +221,17 @@ describe('reasoning reported as it streams and on the result', () => {
     const m = new ThinkSplitter((kind, delta) => mixed.push(`${kind}:${delta}`));
     m.push('<think>A</reasoning>B</think>C'); m.end();
     expect(mixed.join('|')).toBe('reasoning:A</reasoning>|reasoning:B|text:C');
+    // `<thinking>` is a tag too; whitespace may precede the opening block; by default a block opens the answer or not at all.
+    const thinking: string[] = [];
+    const t = new ThinkSplitter((kind, delta) => thinking.push(`${kind}:${delta}`));
+    t.push('  \n<thinking>plan</thin'); t.push('king>Go. <think>x</think> <'); t.push('think>'); t.end();
+    expect(thinking.join('')).toBe('text:  \nreasoning:plantext:Go. <think>text:x</think> <text:think>');
+    expect(thinking.filter((d) => d.startsWith('reasoning:'))).toEqual(['reasoning:plan']);
+    // Once the answer began nothing is held back for a tag: the stream stays live.
+    const live: string[] = [];
+    const l = new ThinkSplitter((kind, delta) => live.push(`${kind}:${delta}`));
+    l.push('Go <'); l.push('on'); l.end();
+    expect(live.join('|')).toBe('text:Go <|text:on');
   });
 
   it('Responses: summary deltas, the reasoning tokens, and the turn\'s items kept to replay', async () => {

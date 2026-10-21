@@ -303,10 +303,28 @@ export interface AIServerTool {
   userLocation?: { city?: string; region?: string; country?: string; timezone?: string };
 }
 
-/** What a turn's web searches used: the queries run and the sources read, each once. */
+/** What a turn's web searches used: the queries run and the sources read, each once; and each search on its own where the provider tells them apart. */
 export interface AIWebSearch {
   queries: string[];
   sources: Array<{ url: string; title?: string }>;
+  /**
+   * Each search, in order: its query, the sources it returned and their
+   * count, or the error the provider gave it (Anthropic's
+   * `max_uses_exceeded`, `too_many_requests`, …). Anthropic reports them
+   * search by search; the Responses API and Gemini name only the queries,
+   * so their entries carry no sources, count or error.
+   */
+  searches?: AIWebSearchCall[];
+}
+
+/** One web search the provider ran. */
+export interface AIWebSearchCall {
+  query: string;
+  sources: Array<{ url: string; title?: string }>;
+  /** How many results came back, when the provider lists them. */
+  resultCount?: number;
+  /** The provider's error code for a search that failed, when it gave one. */
+  error?: string;
 }
 
 /** One tool call the model made. Arguments that were not valid JSON arrive as `argsError`. */
@@ -378,8 +396,12 @@ export interface AIChatRequest {
 /** Why the turn stopped. `pause`: the provider paused a long server-tool turn (Anthropic's `pause_turn`); send the assistant message back as it is, with its `providerState`, and call again to continue. */
 export type AIStopReason = 'end' | 'tool_use' | 'length' | 'refusal' | 'pause';
 
-/** How much the model reasons before answering: off, or a level. */
-export type AIReasoning = 'off' | 'low' | 'medium' | 'high';
+/**
+ * How much the model reasons before answering: off, on at the provider's
+ * own default (thinking and its summaries asked for, no effort or budget
+ * named), or a level.
+ */
+export type AIReasoning = 'off' | 'on' | 'low' | 'medium' | 'high';
 
 /**
  * Why a turn failed: refused before any request went out (`request`: no
@@ -397,10 +419,16 @@ export interface AIFailure {
   status?: number;
   /** The provider's own code when it gave one: Anthropic's `rate_limit_error`, OpenAI's `insufficient_quota`, ChatGPT's `usage_limit_reached`, Gemini's `RESOURCE_EXHAUSTED`. */
   providerCode?: string;
+  /** On `http`: the provider's error type when it gave one beside the code (OpenAI's `error.type`), kept apart from `providerCode`. */
+  providerType?: string;
+  /** On `http`: the provider's message as it wrote it, for a log or a support ticket; never from ChatGPT, whose wording is hidden on purpose. */
+  providerMessage?: string;
   /** The provider's request id (`request-id`, `x-request-id`), for its support. */
   requestId?: string;
   /** The underlying exception's message, when there was one (what the network said, what the sink threw). */
   cause?: string;
+  /** On `network`: the innermost `code` in the transport error's cause chain (`ECONNRESET`, `ERR_SOCKET_CONNECTION_TIMEOUT`), when there is one. */
+  code?: string;
   /** On `timeout`: which limit passed — the idle one (`idleTimeoutMs`: nothing arrived for that long) or the whole-request one (`timeoutMs`). */
   timeout?: 'idle' | 'total';
   /** Whether text or a tool call had streamed to `onEvent` before the failure: the user may have seen it, so the turn is never `retryable`. */
@@ -417,6 +445,8 @@ export interface AIChatResult {
   model?: string;
   /** The web searches the provider ran for this turn, when it ran any. */
   webSearch?: AIWebSearch;
+  /** A tool call the turn was cut off in the middle of (`stopReason` `length` or `refusal`): its id, name and the arguments as far as they came. Never in `toolCalls`. */
+  truncatedToolCall?: { id: string; name: string; raw: string };
   /** The reasoning the provider showed — Anthropic's summarized thinking, a Responses reasoning summary, Gemini's thought summaries, a model's inline `<think>` text — when it showed any. Never the raw chain of thought. */
   reasoning?: string;
   /**

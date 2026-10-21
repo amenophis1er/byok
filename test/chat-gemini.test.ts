@@ -92,7 +92,8 @@ describe('stream', () => {
   });
 
   it('never hands out a call from a turn cut off by the limit or a filter', async () => {
-    const cut = await parse([chunk([{ functionCall: { name: 'browser', args: {} } }], 'MAX_TOKENS')]);
+    // A call arrives whole or not at all: none is known to be cut off in the middle, so no truncatedToolCall.
+    const cut = await parse([chunk([{ functionCall: { name: 'browser', args: { action: 'nav' } } }], 'MAX_TOKENS')]);
     expect(cut).toEqual({ ok: true, stopReason: 'length' });
     expect(await parse([chunk([{ text: 'No.' }], 'SAFETY')])).toEqual({ ok: true, text: 'No.', stopReason: 'refusal' });
   });

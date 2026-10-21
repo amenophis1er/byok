@@ -142,7 +142,14 @@ describe('streamed response', () => {
       expect(result.stopReason).toBe(reason === 'max_tokens' ? 'length' : 'refusal');
       expect(result.toolCalls).toBeUndefined();
       expect(result.providerState).toEqual({ protocol: 'anthropic', blocks: [] });
+      // The call it was cut off in, with the arguments as far as they came.
+      expect(result.truncatedToolCall).toEqual({ id: 'x', name: 'browser', raw: '{"action":"navigate","url":"https://ex' });
     }
+    // A call whose arguments came whole was not the cut one: a whole turn, or one cut in the text after it, names none.
+    const after = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']), ...stop('max_tokens')]);
+    expect(after).not.toHaveProperty('truncatedToolCall');
+    const whole = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']), ...stop('tool_use')]);
+    expect(whole).not.toHaveProperty('truncatedToolCall');
   });
 
   it('fails on an error event after HTTP 200, even if everything before it looked fine', async () => {

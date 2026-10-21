@@ -5,7 +5,7 @@
 
 import { normalizeBaseUrl } from '../types.js';
 import { rateLimitOf, type RateLimit, type RateLimitQuota, type RateLimitWindow } from './rate-limit.js';
-import { providerCodeOf, requestIdOf } from './failure.js';
+import { providerDetailsOf, requestIdOf } from './failure.js';
 
 export const ANTHROPIC_BASE = 'https://api.anthropic.com';
 export const ANTHROPIC_VERSION = '2023-06-01';
@@ -100,9 +100,13 @@ export class HttpError extends Error {
   readonly limit?: RateLimitQuota;
   /** The provider's own code, when the body carried one (`rate_limit_error`, `insufficient_quota`, …). */
   readonly providerCode?: string;
+  /** The provider's error type, when the body carried one beside the code (OpenAI's `error.type`). */
+  readonly providerType?: string;
+  /** The provider's message as it wrote it, when the body carried one; never from ChatGPT. */
+  readonly providerMessage?: string;
   /** The provider's request id, when a header carried one. */
   readonly requestId?: string;
-  constructor(status: number, message: string, rateLimit: RateLimit = {}, source: { providerCode?: string; requestId?: string } = {}) {
+  constructor(status: number, message: string, rateLimit: RateLimit = {}, source: FailureSource = {}) {
     super(message);
     this.name = 'HttpError';
     this.status = status;
@@ -111,21 +115,36 @@ export class HttpError extends Error {
     if (rateLimit.quota !== undefined) this.quota = rateLimit.quota;
     if (rateLimit.limit !== undefined) this.limit = rateLimit.limit;
     if (source.providerCode !== undefined) this.providerCode = source.providerCode;
+    if (source.providerType !== undefined) this.providerType = source.providerType;
+    if (source.providerMessage !== undefined) this.providerMessage = source.providerMessage;
     if (source.requestId !== undefined) this.requestId = source.requestId;
   }
 }
 
-/** The provider's code and request id of a failed response, for an `HttpError`. */
-export function failureSource(res: Response, body: string): { providerCode?: string; requestId?: string } {
-  const providerCode = providerCodeOf(body);
-  const requestId = requestIdOf(res.headers);
-  return { ...(providerCode ? { providerCode } : {}), ...(requestId ? { requestId } : {}) };
+/** What a failed response said about itself: the provider's code, type and message, and the request id. */
+export interface FailureSource {
+  providerCode?: string;
+  providerType?: string;
+  providerMessage?: string;
+  requestId?: string;
 }
 
-/** A failed response as an `HttpError`: the status and body in words, what it said about coming back, its code and request id. */
-export async function httpFailure(res: Response, message?: string): Promise<HttpError> {
+/** The provider's code, type and message, and the request id, of a failed response, for an `HttpError`. `message: false` leaves the message out (ChatGPT's is hidden on purpose). */
+export function failureSource(res: Response, body: string, { message = true } = {}): FailureSource {
+  const { providerCode, providerType, providerMessage } = providerDetailsOf(body);
+  const requestId = requestIdOf(res.headers);
+  return {
+    ...(providerCode ? { providerCode } : {}),
+    ...(providerType ? { providerType } : {}),
+    ...(message && providerMessage ? { providerMessage } : {}),
+    ...(requestId ? { requestId } : {}),
+  };
+}
+
+/** A failed response as an `HttpError`: the status and body in words, what it said about coming back, its code, type, message (unless `providerMessage: false`) and request id. */
+export async function httpFailure(res: Response, message?: string, { providerMessage = true } = {}): Promise<HttpError> {
   const text = await res.text();
-  return new HttpError(res.status, message ?? describeHttpText(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text));
+  return new HttpError(res.status, message ?? describeHttpText(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text, { message: providerMessage }));
 }
 
 /** The rate-limit fields of a failure, only those it carries, for spreading into a result. */

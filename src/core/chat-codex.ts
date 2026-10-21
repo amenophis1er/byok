@@ -93,7 +93,8 @@ export function codexBody(req: AIChatRequest, model: string, { maxOutputTokens =
     ...(cacheKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
     // Nothing is stored server-side, so the reasoning's encrypted content is always asked for, to replay; a level asks for the effort and a summary too.
     include: ['reasoning.encrypted_content'],
-    ...(req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' } } : off ? { reasoning: { effort: off } } : {}),
+    // `on`: the summary with no effort, the model's own default.
+    ...(req.reasoning === 'on' ? { reasoning: { summary: 'auto' } } : req.reasoning && req.reasoning !== 'off' ? { reasoning: { effort: req.reasoning, summary: 'auto' } } : off ? { reasoning: { effort: off } } : {}),
     ...(req.tools?.length ? {
       tools: [
         ...functionTools(req).map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
@@ -135,6 +136,12 @@ export function codexHttpError(status: number, body: string): string {
   if (/context_length|context_window/i.test(code)) return 'The conversation is longer than this model accepts.';
   if (status >= 500) return `ChatGPT’s backend failed (HTTP ${status}).`;
   return `ChatGPT refused the request (HTTP ${status}${code ? `; ${code}` : ''}).`;
+}
+
+/** Whether a call's arguments parse: whole, as the stream would have finished them. */
+function wholeJson(args: string): boolean {
+  if (args.trim() === '') return true;
+  try { JSON.parse(args); return true; } catch { return false; }
 }
 
 /** A failure event's body in words, the ChatGPT way: without the provider's text. */
@@ -290,9 +297,18 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const text = [...texts.values()].join('\n\n').trim();
   if (thought) thoughts.push(thought);
   const reasoning = thoughts.join('\n\n').trim();
-  const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()] } : undefined;
-  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out. The filter is a refusal; the rest is the limit.
-  if (incomplete) return { ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}), stopReason: incompleteReason === 'content_filter' ? 'refusal' : 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
+  // The Responses API names each search's queries, not its sources: each entry is the query alone.
+  const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
+  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out, but say which it was — the last one never
+  // reported done, or whose arguments did not come whole; none when every call came whole. The filter is a refusal; the rest is the limit.
+  if (incomplete) {
+    const broken = [...calls.values()].reverse().find((entry) => !entry.ended || !wholeJson(entry.args));
+    return {
+      ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}),
+      ...(broken ? { truncatedToolCall: { id: broken.callId, name: broken.name, raw: broken.args } } : {}),
+      stopReason: incompleteReason === 'content_filter' ? 'refusal' : 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}),
+    };
+  }
   return {
     ok: true,
     ...(text ? { text } : {}),

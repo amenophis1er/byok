@@ -5,6 +5,40 @@ while on 0.x, a breaking change bumps the minor version.
 
 ## 0.1.13
 
+- **`reasoning: 'on'`**: thinking and its summaries at the provider's own
+  default, no effort, budget or level named — Anthropic's adaptive thinking
+  with no `output_config.effort` (the medium budget where the model takes
+  a budget only), the Responses API's `summary: 'auto'` alone, Gemini's
+  `includeThoughts`, Ollama's `think: true`; nothing on OpenAI's Chat
+  Completions, whose default is the model's.
+- **`failure.code`** on a dropped connection: the innermost `code` down the
+  transport error's cause chain (`ECONNRESET`,
+  `ERR_SOCKET_CONNECTION_TIMEOUT`), beside `cause`. `transportCode` is
+  exported.
+- **`failure.providerType` and `failure.providerMessage`** on an HTTP
+  failure, and on `HttpError`: the provider's `error.type` apart from the
+  code it may have supplied, and its message as written (cut at 2000
+  characters) — never ChatGPT's, whose wording is hidden on purpose.
+- **Gemini 3 over Google's OpenAI-compatible root replays without a 400.**
+  A tool call replayed with no kept `thought_signature` gets Google's
+  `skip_thought_signature_validator` placeholder in `extra_content`, as the
+  native Gemini path adds it, on generativelanguage/aiplatform hosts for a
+  model that checks.
+- **Inline thinking: `<thinking>` recognised, and only a block that opens
+  the answer is reasoning.** A `<think>` the model quotes partway through
+  its answer stays text, as does everything after it, and nothing is held
+  back for a tag once the answer began; `new ThinkSplitter(emit, true)`
+  keeps the old anywhere behaviour.
+- **`truncatedToolCall: { id, name, raw }`** on a turn cut off in the
+  middle of a tool call (`stopReason` `length` or `refusal`): the call
+  whose block never stopped or whose arguments did not come whole, with
+  them as far as they came; none when every call came whole (the cut fell
+  after them). Not on Gemini, which sends a call whole or not at all.
+- **`webSearch.searches`**: each search on its own — its query, sources,
+  `resultCount` or `error` (`max_uses_exceeded`) on Anthropic, which tells
+  them apart by `tool_use_id`; the query alone on the Responses API and
+  Gemini. `AIWebSearchCall` is the type.
+
 - **A failed tool result is marked on Chat Completions.** A tool message
   with `isError` goes as `Error: …`, as the Responses items go; it went as
   bare text.
