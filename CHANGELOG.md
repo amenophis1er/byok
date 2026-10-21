@@ -7,7 +7,8 @@ while on 0.x, a breaking change bumps the minor version.
 
 - **A dropped connection is whatever the transport rejected with.** A host
   `fetch` that rejects with its own error (`{ code: 'ECONNRESET' }`, not a
-  `TypeError`), or a body read that fails, is `failure.kind: 'network'`,
+  `TypeError`), or a body read that fails (a refused response's included),
+  is `failure.kind: 'network'`,
   retryable before anything streamed, with the message and code in `cause`.
   `isNetworkFailure` reads `failure.kind` where the result carries it, the
   core's wording only on a result without the failure data.
@@ -28,8 +29,7 @@ while on 0.x, a breaking change bumps the minor version.
   not known to reason or for the Pro models, which take only their highest
   levels; Ollama gets `think: false`, dropped on a refusal like the other
   optional fields. Before, `off` sent nothing and a thinking model reasoned
-  at full length. A body read that fails on a refused response is a network
-  failure too.
+  at full length.
 - **A Gemini prompt block is final.** A stream whose `promptFeedback` names
   a `blockReason` and brings no candidate fails with "The prompt was blocked
   (SAFETY…)" and the reason as `providerCode`, never retryable; it was read
