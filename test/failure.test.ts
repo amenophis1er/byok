@@ -25,6 +25,30 @@ describe('the kinds', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('request: a body that will not serialise, with nothing sent and no retry', async () => {
+    const fetch = vi.fn<Fetch>();
+    const poison = { toJSON() { throw new Error('no way'); } };
+    const turn = (args: Record<string, unknown>, extra: unknown) => ({ ...req, messages: [
+      { role: 'user' as const, content: 'Hi' },
+      { role: 'assistant' as const, toolCalls: [{ id: 'c1', name: 't', args }], providerState: { protocol: 'chat-completions', extraContent: { c1: extra } } },
+      { role: 'tool' as const, toolCallId: 'c1', name: 't', content: 'ok' },
+    ] });
+    const result = await chat(conn, 'k', turn({}, poison), { fetch });
+    expect(result).toMatchObject({ ok: false, error: 'The request body could not be serialised: no way', failure: { kind: 'request', cause: 'no way', streamed: false } });
+    expect(result).not.toHaveProperty('retryable');
+    expect(fetch).not.toHaveBeenCalled();
+    // A cycle throws a TypeError, wherever the body is built: not the transport's.
+    const loop: Record<string, unknown> = {}; loop['me'] = loop;
+    for (const bad of [turn({}, loop), turn(loop, undefined)]) {
+      const cyclic = await chat(conn, 'k', bad, { fetch });
+      expect(cyclic).toMatchObject({ failure: { kind: 'request', cause: expect.stringMatching(/circular/i) } });
+      expect(cyclic.error).toMatch(/^The request (body could not be serialised|could not be built): .*circular/i);
+      expect(cyclic.error).not.toMatch(/network/i);
+      expect(cyclic).not.toHaveProperty('retryable');
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('network: the connection dropped, with what the transport said', async () => {
     const fetch = vi.fn<Fetch>(async () => { throw new TypeError('fetch failed: ECONNRESET'); });
     expect(await chat(conn, 'k', req, { fetch })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'fetch failed: ECONNRESET', streamed: false } });
@@ -126,8 +150,14 @@ describe('once output has streamed', () => {
   it('a cut-off stream is not retryable, and says so', async () => {
     const fetch = vi.fn<Fetch>(async () => cutAfterText());
     const result = await chat(conn, 'k', req, { fetch, onEvent: () => undefined });
-    expect(result).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', failure: { kind: 'stream', streamed: true } });
+    expect(result).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', failure: { kind: 'stream', streamed: true, endedEarly: true } });
     expect(result).not.toHaveProperty('retryable');
+    // An error the stream reported, without a code, is not a stream that ended early.
+    const errored = vi.fn<Fetch>(async () => sse('data: {"error":{"message":"something broke"}}\n\n'));
+    const reported = await chat(conn, 'k', req, { fetch: errored });
+    expect(reported).toMatchObject({ ok: false, failure: { kind: 'stream' } });
+    expect(reported.failure).not.toHaveProperty('endedEarly');
+    expect(reported).not.toHaveProperty('retryable');
     // `streamed` means reached a caller: with no sink, nothing did, and the turn is worth another try.
     expect(await chat(conn, 'k', req, { fetch })).toMatchObject({ retryable: true, failure: { kind: 'stream', streamed: false } });
   });

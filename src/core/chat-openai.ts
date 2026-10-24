@@ -26,7 +26,7 @@ import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { chatCompletionsState, tagged } from './provider-state.js';
 import { GEMINI_SIGNATURE_PLACEHOLDER, checksSignatures } from './chat-gemini.js';
-import { streamFailure } from './failure.js';
+import { endedEarly, streamFailure } from './failure.js';
 import { functionTools, webSearchTool } from './tools.js';
 
 /** What an assistant turn carries back: each tool call's `extra_content`, by call id. */
@@ -350,7 +350,7 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     if (choice['finish_reason']) finishReason = choice['finish_reason'];
   }
   splitter.end();
-  if (!finishReason) return streamFailure('The response stream ended before it finished.');
+  if (!finishReason) return endedEarly();
   for (const [index, fragment] of [...fragments.entries()].sort(([a], [b]) => a - b)) {
     const id = settle(index, fragment); // a call that never got arguments is settled, and announced, here
     onEvent?.({ type: 'tool_call_end', id });

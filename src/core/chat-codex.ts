@@ -21,7 +21,7 @@
 import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIServerTool, AIToolCall } from '../types.js';
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
-import { streamFailure } from './failure.js';
+import { endedEarly, streamFailure } from './failure.js';
 import { bodyRateLimit, type RateLimit } from './rate-limit.js';
 import { lowestEffort } from './chat-openai.js';
 import { responsesState, tagged } from './provider-state.js';
@@ -295,7 +295,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
       default:
     }
   }
-  if (!completed) return streamFailure('The response stream ended before it finished.');
+  if (!completed) return endedEarly();
   for (const entry of calls.values()) if (!entry.ended) { announce(entry); onEvent?.({ type: 'tool_call_end', id: entry.callId }); }
 
   const toolCalls: AIToolCall[] = [...calls.values()].map((entry) => {

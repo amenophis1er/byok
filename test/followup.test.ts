@@ -75,6 +75,8 @@ describe('Gemini thought signatures', () => {
       { functionCall: { name: 'b', args: {} } },
     ]);
     expect(geminiContents(messages, 'gemini-2.5-flash')[1]!.parts[0]).not.toHaveProperty('thoughtSignature');
+    expect(geminiContents(messages, 'models/gemini-3-pro-preview')[1]!.parts[0]).toHaveProperty('thoughtSignature', GEMINI_SIGNATURE_PLACEHOLDER);
+    expect(geminiContents(messages, 'models/gemini-2.5-pro')[1]!.parts[0]).not.toHaveProperty('thoughtSignature');
     expect(geminiContents(messages)[1]!.parts[0]).not.toHaveProperty('thoughtSignature');
     // Replayed history too, when none of its parts carries a signature (a 2.5 turn sent to a 3); signed history is left alone.
     const unsigned = [{ text: 'Looking.' }, { functionCall: { name: 'a', args: {} } }, { functionCall: { name: 'b', args: {} } }];

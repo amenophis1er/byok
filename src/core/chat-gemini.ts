@@ -29,7 +29,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIReasoning
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { geminiState, tagged } from './provider-state.js';
-import { streamFailure } from './failure.js';
+import { endedEarly, streamFailure } from './failure.js';
 import { functionTools, webSearchTool } from './tools.js';
 
 type Part = Record<string, unknown>;
@@ -47,7 +47,7 @@ function userParts(content: string | AIContentPart[]): Part[] {
 export const GEMINI_SIGNATURE_PLACEHOLDER = 'skip_thought_signature_validator';
 
 /** Whether the model checks thought signatures on replayed function calls: Gemini 3 and later. */
-export const checksSignatures = (model: string): boolean => /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model);
+export const checksSignatures = (model: string): boolean => /^gemini-(?:[3-9]|\d{2})(?:[-.]|$)/.test(model.replace(/^models\//, ''));
 
 /**
  * The model turn's parts: the API's own when we have them (written under this
@@ -218,7 +218,7 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   }
   // The prompt was blocked before any answer: final, not a cut stream to send again.
   if (!finishReason && blocked) return { ...streamFailure(`The prompt was blocked (${blocked.reason}${blocked.message ? `: ${blocked.message}` : ''}).`, blocked.reason), retryable: false };
-  if (!finishReason) return streamFailure('The response stream ended before it finished.');
+  if (!finishReason) return endedEarly();
   if (finishReason === 'MALFORMED_FUNCTION_CALL') return streamFailure('The model made a malformed function call.', finishReason);
 
   const text = parts.filter((p) => typeof p['text'] === 'string' && !p['thought']).map((p) => p['text'] as string).join('').trim();

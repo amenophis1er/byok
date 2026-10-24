@@ -235,6 +235,7 @@ export interface AIDeleteConnectionRequest {
 export interface AIFailure {
     cause?: string;
     code?: string;
+    endedEarly?: boolean;
     // (undocumented)
     kind: AIFailureKind;
     providerCode?: string;

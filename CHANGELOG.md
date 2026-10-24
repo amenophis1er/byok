@@ -5,6 +5,23 @@ while on 0.x, a breaking change bumps the minor version.
 
 ## 0.1.14
 
+- **`failure.endedEarly`** on a stream that closed before the provider's
+  closing event, naming no error — as data, where only the sentence told it
+  from an error the stream reported without a code. `transient` reads it.
+- **A body that will not serialise is a `request` failure**, not a dropped
+  connection: a `toJSON()` that throws or a cycle in the request fails
+  before anything goes out, with the cause and without `retryable`. It was
+  reported as `network` and retryable, as was any `TypeError` thrown while
+  the request was built; a dropped connection is now only what the transport
+  rejected with.
+- **Refused thinking on a latest turn that replays none drops the earlier
+  turns'.** "`thinking` blocks in the latest assistant message cannot be
+  modified" on a history whose latest assistant turn carries no thinking
+  resends the request with every turn's thinking dropped; the one retry
+  resent the same bytes.
+- **`models/gemini-3-pro-preview` checks signatures** like
+  `gemini-3-pro-preview`: the resource prefix is read past.
+
 - **A cut-off turn hands out the calls it made whole.** With `stopReason`
   `length` or `refusal`, `toolCalls` holds the calls whose arguments came
   whole and `providerState` keeps their blocks, on every protocol; only the

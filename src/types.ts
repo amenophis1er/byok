@@ -405,7 +405,8 @@ export type AIReasoning = 'off' | 'on' | 'low' | 'medium' | 'high';
 
 /**
  * Why a turn failed: refused before any request went out (`request`: no
- * model, no key, a model this library cannot serve), the connection dropped
+ * model, no key, a model this library cannot serve, a body that would not
+ * serialise), the connection dropped
  * (`network`), the server refused (`http`, with `status`), the stream failed
  * or ended early (`stream`), a limit passed (`timeout`), the caller's signal
  * (`stopped`), or the caller's `onEvent` threw (`sink`).
@@ -431,6 +432,8 @@ export interface AIFailure {
   code?: string;
   /** On `timeout`: which limit passed — the idle one (`idleTimeoutMs`: nothing arrived for that long) or the whole-request one (`timeoutMs`). */
   timeout?: 'idle' | 'total';
+  /** On `stream`: the stream ended before the provider's closing event, naming no error. Not a transport fault as such (the connection may simply have closed), told apart from an error the stream reported without a code. */
+  endedEarly?: boolean;
   /** Whether text or a tool call had streamed to `onEvent` before the failure: the user may have seen it, so the turn is never `retryable`. Always false without an `onEvent`, which nothing reached. */
   streamed: boolean;
 }
