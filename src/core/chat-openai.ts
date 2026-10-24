@@ -95,8 +95,9 @@ export function openaiMessages(system: string, messages: AIMessage[], placeholde
     }
     const calls = message.toolCalls ?? [];
     const extra = chatCompletionsState(message.providerState);
-    // The placeholder on the first call, merged into whatever extra_content it kept, unless a call of the turn kept a signature of its own.
-    const stub = placeholder && !calls.some((call) => hasSignature(extra[call.id]));
+    // The placeholder on the first call, merged into whatever extra_content it kept, unless that call kept a signature of its own: the
+    // validator reads the turn's first call, whatever the others carry.
+    const stub = placeholder && calls.length > 0 && !hasSignature(extra[calls[0]!.id]);
     const extraOf = (call: AIToolCall, first: boolean): Record<string, unknown> => {
       const own = extra[call.id];
       if (!stub || !first) return own !== undefined ? { extra_content: own } : {};
@@ -155,8 +156,9 @@ export function openaiBody(req: AIChatRequest, model: string, base: string, omit
   if (webSearchTool(req)) throw new Error('This server speaks Chat Completions, which has no web search tool: leave the web_search tool out for it.'); // chat() skips the protocol first; this guards a direct caller
   const tools = functionTools(req).map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }));
   const openai = /(^|\.)openai\.com$/i.test(safeHost(base));
-  // Google's OpenAI-compatible root serving a model that checks thought signatures: the replay needs the placeholder.
-  const google = /(^|\.)(?:generativelanguage|aiplatform)\.googleapis\.com$/i.test(safeHost(base)) && checksSignatures(model);
+  // Google's OpenAI-compatible root (the Gemini API, or Vertex, global or regional: `us-central1-aiplatform…`) serving a model that
+  // checks thought signatures: the replay needs the placeholder.
+  const google = /(^|\.)generativelanguage\.googleapis\.com$|(^|[.-])aiplatform\.googleapis\.com$/i.test(safeHost(base)) && checksSignatures(model);
   return {
     model,
     stream: true,
@@ -168,16 +170,36 @@ export function openaiBody(req: AIChatRequest, model: string, base: string, omit
     // OpenAI's own fields; another server that refuses one gets the request again without it.
     ...(req.cacheKey && openai && !omit.has('prompt_cache_key') ? { prompt_cache_key: req.cacheKey } : {}),
     ...(effort(req.reasoning, model, openai, omit)),
-    // Ollama's own switch: `reasoning: 'off'` turns a thinking model's thinking off there, `'on'` on; its levels have no Ollama equivalent.
+    // Ollama's own switch beside it: `reasoning: 'off'` turns a thinking model's thinking off there, `'on'` on; its levels have no Ollama equivalent.
     ...((req.reasoning === 'off' || req.reasoning === 'on') && isOllama(base) && !omit.has('think') ? { think: req.reasoning === 'on' } : {}),
   };
 }
 
-/** OpenAI's `reasoning_effort`: the level asked for, or for `off` the least the model takes; nothing for `on`, the model's own default. */
+/**
+ * `reasoning_effort`, OpenAI's field and the one every compatible server
+ * reads: the level asked for, or for `off` the least the model takes;
+ * nothing for `on`, the model's own default. On OpenAI itself `off` sends
+ * nothing to a model not known to reason, which would refuse the field;
+ * elsewhere it sends `none` (`low` to gpt-oss, which has nothing less) to
+ * any model, a server that refuses the field being asked again without it.
+ */
 function effort(reasoning: AIChatRequest['reasoning'], model: string, openai: boolean, omit: ReadonlySet<OptionalField>): Record<string, unknown> {
-  if (!reasoning || reasoning === 'on' || !openai || omit.has('reasoning_effort')) return {};
-  const value = reasoning === 'off' ? lowestEffort(model) : reasoning;
+  if (!reasoning || reasoning === 'on' || omit.has('reasoning_effort')) return {};
+  const value = reasoning === 'off' ? (openai ? lowestEffort(model) : lowestEffortElsewhere(model)) : reasoning;
   return value ? { reasoning_effort: value } : {};
+}
+
+/**
+ * The least a model takes on a server that is not OpenAI's, for `off`: an
+ * OpenAI model's own least (a gateway's `openai/gpt-5.1`, with the vendor
+ * prefix read past; nothing where OpenAI takes nothing), `low` on gpt-oss,
+ * `none` for the rest — what turns a thinking model's thinking off where the
+ * server honours the field (Ollama, Google's compatible root).
+ */
+export function lowestEffortElsewhere(model: string): 'none' | 'minimal' | 'low' | undefined {
+  const bare = model.toLowerCase().replace(/^[^/]+\//, '');
+  if (/^gpt-|^o\d(?:-|$)/.test(bare)) return /gpt-oss/.test(bare) ? 'low' : lowestEffort(bare);
+  return 'none';
 }
 
 function safeHost(base: string): string {
@@ -349,20 +371,27 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the token limit or a filter may carry a truncated call: never hand one out, but say which it was — the last
-  // whose arguments did not come whole (one that parses was complete; the cut then fell in the text after it).
+  // A turn cut off by the token limit or a filter may carry truncated calls: never hand one out, but say which the last was — a call
+  // whose arguments did not come whole (one that parses was complete; the cut then fell in the text after it), or came not at all,
+  // an announced call with no arguments yet. The calls that came whole are handed out all the same, to be answered before the turn
+  // is replayed, and their extra_content kept.
   const runnable = mapped === 'tool_use' || mapped === 'end';
-  const broken = runnable ? undefined : [...toolCalls].reverse().find((call) => call.argsError);
-  const cut = broken ? { id: broken.id, name: broken.name, raw: broken.argsError!.raw } : undefined;
+  const broken = runnable ? [] : [...fragments.entries()].sort(([a], [b]) => a - b).map(([index, fragment]) => ({ raw: fragment.args, call: toolCalls.find((call) => call.id === settle(index, fragment))! }))
+    .filter(({ raw, call }) => call.argsError || raw.trim() === '');
+  const last = broken[broken.length - 1];
+  const cut = last ? { id: last.call.id, name: last.call.name, raw: last.raw } : undefined;
+  const held = new Set(broken.map(({ call }) => call.id));
+  const whole = toolCalls.filter((call) => !held.has(call.id));
+  for (const id of held) delete extraContent[id];
   const cleaned = text.trim();
   const thoughts = reasoning.trim();
   return {
     ok: true,
     ...(cleaned ? { text: cleaned } : {}),
     ...(thoughts ? { reasoning: thoughts } : {}),
-    ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(whole.length > 0 ? { toolCalls: whole } : {}),
     ...(cut ? { truncatedToolCall: cut } : {}),
-    ...(runnable && Object.keys(extraContent).length > 0 ? { providerState: tagged.chatCompletions(extraContent) } : {}),
+    ...(Object.keys(extraContent).length > 0 ? { providerState: tagged.chatCompletions(extraContent) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),

@@ -115,7 +115,6 @@ export interface AIChatResult {
     stopReason?: AIStopReason;
     // (undocumented)
     text?: string;
-    // (undocumented)
     toolCalls?: AIToolCall[];
     truncatedToolCall?: {
         id: string;

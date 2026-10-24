@@ -87,6 +87,34 @@ export function rateLimitOf(status: number, headers: HeaderSource | undefined, b
   return out;
 }
 
+/**
+ * What an error reported inside a stream (the Responses API's `response.failed`
+ * and `error` events) says about coming back: only what its body names — a
+ * `RetryInfo`, ChatGPT's `resets_at` / `resets_in_seconds` or the words "try
+ * again in", a plan's window (`usage_limit_reached`, `usage_not_included`) or
+ * the window the words name. No status or header to go by, so none is claimed:
+ * a code alone, `rate_limit_exceeded` say, carries nothing.
+ */
+export function bodyRateLimit(body: string, now = Date.now()): RateLimit {
+  const out: RateLimit = {};
+  const json = parseJson(body);
+  const plan = planWindow(() => null, json, 0);
+  const named = plan ? undefined : namedQuota(json, body);
+  const quota = plan ?? named?.window;
+  const wait = plan === 'excluded' ? undefined : retryInfo(json) ?? bodyWait(json, body, now);
+  if (wait !== undefined) {
+    out.retryAfterMs = wait;
+    if (quota !== 'day') out.resetAt = now + wait;
+  }
+  if (quota === 'day' && named?.documented) {
+    const midnight = nextMidnight(now, 'America/Los_Angeles');
+    if (midnight !== undefined) out.resetAt = midnight;
+  }
+  if (quota) out.quota = quota === 'excluded' ? 'plan' : quota;
+  if (named?.limit) out.limit = named.limit;
+  return out;
+}
+
 /** A case-insensitive lookup over any header source; `null` for a header not given, or given as something other than a string. */
 function headerGetter(headers: HeaderSource | undefined): (name: string) => string | null {
   if (!headers) return () => null;

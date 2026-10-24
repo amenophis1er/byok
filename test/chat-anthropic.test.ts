@@ -135,7 +135,7 @@ describe('streamed response', () => {
     expect(result.toolCalls![0]!.args).toBeUndefined();
   });
 
-  it('hands out no tool call from a turn cut off by max_tokens or a refusal', async () => {
+  it('hands out no cut-off call from a turn cut off by max_tokens or a refusal, and the whole ones with their blocks', async () => {
     for (const reason of ['max_tokens', 'refusal']) {
       const result = await parse([start, ...toolUse(0, 'x', ['{"action":"navigate","url":"https://ex']), ...stop(reason)]);
       expect(result.ok).toBe(true);
@@ -145,9 +145,17 @@ describe('streamed response', () => {
       // The call it was cut off in, with the arguments as far as they came.
       expect(result.truncatedToolCall).toEqual({ id: 'x', name: 'browser', raw: '{"action":"navigate","url":"https://ex' });
     }
-    // A call whose arguments came whole was not the cut one: a whole turn, or one cut in the text after it, names none.
-    const after = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']), ...stop('max_tokens')]);
+    // A call whose arguments came whole was not the cut one: a whole turn, or one cut in the text after it, names none — and the
+    // whole call is handed out with its block kept, to be answered before the turn is replayed (the API wants a result for each).
+    const after = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']),
+      { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'and then' } }, ...stop('max_tokens')]);
     expect(after).not.toHaveProperty('truncatedToolCall');
+    expect(after).toMatchObject({ stopReason: 'length', text: 'and then', toolCalls: [{ id: 'x', name: 'browser', args: { action: 'observe' } }],
+      providerState: { protocol: 'anthropic', blocks: [{ type: 'tool_use', id: 'x', name: 'browser', input: { action: 'observe' } }, { type: 'text', text: 'and then' }] } });
+    // Whole and cut in one turn: the whole one handed out and kept, every cut one dropped, the last of them named.
+    const mixed = await parse([start, ...toolUse(0, 'z', ['{"act']), ...toolUse(1, 'a', ['{"action":"observe"}']), ...toolUse(2, 'b', ['{"action":"nav']), ...stop('max_tokens')]);
+    expect(mixed).toMatchObject({ stopReason: 'length', toolCalls: [{ id: 'a', name: 'browser' }], truncatedToolCall: { id: 'b', name: 'browser', raw: '{"action":"nav' },
+      providerState: { protocol: 'anthropic', blocks: [{ type: 'tool_use', id: 'a', name: 'browser', input: { action: 'observe' } }] } });
     const whole = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']), ...stop('tool_use')]);
     expect(whole).not.toHaveProperty('truncatedToolCall');
   });

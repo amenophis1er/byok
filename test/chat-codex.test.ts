@@ -69,7 +69,7 @@ describe('ChatGPT stream', () => {
     expect(result.toolCalls?.[0]).toMatchObject({ id: 'call_1', name: 'browser', argsError: { raw: '{"act' } });
   });
 
-  it('never hands out a call from a turn cut off by the limit', async () => {
+  it('never hands out the cut-off call from a turn cut off by the limit, and hands out the whole ones', async () => {
     const result = await codexResult(events(
       { type: 'response.output_item.added', item: { type: 'function_call', id: 'fc1', call_id: 'c', name: 'browser' } },
       { type: 'response.function_call_arguments.delta', item_id: 'fc1', delta: '{"action":"na' },
@@ -83,7 +83,26 @@ describe('ChatGPT stream', () => {
       { type: 'response.output_text.delta', item_id: 'm', delta: 'and' },
       { type: 'response.incomplete', response: { status: 'incomplete' } },
     ));
-    expect(after).toEqual({ ok: true, text: 'and', stopReason: 'length' });
+    expect(after).toEqual({ ok: true, text: 'and', stopReason: 'length', toolCalls: [{ id: 'c', name: 'browser', args: {} }],
+      providerState: { protocol: 'responses', items: [{ type: 'function_call', id: 'fc1', call_id: 'c', name: 'browser', arguments: '{}' }] } });
+    // A whole call before the cut one is handed out, its item kept; the cut one is named and dropped from both.
+    const mixed = await codexResult(events(
+      { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc1', call_id: 'c1', name: 'browser', arguments: '{"a":1}' } },
+      { type: 'response.output_item.added', item: { type: 'function_call', id: 'fc2', call_id: 'c2', name: 'browser' } },
+      { type: 'response.function_call_arguments.delta', item_id: 'fc2', delta: '{"b' },
+      { type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } } },
+    ));
+    expect(mixed).toEqual({ ok: true, stopReason: 'length', toolCalls: [{ id: 'c1', name: 'browser', args: { a: 1 } }], truncatedToolCall: { id: 'c2', name: 'browser', raw: '{"b' },
+      providerState: { protocol: 'responses', items: [{ type: 'function_call', id: 'fc1', call_id: 'c1', name: 'browser', arguments: '{"a":1}' }] } });
+    // An item reported done but incomplete, or done with no arguments at all, did not come whole either: held back and dropped, every one of them.
+    const marked = await codexResult(events(
+      { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc1', call_id: 'c1', name: 'browser', arguments: '', status: 'incomplete' } },
+      { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc2', call_id: 'c2', name: 'browser', arguments: '{"a":1}', status: 'completed' } },
+      { type: 'response.output_item.done', item: { type: 'function_call', id: 'fc3', call_id: 'c3', name: 'browser', arguments: '{"a":1}', status: 'incomplete' } },
+      { type: 'response.incomplete', response: { status: 'incomplete' } },
+    ));
+    expect(marked).toEqual({ ok: true, stopReason: 'length', toolCalls: [{ id: 'c2', name: 'browser', args: { a: 1 } }], truncatedToolCall: { id: 'c3', name: 'browser', raw: '{"a":1}' },
+      providerState: { protocol: 'responses', items: [{ type: 'function_call', id: 'fc2', call_id: 'c2', name: 'browser', arguments: '{"a":1}', status: 'completed' }] } });
     // The reason given says which: the limit, or a filter (a refusal). Unknown or absent, the limit.
     const reason = (details: Record<string, unknown> | undefined) => codexResult(events(
       { type: 'response.output_text.delta', item_id: 'm', delta: 'Part' },
@@ -99,6 +118,24 @@ describe('ChatGPT stream', () => {
     expect(await codexResult(events({ type: 'error', error: { code: 'rate_limit_exceeded', message: 'secret prompt echo' } })))
       .toMatchObject({ ok: false, error: 'Your ChatGPT plan’s limit is reached. Wait for it to reset.' });
     expect((await codexResult(events({ type: 'response.failed', response: { error: { code: 'server_error' } } }))).ok).toBe(false);
+    // A rate limit reported inside the stream keeps what the event says about coming back: the plan's window and its reset, nothing assumed from the code alone.
+    const at = Math.floor(Date.now() / 1000) + 3600;
+    const plan = await codexResult(events({ type: 'error', error: { type: 'usage_limit_reached', resets_at: at } }));
+    expect(plan).toMatchObject({ ok: false, failure: { kind: 'stream', providerCode: 'usage_limit_reached' }, quota: 'plan' });
+    expect(plan.resetAt).toBeGreaterThan(Date.now() + 3_500_000);
+    expect(plan.retryAfterMs).toBeGreaterThan(3_500_000);
+    const bare = await codexResult(events({ type: 'response.failed', response: { error: { code: 'rate_limit_exceeded', message: 'Rate limit reached.' } } }));
+    expect(bare).toMatchObject({ ok: false, failure: { kind: 'stream', providerCode: 'rate_limit_exceeded' } });
+    for (const field of ['quota', 'retryAfterMs', 'resetAt', 'retryable']) expect(bare).not.toHaveProperty(field);
+    const soon = await codexResult(events({ type: 'response.failed', response: { error: { code: 'rate_limit_exceeded', message: 'Rate limit reached for requests per minute. Please try again in 20s.' } } }));
+    expect(soon).toMatchObject({ quota: 'minute', retryAfterMs: 20_000 });
+    // ChatGPT's words never come through, the model a quota names included; another server's do.
+    const quota = { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'PerDay', quotaValue: '50', quotaDimensions: { model: 'secret prompt echo' } }] };
+    const hidden = await codexResult(events({ type: 'error', error: { code: 'rate_limit_exceeded', message: 'Rate limit reached for requests per day.', details: [quota] } }));
+    expect(JSON.stringify(hidden)).not.toContain('secret prompt echo');
+    expect(hidden).toMatchObject({ quota: 'day', limit: { value: 50 } });
+    const shown = await codexResult(events({ type: 'error', error: { code: 'rate_limit_exceeded', message: 'Rate limit reached for requests per day.', details: [quota] } }), (body) => body);
+    expect(shown).toMatchObject({ quota: 'day', limit: { value: 50, model: 'secret prompt echo' } });
     expect(await codexResult(events({ type: 'response.output_text.delta', item_id: 'm', delta: 'half' })))
       .toMatchObject({ ok: false, error: 'The response stream ended before it finished.' });
   });

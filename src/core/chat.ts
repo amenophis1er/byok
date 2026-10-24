@@ -36,11 +36,11 @@ class TransportError extends Error {
   constructor(public readonly cause: unknown) { super(cause instanceof Error ? cause.message : String(cause)); }
 }
 
-/** The caller's sink, with its exceptions told apart from the provider's, and `seen()` called once output has streamed. */
+/** The caller's sink, with its exceptions told apart from the provider's, and `seen()` called once output has streamed to it — nothing streams to no sink. */
 function guarded(onEvent: ChatEventSink | undefined, seen: () => void): ChatEventSink {
   return (event) => {
-    if (event.type !== 'usage') seen();
     if (!onEvent) return;
+    if (event.type !== 'usage') seen();
     try { onEvent(event); } catch (error) { throw new SinkError(error); }
   };
 }
@@ -423,7 +423,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
     throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text, { message: false })) : httpError(res, text);
   }
-  return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent);
+  return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent, { providerText: !codex });
 }
 
 /**
@@ -512,10 +512,15 @@ function cause(reason: unknown): Pick<AIFailure, 'cause'> {
   return text ? { cause: text } : {};
 }
 
-/** A stream cut short or an overloaded provider mid-answer: worth one more try, like a dropped connection. A module that said `retryable: false` is final, whatever its words. */
+/**
+ * A stream cut short or an overloaded provider mid-answer: worth one more try, like a dropped connection; so is a rate limit
+ * reported inside the stream that lifts within the minute (a wait of a minute at most, or a minute window), as on a 429. A module
+ * that said `retryable: false` is final, whatever its words.
+ */
 function transient(result: AIChatResult): AIChatResult {
   if (result.ok || result.retryable === false) return result;
-  return /ended before it finished|overloaded/i.test(result.error ?? '') ? { ...result, retryable: true } : result;
+  const soon = result.quota !== 'day' && result.quota !== 'plan' && (result.retryAfterMs !== undefined ? result.retryAfterMs <= 60_000 : result.quota === 'minute');
+  return soon || /ended before it finished|overloaded/i.test(result.error ?? '') ? { ...result, retryable: true } : result;
 }
 
 /** A network failure, naming who could not be reached; the local-server hint only for local servers. */

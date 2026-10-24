@@ -58,9 +58,10 @@ export const checksSignatures = (model: string): boolean => /^gemini-(?:[3-9]|\d
 function modelParts(message: Extract<AIMessage, { role: 'assistant' }>, placeholder: boolean): Part[] {
   const own = geminiState(message.providerState);
   if (own) {
-    if (!placeholder || own.some((p) => typeof p['thoughtSignature'] === 'string')) return own as Part[];
+    // The validator reads the first function call's signature: that part gets the placeholder when it has none, whatever the others carry.
     const first = own.findIndex((p) => p['functionCall']);
-    return first === -1 ? (own as Part[]) : own.map((p, i) => (i === first ? { ...p, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER } : p)) as Part[];
+    if (!placeholder || first === -1 || typeof own[first]!['thoughtSignature'] === 'string') return own as Part[];
+    return own.map((p, i) => (i === first ? { ...p, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER } : p)) as Part[];
   }
   const parts: Part[] = [];
   if (message.content) parts.push({ text: message.content });
@@ -235,8 +236,8 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the limit or a filter may carry a call: never hand one out. Gemini sends a call whole, as an object, or not at
-  // all, so none is ever known to be cut off in the middle: no `truncatedToolCall` here.
+  // Gemini sends a call whole, as an object, or not at all, so none is ever known to be cut off in the middle: no `truncatedToolCall`
+  // here, and the calls a cut-off turn carries are handed out, to be answered before the turn is replayed, its parts kept.
   const runnable = mapped === 'end';
   // Grounding names the queries and the sources of the turn, not which query brought which: each entry is the query alone.
   const webSearch = queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
@@ -247,9 +248,9 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ...(text ? { text } : {}),
     ...(reasoning ? { reasoning } : {}),
     ...(webSearch ? { webSearch } : {}),
-    ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
     // The parts come back as sent, signatures included; thought summaries without one are left out.
-    ...(runnable && parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
+    ...(parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),

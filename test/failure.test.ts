@@ -50,9 +50,11 @@ describe('the kinds', () => {
     const early = vi.fn<Fetch>(async () => new Response(failing(), { status: 200 }));
     expect(await chat(conn, 'k', req, { fetch: early })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'read ECONNRESET (ECONNRESET)', streamed: false } });
     const late = vi.fn<Fetch>(async () => new Response(failing('data: {"choices":[{"index":0,"delta":{"content":"half"}}]}\n\n'), { status: 200 }));
-    const cut = await chat(conn, 'k', req, { fetch: late });
+    const cut = await chat(conn, 'k', req, { fetch: late, onEvent: () => undefined });
     expect(cut).toMatchObject({ failure: { kind: 'network', streamed: true } });
     expect(cut).not.toHaveProperty('retryable');
+    // Without a sink nothing streamed to anyone: the same request may go again.
+    expect(await chat(conn, 'k', req, { fetch: late })).toMatchObject({ retryable: true, failure: { kind: 'network', streamed: false } });
     // A refused response whose body cannot be read is the transport's failure too.
     const refusedCut = vi.fn<Fetch>(async () => new Response(failing(), { status: 503 }));
     expect(await chat(conn, 'k', req, { fetch: refusedCut })).toMatchObject({ retryable: true, failure: { kind: 'network', cause: 'read ECONNRESET (ECONNRESET)' } });
@@ -123,9 +125,11 @@ describe('once output has streamed', () => {
 
   it('a cut-off stream is not retryable, and says so', async () => {
     const fetch = vi.fn<Fetch>(async () => cutAfterText());
-    const result = await chat(conn, 'k', req, { fetch });
+    const result = await chat(conn, 'k', req, { fetch, onEvent: () => undefined });
     expect(result).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', failure: { kind: 'stream', streamed: true } });
     expect(result).not.toHaveProperty('retryable');
+    // `streamed` means reached a caller: with no sink, nothing did, and the turn is worth another try.
+    expect(await chat(conn, 'k', req, { fetch })).toMatchObject({ retryable: true, failure: { kind: 'stream', streamed: false } });
   });
 
   it('withRetry leaves it alone, whatever retryable says', async () => {

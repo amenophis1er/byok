@@ -157,13 +157,11 @@ describe('chat()', () => {
     expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, retryable: true });
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"bad model"}', { status: 400 })));
     expect(await chat({ system: '', messages: [] })).not.toHaveProperty('retryable');
-    // A stream cut off before anything streamed is worth another try; one cut after text the user saw is not.
+    // A stream cut off is worth another try: the worker has no sink, so nothing had streamed to anyone, text or not.
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse('data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n')));
     expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', retryable: true, failure: { kind: 'stream', streamed: false } });
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse('data: {"choices":[{"index":0,"delta":{"content":"half"}}]}\n\n')));
-    const cut = await chat({ system: '', messages: [] });
-    expect(cut).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', failure: { kind: 'stream', streamed: true } });
-    expect(cut).not.toHaveProperty('retryable');
+    expect(await chat({ system: '', messages: [] })).toMatchObject({ ok: false, error: 'The response stream ended before it finished.', retryable: true, failure: { kind: 'stream', streamed: false } });
   });
 
   it('passes on when the provider said to come back after a rate limit', async () => {

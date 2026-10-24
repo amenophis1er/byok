@@ -192,8 +192,11 @@ What it guarantees:
   `error`, log `providerType` and `providerMessage` as the provider wrote
   them (never ChatGPT's), quote `requestId` to the provider's
   support, and read `streamed` to know whether the user already saw part of
-  the answer. `retryable: true` means nothing was acted on: the connection
-  dropped, the server failed (5xx), or a rate limit lifts within the minute,
+  the answer (nothing streams without an `onEvent`). `retryable: true` means
+  nothing was acted on: the connection dropped, the server failed (5xx), or
+  a rate limit lifts within the minute, on a 429 or reported inside the
+  stream (a Responses `error` or `response.failed` event, read for what it
+  names: ChatGPT's `resets_at`, a plan's window, the words "try again in"),
   and nothing had streamed. A dropped connection (`network`) is whatever
   the transport rejected with — a `TypeError`, a host `fetch`'s own error,
   a body read that failed — with its message in `cause` and the innermost
@@ -335,8 +338,11 @@ the error it got (`max_uses_exceeded`) on Anthropic, which tells them
 apart; the query alone on the Responses API and Gemini, which do not. A
 turn cut off in the middle of a tool call (`stopReason` `length` or
 `refusal`) names it in `truncatedToolCall: { id, name, raw }`, never in
-`toolCalls` — the call whose arguments did not come whole; Gemini, which
-sends a call whole or not at all, never names one.
+`toolCalls` — the call whose arguments did not come whole, or came not at
+all; Gemini, which sends a call whole or not at all, never names one. The
+calls such a turn had made whole are in `toolCalls` all the same, their
+blocks kept in `providerState`: answer them, then replay the turn, as the
+providers want a result for every call they are given back.
 
 Ask for reasoning where the model can, and watch it:
 
@@ -361,7 +367,12 @@ Chat Completions: nothing). `'off'` sends each family's least: OpenAI's
 `none` (GPT-5.1 on), `minimal` (GPT-5) or `low` (Codex models, o-series;
 nothing on the Pro models; and everything on the ChatGPT backend, whose
 accepted levels are not published), nothing for a model not known to
-reason; Ollama's `think: false`. A model that opens its answer with
+reason. A Chat Completions server that is not OpenAI's gets
+`reasoning_effort` too, the level asked for or, for `'off'`, `none` (`low`
+to gpt-oss, which has nothing less; an OpenAI model's own least behind a
+gateway) — Ollama's `/v1` and Google's compatible root read it as thinking
+off, and a server that refuses the field is asked again without it; Ollama
+gets its `think: false` beside it. A model that opens its answer with
 inline thinking in `<think>`, `<thinking>` or `<reasoning>` tags has it
 reported as reasoning, not text; a tag quoted partway through the answer is
 text.

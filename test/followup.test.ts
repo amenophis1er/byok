@@ -82,6 +82,10 @@ describe('Gemini thought signatures', () => {
       .toEqual([{ text: 'Looking.' }, { functionCall: { name: 'a', args: {} }, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER }, { functionCall: { name: 'b', args: {} } }]);
     const signed = [{ functionCall: { name: 'a', args: {} }, thoughtSignature: 'real' }, { functionCall: { name: 'b', args: {} } }];
     expect(geminiContents([messages[0]!, { ...messages[1]!, providerState: { protocol: 'gemini', parts: signed } }], 'gemini-3-pro')[1]!.parts).toEqual(signed);
+    // Decided on the first function call, whose signature the validator reads: bare, it gets the placeholder whatever a later part carries.
+    const laterSigned = [{ text: 'Looking.', thoughtSignature: 'text-sig' }, { functionCall: { name: 'a', args: {} } }, { functionCall: { name: 'b', args: {} }, thoughtSignature: 'real' }];
+    expect(geminiContents([messages[0]!, { ...messages[1]!, providerState: { protocol: 'gemini', parts: laterSigned } }], 'gemini-3-pro')[1]!.parts)
+      .toEqual([laterSigned[0], { functionCall: { name: 'a', args: {} }, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER }, laterSigned[2]]);
     expect(geminiContents([messages[0]!, { ...messages[1]!, providerState: { protocol: 'gemini', parts: unsigned } }], 'gemini-2.5-flash')[1]!.parts).toEqual(unsigned);
   });
 });

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { anthropicBody, anthropicResult, claudeThinking, thinkingFields } from '../src/core/chat-anthropic.js';
 import { codexBody, codexInput, codexResult } from '../src/core/chat-codex.js';
 import { geminiBody, geminiResult, geminiThinking } from '../src/core/chat-gemini.js';
-import { ThinkSplitter, lowestEffort, openaiBody, openaiResult, rejectedField } from '../src/core/chat-openai.js';
+import { ThinkSplitter, lowestEffort, lowestEffortElsewhere, openaiBody, openaiResult, rejectedField } from '../src/core/chat-openai.js';
 import { chat, type Connection, type Fetch } from '../src/core/index.js';
 import { readSse } from '../src/core/sse.js';
 import type { AIChatRequest, AIMessage } from '../src/types.js';
@@ -47,14 +47,16 @@ describe('the request, per provider', () => {
     expect(anthropicBody({ ...req, reasoning: 'medium' }, 'claude-sonnet-5-5', [])).toMatchObject({ output_config: { effort: 'medium' } });
   });
 
-  it('Chat Completions: reasoning_effort to OpenAI, not elsewhere, and left out when refused', () => {
+  it('Chat Completions: reasoning_effort to OpenAI and every compatible server, and left out when refused', () => {
     expect(openaiBody({ ...req, reasoning: 'high' }, 'gpt-5', OPENAI)).toMatchObject({ reasoning_effort: 'high' });
-    expect(openaiBody({ ...req, reasoning: 'high' }, 'r1', 'https://api.groq.com/openai/v1')).not.toHaveProperty('reasoning_effort');
+    expect(openaiBody({ ...req, reasoning: 'high' }, 'r1', 'https://api.groq.com/openai/v1')).toMatchObject({ reasoning_effort: 'high' });
+    expect(openaiBody({ ...req, reasoning: 'low' }, 'qwen3', 'http://localhost:11434/v1')).toMatchObject({ reasoning_effort: 'low' });
+    expect(openaiBody({ ...req, reasoning: 'on' }, 'r1', 'https://api.groq.com/openai/v1')).not.toHaveProperty('reasoning_effort');
     expect(openaiBody({ ...req, reasoning: 'high' }, 'gpt-5', OPENAI, new Set(['reasoning_effort']))).not.toHaveProperty('reasoning_effort');
     expect(rejectedField(400, '{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}')).toBe('reasoning_effort');
   });
 
-  it('Chat Completions: off sends the least effort the model takes to OpenAI, and think: false to Ollama', () => {
+  it('Chat Completions: off sends the least effort the model takes to OpenAI, none (low to gpt-oss) elsewhere, and think: false to Ollama too', () => {
     expect(lowestEffort('gpt-5.1')).toBe('none');
     expect(lowestEffort('gpt-5.5-2026-04-01')).toBe('none');
     expect(lowestEffort('gpt-6')).toBe('none');
@@ -77,10 +79,23 @@ describe('the request, per provider', () => {
     // A model not known to reason gets nothing: the field would be refused on every turn.
     expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-4.1', OPENAI)).not.toHaveProperty('reasoning_effort');
     expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-5', OPENAI, new Set(['reasoning_effort']))).not.toHaveProperty('reasoning_effort');
-    // Ollama's own switch, local or ollama.com; left out when refused, and never sent elsewhere or for a level.
+    // Elsewhere `off` is `none`, which the servers that honour the field (Ollama's /v1, Google's root) read as thinking off; gpt-oss has
+    // nothing below `low`; an OpenAI model behind a gateway takes its own least, the vendor prefix read past.
+    expect(lowestEffortElsewhere('qwen3')).toBe('none');
+    expect(lowestEffortElsewhere('glm-5.3-flash')).toBe('none');
+    expect(lowestEffortElsewhere('gpt-oss:120b')).toBe('low');
+    expect(lowestEffortElsewhere('openai/gpt-oss-120b')).toBe('low');
+    expect(lowestEffortElsewhere('openai/gpt-5.1')).toBe('none');
+    expect(lowestEffortElsewhere('openai/gpt-5')).toBe('minimal');
+    expect(lowestEffortElsewhere('gpt-5-pro')).toBeUndefined();
+    expect(lowestEffortElsewhere('gpt-4o')).toBeUndefined();
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gpt-oss:120b', 'https://ollama.com/v1')).toMatchObject({ reasoning_effort: 'low', think: false });
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'gemini-3-flash', 'https://generativelanguage.googleapis.com/v1beta/openai')).toMatchObject({ reasoning_effort: 'none' });
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'r1', 'https://api.groq.com/openai/v1')).toMatchObject({ reasoning_effort: 'none' });
+    expect(openaiBody({ ...req, reasoning: 'off' }, 'r1', 'https://api.groq.com/openai/v1', new Set(['reasoning_effort']))).not.toHaveProperty('reasoning_effort');
+    // Ollama's own switch beside it, local or ollama.com; left out when refused, and never sent elsewhere or for a level.
     for (const base of ['http://localhost:11434/v1', 'http://192.168.1.4:11434/v1', 'https://ollama.com/v1']) {
-      expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', base), base).toMatchObject({ think: false });
-      expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', base), base).not.toHaveProperty('reasoning_effort');
+      expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', base), base).toMatchObject({ think: false, reasoning_effort: 'none' });
     }
     expect(openaiBody({ ...req, reasoning: 'off' }, 'qwen3', 'http://localhost:11434/v1', new Set(['think']))).not.toHaveProperty('think');
     expect(openaiBody({ ...req, reasoning: 'low' }, 'qwen3', 'http://localhost:11434/v1')).not.toHaveProperty('think');

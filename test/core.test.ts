@@ -96,6 +96,14 @@ describe('core chat()', () => {
       vi.stubGlobal('fetch', refused(429, { error: { type: 'usage_limit_reached', message: 'You have hit your usage limit.', resets_in_seconds: 5400 } }));
       expect(await chat({ kind: 'chatgpt', baseUrl: '', model: 'gpt-5-codex' }, 'tok', req))
         .toMatchObject({ ok: false, error: 'Your ChatGPT plan’s limit is reached. Wait for it to reset.', retryAfterMs: 5_400_000, resetAt: expect.any(Number), quota: 'plan' });
+      // The same limit reported inside the stream, before any output: the same fields, and retryable when it lifts within the minute.
+      vi.stubGlobal('fetch', vi.fn(async () => sse('data: {"type":"error","error":{"type":"usage_limit_reached","resets_in_seconds":5400}}\n\n')));
+      const inStream = await chat({ kind: 'chatgpt', baseUrl: '', model: 'gpt-5-codex' }, 'tok', req);
+      expect(inStream).toMatchObject({ ok: false, failure: { kind: 'stream', providerCode: 'usage_limit_reached', streamed: false }, retryAfterMs: 5_400_000, quota: 'plan' });
+      expect(inStream).not.toHaveProperty('retryable');
+      vi.stubGlobal('fetch', vi.fn(async () => sse('data: {"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"Rate limit reached. Please try again in 20s."}}}\n\n')));
+      expect(await chat({ kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5', protocol: 'responses' }, 'k', req))
+        .toMatchObject({ ok: false, retryable: true, retryAfterMs: 20_000, failure: { kind: 'stream', providerCode: 'rate_limit_exceeded' } });
     });
   });
 
