@@ -84,6 +84,10 @@ describe('pollOpencode', () => {
     expect(await pollOpencode('d')).toMatchObject({ status: 'denied', error: /denied the sign-in/ });
     expect(await pollOpencode('d')).toMatchObject({ status: 'denied', error: /code expired/ });
     expect(await pollOpencode('d')).toMatchObject({ status: 'denied', error: /HTTP 502/ });
+    // Another code is named; a sentence in that field is not echoed.
+    mockFetch(json({ error: 'invalid_client' }, 400), json({ error: 'Invalid device token SECRET_TOKEN' }, 400));
+    expect(await pollOpencode('d')).toEqual({ status: 'denied', error: 'OpenCode sign-in failed (invalid_client).' });
+    expect(await pollOpencode('d')).toEqual({ status: 'denied', error: 'OpenCode sign-in failed (HTTP 400).' });
   });
 
   it('returns the tokens with their expiry and organization once approved', async () => {

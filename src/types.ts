@@ -90,7 +90,7 @@ export interface OpenAiCompatiblePreset {
  */
 export const OPENAI_COMPATIBLE_PRESETS: OpenAiCompatiblePreset[] = [
   { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', keyUrl: 'https://platform.openai.com/api-keys', defaultModel: 'gpt-5.5' },
-  { id: 'gemini', label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'gemini', keyUrl: 'https://aistudio.google.com/apikey', defaultModel: 'gemini-3-flash' },
+  { id: 'gemini', label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'gemini', keyUrl: 'https://aistudio.google.com/apikey' },
   { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/settings/keys' },
   { id: 'vercel-ai-gateway', label: 'Vercel AI Gateway', baseUrl: 'https://ai-gateway.vercel.sh/v1', keyUrl: 'https://vercel.com/dashboard' },
   { id: 'cloudflare-workers-ai', label: 'Cloudflare Workers AI', baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1', keyUrl: 'https://dash.cloudflare.com/profile/api-tokens', fields: [{ name: 'account_id', label: 'Account ID' }] },
@@ -123,9 +123,8 @@ function hostKey(hostname: string): string {
 export function presetOf(baseUrl: string): { preset: OpenAiCompatiblePreset; values: Record<string, string> } | undefined {
   let url: URL;
   try { url = new URL(normalizeBaseUrl(baseUrl)); } catch { return undefined; }
-  // The path decoded, so a placeholder left in it (`{account_id}`, which `URL` percent-encodes) is seen as one and matches nothing.
-  let path: string;
-  try { path = decodeURIComponent(url.pathname).replace(/\/+$/, ''); } catch { return undefined; }
+  // The path as the request will carry it, percent-encoding kept: an encoded slash is part of a segment, not a separator.
+  const path = url.pathname.replace(/\/+$/, '');
   for (const preset of OPENAI_COMPATIBLE_PRESETS) {
     const template = new URL(preset.baseUrl);
     if (template.protocol !== url.protocol || hostKey(template.hostname) !== hostKey(url.hostname) || template.port !== url.port) continue;
@@ -136,12 +135,18 @@ export function presetOf(baseUrl: string): { preset: OpenAiCompatiblePreset; val
       const field = /^\{([a-z_]+)\}$/.exec(piece);
       if (!field) return piece.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
       names.push(field[1]!);
-      return '([^/{}]+)';
+      return '([^/]+)';
     }).join('');
     const match = new RegExp(`^${pattern}$`).exec(path);
     if (!match) continue;
+    // Each value decoded; one that decodes to a separator or a brace (a placeholder left unfilled, which `URL` encodes) is no value.
     const values: Record<string, string> = {};
-    names.forEach((name, i) => { values[name] = match[i + 1]!; });
+    let sound = true;
+    names.forEach((name, i) => {
+      try { values[name] = decodeURIComponent(match[i + 1]!); } catch { sound = false; return; }
+      if (/[/{}]/.test(values[name]!)) sound = false;
+    });
+    if (!sound) continue;
     return { preset, values };
   }
   return undefined;

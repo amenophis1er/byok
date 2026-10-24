@@ -89,6 +89,12 @@ describe('normalizeBaseUrl', () => {
     expect(presetOf('https://gateway.ai.cloudflare.com/v1/{account_id}/gw1/compat')).toBeUndefined();
     expect(presetOf('http://api.groq.com/openai/v1')).toBeUndefined();
     expect(presetOf('::')).toBeUndefined();
+    // Encoding is kept as the request will carry it: an encoded slash is no separator, a malformed escape no value.
+    expect(presetOf('https://api.groq.com/openai%2Fv1')).toBeUndefined();
+    expect(presetOf('https://api.groq.com/openai/v1%2F')).toBeUndefined();
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/a%2Fb/gw1/compat')).toBeUndefined();
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/a%ZZ/gw1/compat')).toBeUndefined();
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/a%20b/gw1/compat')).toMatchObject({ values: { account_id: 'a b', gateway_id: 'gw1' } });
     // The plain presets match themselves, with no values.
     expect(presetOf('https://ollama.com/v1')).toMatchObject({ preset: { id: 'ollama-cloud' }, values: {} });
   });

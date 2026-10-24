@@ -20,8 +20,10 @@ while on 0.x, a breaking change bumps the minor version.
 - **Sign-in failures carry the status and the code, never the body.** The
   OpenCode and ChatGPT device-flow starts, a ChatGPT device-poll denial, the
   Codex completion and the Ollama pairing check throw an `AuthError` (or
-  word the denial) from the status and the provider's code; the response
-  text went into the message.
+  word the denial) from the status and the provider's code — a code-shaped
+  token, never a sentence in that field; the response text went into the
+  message. A device poll stopped by the caller's `signal` throws, where the
+  abort was read as the network and polled past.
 - **OpenCode sign-out is local**, documented: the Console has no endpoint
   that revokes a device-flow session.
 

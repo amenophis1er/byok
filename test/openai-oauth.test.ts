@@ -102,6 +102,13 @@ describe('pollDevice', () => {
     expect(await pollDevice('d', 'u')).toEqual({ status: 'pending' });
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
     expect(await pollDevice('d', 'u')).toEqual({ status: 'pending' });
+    // A sentence in the error field is not a code, and is not echoed.
+    mockFetch(json({ error: 'Invalid device token SECRET_TOKEN' }, 400));
+    expect(await pollDevice('d', 'u')).toEqual({ status: 'denied', error: 'Device auth failed (400).' });
+    // The caller's own stop is not the network: it is thrown, not polled past.
+    const stop = new AbortController(); stop.abort();
+    const aborted = vi.fn(async () => { throw new DOMException('aborted', 'AbortError'); });
+    await expect(pollDevice('d', 'u', { fetch: aborted, signal: stop.signal })).rejects.toThrow('aborted');
   });
 
   it('denies a success response missing the code or verifier', async () => {

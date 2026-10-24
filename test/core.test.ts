@@ -182,7 +182,9 @@ it('names the protocol a connection speaks', () => {
 describe('workersAiAccount', () => {
   it('names the account in a Workers AI root, so a host can tell which listing a URL gets', () => {
     expect(workersAiAccount('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1')).toBe('abc');
-    expect(workersAiAccount('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/')).toBeUndefined();
+    // Normalised as listModels normalises, so the two agree on a URL with a trailing slash.
+    expect(workersAiAccount('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/')).toBe('abc');
+    expect(workersAiAccount('https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1')).toBeUndefined();
     expect(workersAiAccount('https://gateway.ai.cloudflare.com/v1/abc/gw/compat')).toBeUndefined();
     expect(workersAiAccount('nope')).toBeUndefined();
   });

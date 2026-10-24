@@ -19,6 +19,7 @@
 
 import { fetchOf, type RequestOptions } from './http.js';
 import { authFailure } from './auth-error.js';
+import { code as codeOf } from './failure.js';
 
 export const OPENCODE_CONSOLE = 'https://opencode.ai/console';
 /** The API root for chat and the model list (the `opencode` provider in models.dev). */
@@ -107,7 +108,9 @@ export async function pollOpencode(deviceCode: string, clientId = DEFAULT_CLIENT
   if (error === 'access_denied') return { status: 'denied', error: 'You denied the sign-in on opencode.ai.' };
   if (error === 'expired_token') return { status: 'denied', error: 'The code expired — start the sign-in again.' };
   if (!res.ok && !error) return { status: 'denied', error: `OpenCode sign-in failed (HTTP ${res.status}).` };
-  if (error) return { status: 'denied', error: `OpenCode sign-in failed: ${error}.` };
+  // A code-shaped error is named; a sentence in that field is not echoed.
+  const named = codeOf(error).providerCode;
+  if (error) return { status: 'denied', error: `OpenCode sign-in failed${named ? ` (${named})` : ` (HTTP ${res.status})`}.` };
   return { status: 'pending' };
 }
 
@@ -129,7 +132,8 @@ export async function refreshOpencodeTokens(refreshToken: string, clientId = DEF
 
 /** The signed-in user's email, for the connection's label; empty when the Console will not say. */
 export async function opencodeAccount(tokens: OpencodeTokens, options: RequestOptions = {}): Promise<string> {
-  const res = await fetchOf(options)(`${OPENCODE_CONSOLE}/api/user`, { headers: opencodeHeaders(tokens.accessToken, tokens.orgId) }).catch(() => null);
+  const res = await fetchOf(options)(`${OPENCODE_CONSOLE}/api/user`, { headers: opencodeHeaders(tokens.accessToken, tokens.orgId) })
+    .catch((error: unknown) => { if (options.signal?.aborted) throw error; return null; });
   if (!res?.ok) return '';
   const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   return typeof j.email === 'string' ? j.email : '';
