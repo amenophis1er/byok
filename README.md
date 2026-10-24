@@ -191,8 +191,10 @@ What it guarantees:
   `sink`) and the provider's own code rather than on the sentence in
   `error`, log `providerType` and `providerMessage` as the provider wrote
   them (never ChatGPT's), quote `requestId` to the provider's
-  support, and read `streamed` to know whether the user already saw part of
-  the answer (nothing streams without an `onEvent`). `retryable: true` means
+  support, read `streamed` to know whether the user already saw part of
+  the answer (nothing streams without an `onEvent`), and `endedEarly` to
+  tell a stream that closed before the provider's last event from one that
+  reported an error. `retryable: true` means
   nothing was acted on: the connection dropped, the server failed (5xx), or
   a rate limit lifts within the minute, on a 429 or reported inside the
   stream (a Responses `error` or `response.failed` event, read for what it

@@ -31,6 +31,11 @@ class SinkError extends Error {
   constructor(public readonly cause: unknown) { super(cause instanceof Error ? cause.message : String(cause)); }
 }
 
+/** The request could not be built: its body would not serialise (a `toJSON()` that throws, a cycle). Nothing went out; not a transport fault, whatever was thrown. */
+class RequestError extends Error {
+  constructor(public readonly cause: unknown) { super(`The request body could not be serialised: ${cause instanceof Error ? cause.message : String(cause)}`); }
+}
+
 /** The transport threw: `fetch()` rejected, or a body read did. Whatever it threw (a `TypeError`, a host's own error) rides along as the cause. */
 class TransportError extends Error {
   constructor(public readonly cause: unknown) { super(cause instanceof Error ? cause.message : String(cause)); }
@@ -138,10 +143,13 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
     if (options.signal?.aborted) return failed('Stopped.', { kind: 'stopped', ...cause(options.signal.reason) });
     if (controller.signal.aborted) return failed(TIMED_OUT, { kind: 'timeout', ...(timedOut ? { timeout: timedOut } : {}) });
     if (error instanceof SinkError) return failed(error.message, { kind: 'sink', cause: error.message });
+    // A body that would not serialise: nothing went out, and the same request would fail the same way.
+    if (error instanceof RequestError) return failed(error.message, { kind: 'request', cause: networkCause(error.cause) });
     // A dropped connection (the transport rejected, whatever it threw): nothing was acted on, so the caller may send the same
-    // request again — unless output had streamed.
-    if (error instanceof TransportError || error instanceof TypeError) {
-      const thrown = error instanceof TransportError ? error.cause : error;
+    // request again — unless output had streamed. Every request goes through `post`, so a `TypeError` thrown elsewhere (a cycle
+    // in the request, a bug) is the request's failure, below, not the network's.
+    if (error instanceof TransportError) {
+      const thrown = error.cause;
       const code = transportCode(thrown);
       return failed(networkError(conn), { kind: 'network', cause: networkCause(thrown), ...(code ? { code } : {}) }, { retryable: true });
     }
@@ -276,13 +284,15 @@ function redactImages(body: unknown): unknown {
 }
 
 async function post(t: Turn, url: URL, headers: Record<string, string>, body: unknown): Promise<Response> {
+  let json: string;
+  try { json = JSON.stringify(body); } catch (error) { throw new RequestError(error); }
   t.debug?.('chat request', { connection: t.conn.label, url: url.origin + url.pathname, body: redactImages(body) });
   t.idle.touch();
   try {
     return await t.fetch(url, {
       method: 'POST', signal: t.signal,
       headers: { ...headers, 'content-type': 'application/json', accept: 'text/event-stream' },
-      body: JSON.stringify(body),
+      body: json,
     });
   } catch (error) {
     throw new TransportError(error);
@@ -441,7 +451,8 @@ function refusedThinkingFrom(text: string, messages: ChatRequest['messages']): n
   const modified = CANNOT_MODIFY.test(text);
   if (!invalid && !modified) return undefined;
   const assistants = messages.filter((m) => m.role === 'assistant').length;
-  if (!invalid) return assistants - 1;
+  // "cannot be modified" names the latest turn; when that one replays no thinking, the one retry that can help drops the earlier turns'.
+  if (!invalid) return messages.filter((m) => m.role === 'assistant').slice(-1).some(hasThinking) ? assistants - 1 : 0;
   // The API's message index to the assistant turn it names: assistants map one to one, tool results merge.
   const api = anthropicMessages(messages);
   const named = Number(invalid[1]);
@@ -520,7 +531,7 @@ function cause(reason: unknown): Pick<AIFailure, 'cause'> {
 function transient(result: AIChatResult): AIChatResult {
   if (result.ok || result.retryable === false) return result;
   const soon = result.quota !== 'day' && result.quota !== 'plan' && (result.retryAfterMs !== undefined ? result.retryAfterMs <= 60_000 : result.quota === 'minute');
-  return soon || /ended before it finished|overloaded/i.test(result.error ?? '') ? { ...result, retryable: true } : result;
+  return soon || result.failure?.endedEarly || /overloaded/i.test(result.error ?? '') ? { ...result, retryable: true } : result;
 }
 
 /** A network failure, naming who could not be reached; the local-server hint only for local servers. */

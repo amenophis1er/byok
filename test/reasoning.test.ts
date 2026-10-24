@@ -343,6 +343,27 @@ describe('when Anthropic refuses the thinking blocks it signed', () => {
     expect(again[5]!.content.map((b) => b.type)).toEqual(['tool_use']);
   });
 
+  it('drops the earlier turns\' thinking when the latest turn, which the refusal names, replays none', async () => {
+    // The latest assistant turn is text only; "cannot be modified" can only be about the thinking the earlier turn replays.
+    const messages: AIMessage[] = [
+      ...history.slice(0, 2),
+      { role: 'tool', toolCallId: 't', name: 'x', content: 'ok' },
+      { role: 'assistant', content: 'Found it.' },
+      { role: 'user', content: 'again' },
+    ];
+    const bodies: string[] = [];
+    const fetch = vi.fn<Fetch>(async (_url, init) => { bodies.push(init!.body as string); return bodies.length === 1
+      ? new Response(JSON.stringify({ error: { message: '`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified.' } }), { status: 400 }) : ok(); });
+    expect(await chat(conn, 'sk', { ...req, messages }, { fetch })).toMatchObject({ ok: true });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toContain('"thinking"');
+    expect(bodies[1]).not.toContain('"type":"thinking"');
+    // Refused again, there is nothing left to drop: no third request.
+    const stubborn = vi.fn<Fetch>(async () => new Response(JSON.stringify({ error: { message: '`thinking` blocks in the latest assistant message cannot be modified.' } }), { status: 400 }));
+    expect(await chat(conn, 'sk', { ...req, messages }, { fetch: stubborn })).toMatchObject({ ok: false, failure: { kind: 'http', status: 400 } });
+    expect(stubborn).toHaveBeenCalledTimes(2);
+  });
+
   it('turns thinking off for the retry on a manual-mode model, whose latest turn would otherwise have to open with the block', async () => {
     const manual: Connection = { kind: 'anthropic', baseUrl: '', model: 'claude-sonnet-4-5' };
     const bodies: Array<Record<string, unknown>> = [];

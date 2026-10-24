@@ -20,7 +20,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIReasoning
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { anthropicState, tagged } from './provider-state.js';
-import { streamFailure } from './failure.js';
+import { endedEarly, streamFailure } from './failure.js';
 import { approximateLocation, functionTools, webSearchTool } from './tools.js';
 
 type Block = Record<string, unknown> & { type: string };
@@ -303,7 +303,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
         break;
     }
   }
-  if (!finished) return streamFailure('The response stream ended before it finished.');
+  if (!finished) return endedEarly();
   for (const [index, block] of blocks.entries()) if (block?.type === 'tool_use' && !ended.has(index)) onEvent?.({ type: 'tool_call_end', id: String(block['id']) });
 
   const toolCalls: AIToolCall[] = [];

@@ -12,6 +12,11 @@ export function streamFailure(error: string, providerCode?: unknown): AIChatResu
   return { ok: false, error, failure: { kind: 'stream', streamed: false, ...code(providerCode) } };
 }
 
+/** The stream ended before the provider's closing event, naming no error: `failure.endedEarly` says so as data. No transport fault is claimed; the connection may simply have closed. */
+export function endedEarly(): AIChatResult {
+  return { ok: false, error: 'The response stream ended before it finished.', failure: { kind: 'stream', streamed: false, endedEarly: true } };
+}
+
 /** `{ providerCode }` for a code-shaped string, else nothing. */
 export function code(value: unknown): Pick<AIFailure, 'providerCode'> {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,80}$/.test(value) ? { providerCode: value } : {};
