@@ -443,14 +443,19 @@ storage and UI: the Claude subscription PKCE flow (`startLogin`,
 grant (`startOpencodeLogin`, `pollOpencode`, `refreshOpencodeTokens`) and the
 Ollama pairing (`publicKeyLine`, `connectUrl`, `whoami`, `disconnect`,
 `signRequest`). A call the provider refused throws an `AuthError` with
-`status`, `code` and `reconnect`: true when only a new sign-in recovers.
+`status`, `code` and `reconnect`: true when only a new sign-in recovers;
+never the response body. The OpenCode Console documents no endpoint that
+revokes a device-flow session, so signing out is local: drop the tokens, and
+the session lives on the server until it expires or the user revokes it in
+the Console.
 The same warning applies as in the extension: the Claude and ChatGPT flows
 are unofficial.
 
 Every request goes through the global `fetch` unless you pass your own:
 `chat(conn, key, request, { fetch })`, `listModels(conn, key, { fetch })`,
 `getModelInfo(conn, key, modelId, { fetch })`, and a trailing `{ fetch }` on
-each sign-in, poll and refresh call. The contract is the standard one,
+each sign-in, poll and refresh call; a `signal` beside it bounds the call,
+passed to every request it makes. The contract is the standard one,
 `(input, init) => Promise<Response>` with a streaming `body` and `init.signal`
 honoured, so a proxy, a custom CA, request logging or a test double fit
 without patching the global for every other library in the process. A
@@ -518,10 +523,18 @@ to `${baseUrl}/chat/completions` and `${baseUrl}/models`, so the root is
 whatever comes before `/chat/completions` in the provider's docs (Gemini:
 `…/v1beta/openai`, Groq: `…/openai/v1`). `normalizeBaseUrl` adds `/v1` to a
 bare origin like `api.openai.com` or `localhost:11434` and keeps any other path
-as typed. `OPENAI_COMPATIBLE_PRESETS` lists the known roots; the Cloudflare
+as typed. `OPENAI_COMPATIBLE_PRESETS` lists the known roots, each an
+`OpenAiCompatiblePreset` with a stable `id`, its `label`, where a key is made
+(`keyUrl`), a `defaultModel` a picker can preselect before the listing
+answers, and `fields` for the `{placeholders}` of its URL: the Cloudflare
 ones contain `{account_id}` (and `{gateway_id}`) for the user to fill in, and a
-connection whose URL still has one is refused. Some servers (Cloudflare among
-them) may list no models, so let users type a model id too, as the demo does.
+connection whose URL still has one is refused. `presetOf(baseUrl)` matches a
+URL back to its preset with the values its placeholders took, hosts compared
+without case and `localhost`, `127.0.0.1` and `[::1]` as one; `defaultLabel`
+uses it. Some servers (Cloudflare among
+them) may list no models, so let users type a model id too, as the demo does;
+`workersAiAccount(baseUrl)` from `/core` says whether a URL gets Cloudflare's
+model search instead of `/models`.
 
 **DNR rules** (subscription auth only): merge `manifest/dnr-rules.json` into
 your ruleset (it is exported as

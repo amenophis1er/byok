@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAiMessageHandler } from '../src/background/index.js';
-import { OPENAI_COMPATIBLE_PRESETS, defaultLabel, normalizeBaseUrl, originPattern } from '../src/types.js';
+import { OPENAI_COMPATIBLE_PRESETS, defaultLabel, normalizeBaseUrl, originPattern, presetOf } from '../src/types.js';
 import { openaiSse, streamOf } from './helpers.js';
 
 const STORAGE_KEY = 'aiConnections';
@@ -60,6 +60,43 @@ describe('normalizeBaseUrl', () => {
       expect(originPattern(preset.baseUrl)).toMatch(/^https?:\/\/[^/]+\/\*$/);
       expect(defaultLabel('openai-compatible', preset.baseUrl)).toBe(preset.label);
     }
+  });
+
+  it('gives every preset a stable id, and names each placeholder of its URL in fields', () => {
+    const ids = OPENAI_COMPATIBLE_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const preset of OPENAI_COMPATIBLE_PRESETS) {
+      expect(preset.id).toMatch(/^[a-z][a-z0-9-]*$/);
+      const placeholders = [...preset.baseUrl.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]);
+      expect((preset.fields ?? []).map((f) => f.name)).toEqual(placeholders);
+      for (const url of [preset.keyUrl]) if (url) expect(url).toMatch(/^https:\/\//);
+    }
+    expect(OPENAI_COMPATIBLE_PRESETS.find((p) => p.id === 'groq')).toMatchObject({ keyUrl: 'https://console.groq.com/keys' });
+  });
+
+  it('matches a base URL to its preset: templated, with the values; loopback names as one host; hosts without case', () => {
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/abc/gw1/compat')).toMatchObject({ preset: { id: 'cloudflare-ai-gateway' }, values: { account_id: 'abc', gateway_id: 'gw1' } });
+    expect(presetOf('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/')).toMatchObject({ preset: { id: 'cloudflare-workers-ai' }, values: { account_id: 'abc' } });
+    expect(defaultLabel('openai-compatible', 'https://gateway.ai.cloudflare.com/v1/abc/gw1/compat')).toBe('Cloudflare AI Gateway');
+    for (const local of ['http://127.0.0.1:11434/v1', 'http://[::1]:11434/v1', 'http://LOCALHOST:11434', 'localhost:11434'.replace(/^/, 'http://')]) {
+      expect(presetOf(local), local).toMatchObject({ preset: { id: 'ollama-local' }, values: {} });
+    }
+    expect(presetOf('https://API.Groq.com/openai/v1')).toMatchObject({ preset: { id: 'groq' } });
+    expect(defaultLabel('openai-compatible', 'https://API.Groq.com/openai/v1')).toBe('Groq');
+    // Not a preset: another path, another port, a placeholder still unfilled, a scheme that differs, not a URL.
+    expect(presetOf('https://api.groq.com/v1')).toBeUndefined();
+    expect(presetOf('http://localhost:1234/v1')).toBeUndefined();
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/{account_id}/gw1/compat')).toBeUndefined();
+    expect(presetOf('http://api.groq.com/openai/v1')).toBeUndefined();
+    expect(presetOf('::')).toBeUndefined();
+    // Encoding is kept as the request will carry it: an encoded slash is no separator, a malformed escape no value.
+    expect(presetOf('https://api.groq.com/openai%2Fv1')).toBeUndefined();
+    expect(presetOf('https://api.groq.com/openai/v1%2F')).toBeUndefined();
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/a%2Fb/gw1/compat')).toBeUndefined();
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/a%ZZ/gw1/compat')).toBeUndefined();
+    expect(presetOf('https://gateway.ai.cloudflare.com/v1/a%20b/gw1/compat')).toMatchObject({ values: { account_id: 'a b', gateway_id: 'gw1' } });
+    // The plain presets match themselves, with no values.
+    expect(presetOf('https://ollama.com/v1')).toMatchObject({ preset: { id: 'ollama-cloud' }, values: {} });
   });
 });
 

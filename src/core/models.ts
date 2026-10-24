@@ -122,7 +122,7 @@ async function geminiModels(fetch: Fetch, authorize: Authorizer | undefined, ori
 /** The account in a Workers AI root (`api.cloudflare.com/client/v4/accounts/<id>/ai/v1`), else undefined. */
 export function workersAiAccount(base: string): string | undefined {
   try {
-    const url = new URL(base);
+    const url = new URL(apiRoot(base));
     if (url.hostname !== 'api.cloudflare.com') return undefined;
     return /^\/client\/v4\/accounts\/([^/]+)\/ai\/v1$/.exec(url.pathname)?.[1];
   } catch {

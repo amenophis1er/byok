@@ -184,6 +184,25 @@ describe('the sign-in flows with the host fetch', () => {
   });
 });
 
+describe('with a signal', () => {
+  it('a listing and a sign-in call pass it to every request, and a request with its own keeps that', async () => {
+    const stop = new AbortController();
+    const fetch = own(json({ data: [{ id: 'a' }] }), json({ device_code: 'd', user_code: 'u' }));
+    const conn: Connection = { kind: 'openai-compatible', baseUrl: 'https://api.together.xyz/v1' };
+    await listModels(conn, 'k', { fetch, signal: stop.signal });
+    await startOpencodeLogin('byok', { fetch, signal: stop.signal });
+    for (const call of fetch.mock.calls) expect((call[1] as RequestInit).signal).toBe(stop.signal);
+    // Aborted, the request rejects as the transport does; listModels lets it through.
+    stop.abort();
+    const real = vi.fn<Fetch>(async (_input, init) => { if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError'); return json({ data: [] }); });
+    await expect(listModels(conn, 'k', { fetch: real, signal: stop.signal })).rejects.toThrow();
+    // chat() keeps its own signal on the request, the controller's, which its `signal` option feeds.
+    const turn = own(sse(answer));
+    await chat({ kind: 'openai-compatible', baseUrl: 'https://x.example/v1', model: 'm' }, 'k', req, { fetch: turn, signal: new AbortController().signal });
+    expect((turn.mock.calls[0]![1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
 describe('without the option', () => {
   it('the global fetch is itself a Fetch, so a host passes it straight or wrapped', () => {
     const direct: Fetch = globalThis.fetch;

@@ -208,6 +208,7 @@ export function readProviderState(state: unknown): ProviderState | undefined;
 // @public
 export interface RequestOptions {
     fetch?: Fetch;
+    signal?: AbortSignal;
 }
 
 // @public (undocumented)
@@ -251,6 +252,9 @@ export function transportCode(error: unknown): string | undefined;
 
 // @public
 export function withRetry(attempt: (n: number) => Promise<AIChatResult>, options?: RetryOptions): Promise<AIChatResult>;
+
+// @public
+export function workersAiAccount(base: string): string | undefined;
 
 // (No @packageDocumentation comment for this package)
 

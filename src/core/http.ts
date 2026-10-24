@@ -36,15 +36,19 @@ export type ConnectionCredential = string | Authorizer;
  */
 export type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-/** What every request-making function takes: the host's `fetch`, else the global one. */
+/** What every request-making function takes: the host's `fetch`, else the global one, and a signal that bounds the call. */
 export interface RequestOptions {
   /** Makes every request of this call. Default `globalThis.fetch`. */
   fetch?: Fetch;
+  /** Passed to every request of this call (a listing, a sign-in start or poll, a refresh): aborted, the request rejects as the transport does. `chat()` has its own, with the same name. */
+  signal?: AbortSignal;
 }
 
-/** The fetch to call: the host's, else the global one, looked up at call time. */
+/** The fetch to call: the host's, else the global one, looked up at call time; the call's `signal` on every request that names none of its own. */
 export function fetchOf(options?: RequestOptions): Fetch {
-  return options?.fetch ?? ((input, init) => fetch(input, init));
+  const fetchFn: Fetch = options?.fetch ?? ((input, init) => fetch(input, init));
+  const signal = options?.signal;
+  return signal ? (input, init) => fetchFn(input, init?.signal ? init : { ...init, signal }) : fetchFn;
 }
 
 export function bearer(apiKey: string): Record<string, string> {

@@ -512,15 +512,32 @@ export type ModelInfo = {
 export function normalizeBaseUrl(url: string): string;
 
 // @public
-export const OPENAI_COMPATIBLE_PRESETS: {
-    label: string;
+export const OPENAI_COMPATIBLE_PRESETS: OpenAiCompatiblePreset[];
+
+// @public
+export interface OpenAiCompatiblePreset {
     baseUrl: string;
+    defaultModel?: string;
+    fields?: Array<{
+        name: string;
+        label: string;
+    }>;
+    id: string;
     keyOptional?: boolean;
+    keyUrl?: string;
+    // (undocumented)
+    label: string;
     protocol?: Protocol;
-}[];
+}
 
 // @public
 export function originPattern(baseUrl: string): string | null;
+
+// @public
+export function presetOf(baseUrl: string): {
+    preset: OpenAiCompatiblePreset;
+    values: Record<string, string>;
+} | undefined;
 
 // @public
 export type Protocol = 'anthropic' | 'responses' | 'chat-completions' | 'gemini';
