@@ -22,6 +22,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIServerToo
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { streamFailure } from './failure.js';
+import { bodyRateLimit } from './rate-limit.js';
 import { lowestEffort } from './chat-openai.js';
 import { responsesState, tagged } from './provider-state.js';
 import { approximateLocation, functionTools, webSearchTool } from './tools.js';
@@ -273,10 +274,15 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
         completed = true;
         break;
       }
-      case 'response.failed':
-        return streamFailure(failure(JSON.stringify(event['response'] ?? {})), event['response']?.error?.code ?? event['response']?.error?.type);
-      case 'error':
-        return streamFailure(failure(JSON.stringify({ error: event['error'] ?? event })), event['error']?.code ?? event['error']?.type ?? event['code']);
+      // A failure event, with whatever it says about coming back (ChatGPT's `resets_at`, a plan's window): its code, not an assumed status.
+      case 'response.failed': {
+        const body = JSON.stringify(event['response'] ?? {});
+        return { ...streamFailure(failure(body), event['response']?.error?.code ?? event['response']?.error?.type), ...bodyRateLimit(body) };
+      }
+      case 'error': {
+        const body = JSON.stringify({ error: event['error'] ?? event });
+        return { ...streamFailure(failure(body), event['error']?.code ?? event['error']?.type ?? event['code']), ...bodyRateLimit(body) };
+      }
       default:
     }
   }
@@ -299,13 +305,18 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const reasoning = thoughts.join('\n\n').trim();
   // The Responses API names each search's queries, not its sources: each entry is the query alone.
   const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
-  // A turn cut off by the limit or a filter may carry a truncated call: never hand one out, but say which it was — the last one never
-  // reported done, or whose arguments did not come whole; none when every call came whole. The filter is a refusal; the rest is the limit.
+  // A turn cut off by the limit or a filter may carry a truncated call: never hand that one out, but say which it was — the last one
+  // never reported done, or whose arguments did not come whole; none when every call came whole. The calls that came whole are handed
+  // out all the same, to be answered before the turn is replayed, and their items kept. The filter is a refusal; the rest is the limit.
   if (incomplete) {
     const broken = [...calls.values()].reverse().find((entry) => !entry.ended || !wholeJson(entry.args));
+    const whole = broken ? toolCalls.filter((call) => call.id !== broken.callId) : toolCalls;
+    const kept = broken ? items.filter((item) => item['type'] !== 'function_call' || item['call_id'] !== broken.callId) : items;
     return {
       ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}),
+      ...(whole.length > 0 ? { toolCalls: whole } : {}),
       ...(broken ? { truncatedToolCall: { id: broken.callId, name: broken.name, raw: broken.args } } : {}),
+      ...(kept.length > 0 ? { providerState: tagged.responses(kept) } : {}),
       stopReason: incompleteReason === 'content_filter' ? 'refusal' : 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}),
     };
   }

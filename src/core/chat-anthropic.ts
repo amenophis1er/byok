@@ -336,10 +336,12 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
   }
 
   const mapped = STOP[stopReason ?? ''] ?? 'end';
-  // A turn cut off by max_tokens or a refusal may carry a truncated tool call:
-  // never hand one out, and drop it from what gets replayed. A paused turn goes back whole.
+  // A turn cut off by max_tokens or a refusal may carry a truncated tool call: never hand that one out, and drop it from what gets
+  // replayed. The calls that came whole are handed out all the same, to be answered before the turn is replayed (the API wants a
+  // result for every tool_use it is given back), and their blocks kept. A paused turn goes back whole.
   const runnable = mapped === 'tool_use' || mapped === 'end';
-  const state = runnable || mapped === 'pause' ? blocks.filter(Boolean) : blocks.filter((block) => block && block.type !== 'tool_use');
+  const state = runnable || mapped === 'pause' || !cut ? blocks.filter(Boolean) : blocks.filter((block) => block && !(block.type === 'tool_use' && block['id'] === cut!.id));
+  const whole = cut && !runnable && mapped !== 'pause' ? toolCalls.filter((call) => call.id !== cut!.id) : toolCalls;
   const text = texts.join('');
   const reasoning = thoughts.join('\n\n');
   const webSearch = searchesOf(blocks);
@@ -348,7 +350,7 @@ export async function anthropicResult(events: AsyncIterable<SseEvent>, onEvent?:
     ...(text ? { text } : {}),
     ...(reasoning ? { reasoning } : {}),
     ...(webSearch ? { webSearch } : {}),
-    ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(whole.length > 0 && mapped !== 'pause' ? { toolCalls: whole } : {}),
     // The call a cut-off turn was in the middle of: its arguments as far as they came, never handed out as a call.
     ...(!runnable && mapped !== 'pause' && cut ? { truncatedToolCall: cut } : {}),
     providerState: tagged.anthropic(state),

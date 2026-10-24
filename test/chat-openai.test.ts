@@ -143,19 +143,24 @@ describe('streamed response', () => {
     expect(result.toolCalls![0]).toMatchObject({ id: 'c', argsError: { raw: '{"action": nav' } });
   });
 
-  it('hands out no tool call from a turn cut off by the length limit or a filter, but says which it was cut off in', async () => {
+  it('hands out no cut-off call from a turn cut off by the length limit or a filter, but says which it was, and hands out the whole ones', async () => {
     for (const [finish, mapped] of [['length', 'length'], ['content_filter', 'refusal']] as const) {
       const result = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'c', function: { name: 'browser', arguments: '{"action":"nav' } }] }), chunk({}, finish)]));
       expect(result.stopReason).toBe(mapped);
       expect(result.toolCalls).toBeUndefined();
       expect(result.truncatedToolCall).toEqual({ id: 'c', name: 'browser', raw: '{"action":"nav' });
     }
-    // The cut call is the one whose arguments did not come whole, wherever it stands; a turn whose calls all came whole (the cut fell after them) names none, nor does a whole turn.
-    const two = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{"x":' } }, { index: 1, id: 'b', function: { name: 'browser', arguments: '{}' } }] }), chunk({}, 'length')]));
-    expect(two.truncatedToolCall).toEqual({ id: 'a', name: 'browser', raw: '{"x":' });
+    // A call announced and cut before any argument came: cut, with nothing of them.
+    const none = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'c', function: { name: 'browser', arguments: '' } }] }), chunk({}, 'length')]));
+    expect(none).toMatchObject({ stopReason: 'length', truncatedToolCall: { id: 'c', name: 'browser', raw: '' } });
+    expect(none.toolCalls).toBeUndefined();
+    // The cut call is the one whose arguments did not come whole, wherever it stands; the whole ones are handed out, to be answered before
+    // the turn is replayed, their extra_content kept. A turn whose calls all came whole (the cut fell after them) names none, nor does a whole turn.
+    const two = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{"x":' }, extra_content: { v: 1 } }, { index: 1, id: 'b', function: { name: 'browser', arguments: '{}' }, extra_content: { v: 2 } }] }), chunk({}, 'length')]));
+    expect(two).toMatchObject({ stopReason: 'length', truncatedToolCall: { id: 'a', name: 'browser', raw: '{"x":' }, toolCalls: [{ id: 'b', name: 'browser', args: {} }], providerState: { protocol: 'chat-completions', extraContent: { b: { v: 2 } } } });
     const after = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }] }), chunk({ content: 'and then' }, 'length')]));
     expect(after).not.toHaveProperty('truncatedToolCall');
-    expect(after.toolCalls).toBeUndefined();
+    expect(after).toMatchObject({ stopReason: 'length', text: 'and then', toolCalls: [{ id: 'a', name: 'browser', args: {} }] });
     const whole = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }] }), chunk({}, 'tool_calls')]));
     expect(whole).not.toHaveProperty('truncatedToolCall');
   });
@@ -177,7 +182,14 @@ describe('streamed response', () => {
     expect(calls(openaiBody({ ...req, messages: history }, 'gemini-3-flash', 'https://openrouter.ai/api/v1')).map((c) => c['extra_content'])).toEqual([undefined, undefined]);
     const own = { google: { thought_signature: 'real' } };
     const kept: AIMessage[] = [history[0]!, { ...(history[1] as Extract<AIMessage, { role: 'assistant' }>), providerState: { protocol: 'chat-completions', extraContent: { c2: own } } }, ...history.slice(2)];
-    expect(calls(openaiBody({ ...req, messages: kept }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([undefined, own]);
+    // Decided on the first call, whose signature the validator reads: a first call without one gets the placeholder whatever the second kept.
+    expect(calls(openaiBody({ ...req, messages: kept }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([stub, own]);
+    const signedFirst: AIMessage[] = [history[0]!, { ...(history[1] as Extract<AIMessage, { role: 'assistant' }>), providerState: { protocol: 'chat-completions', extraContent: { c1: own } } }, ...history.slice(2)];
+    expect(calls(openaiBody({ ...req, messages: signedFirst }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([own, undefined]);
+    // Vertex too, global or regional.
+    for (const vertex of ['https://aiplatform.googleapis.com/v1/projects/p/locations/global/endpoints/openapi', 'https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/endpoints/openapi']) {
+      expect(calls(openaiBody({ ...req, messages: history }, 'gemini-3-pro-preview', vertex)).map((c) => c['extra_content']), vertex).toEqual([stub, undefined]);
+    }
     // Kept extra_content without a signature is not a signature: the placeholder is merged into it.
     const bare: AIMessage[] = [history[0]!, { ...(history[1] as Extract<AIMessage, { role: 'assistant' }>), providerState: { protocol: 'chat-completions', extraContent: { c1: { google: { other: 1 }, vendor: 'x' } } } }, ...history.slice(2)];
     expect(calls(openaiBody({ ...req, messages: bare }, 'gemini-3-flash', google)).map((c) => c['extra_content'])).toEqual([{ google: { other: 1, thought_signature: 'skip_thought_signature_validator' }, vendor: 'x' }, undefined]);

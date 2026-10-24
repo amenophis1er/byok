@@ -1,6 +1,6 @@
 /** What a refused response says about coming back, read from each provider's headers and body. */
 import { describe, expect, it } from 'vitest';
-import { duration, rateLimitOf } from '../src/core/rate-limit.js';
+import { bodyRateLimit, duration, rateLimitOf } from '../src/core/rate-limit.js';
 
 const NOW = Date.parse('2026-10-18T12:00:00Z');
 const h = (entries: Record<string, string>) => new Headers(entries);
@@ -219,6 +219,19 @@ describe('rateLimitOf', () => {
     expect(rateLimitOf(429, undefined, message('slow down'), NOW)).toEqual({});
     // A body that is not JSON is read as the message.
     expect(rateLimitOf(429, undefined, 'Too many requests per minute. Retry in 500ms', NOW)).toEqual({ retryAfterMs: 500, resetAt: NOW + (500), quota: 'minute' });
+  });
+});
+
+describe('bodyRateLimit', () => {
+  it('reads what a stream\'s failure event says, with no status or header to go by', () => {
+    const at = Math.floor(NOW / 1000) + 7200;
+    expect(bodyRateLimit(JSON.stringify({ error: { type: 'usage_limit_reached', resets_at: at } }), NOW)).toEqual({ retryAfterMs: 7_200_000, resetAt: at * 1000, quota: 'plan' });
+    expect(bodyRateLimit(JSON.stringify({ error: { code: 'usage_not_included' } }), NOW)).toEqual({ quota: 'plan' });
+    expect(bodyRateLimit(JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Rate limit reached. Please try again in 20s.' } }), NOW)).toEqual({ retryAfterMs: 20_000, resetAt: NOW + 20_000 });
+    expect(bodyRateLimit(JSON.stringify({ error: { message: 'Limit 200 requests per day (RPD).' } }), NOW)).toEqual({ quota: 'day', limit: { value: 200, unit: 'requests' } });
+    // A code alone claims nothing: no window, no wait.
+    expect(bodyRateLimit(JSON.stringify({ error: { code: 'rate_limit_exceeded' } }), NOW)).toEqual({});
+    expect(bodyRateLimit('not json', NOW)).toEqual({});
   });
 });
 

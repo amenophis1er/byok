@@ -91,11 +91,13 @@ describe('stream', () => {
     expect(result.providerState).toEqual({ protocol: 'gemini', parts: [{ text: 'Hello', thoughtSignature: 'sig-t' }, { text: ' there.' }] });
   });
 
-  it('never hands out a call from a turn cut off by the limit or a filter', async () => {
-    // A call arrives whole or not at all: none is known to be cut off in the middle, so no truncatedToolCall.
-    const cut = await parse([chunk([{ functionCall: { name: 'browser', args: { action: 'nav' } } }], 'MAX_TOKENS')]);
-    expect(cut).toEqual({ ok: true, stopReason: 'length' });
-    expect(await parse([chunk([{ text: 'No.' }], 'SAFETY')])).toEqual({ ok: true, text: 'No.', stopReason: 'refusal' });
+  it('hands out the calls of a turn cut off by the limit or a filter, with the stop reason, and names none as cut', async () => {
+    // A call arrives whole or not at all: none is known to be cut off in the middle, so no truncatedToolCall, and the calls that came
+    // are handed out to be answered before the turn is replayed, the parts kept.
+    const parts = [{ functionCall: { name: 'browser', args: { action: 'nav' } } }];
+    const cut = await parse([chunk(parts, 'MAX_TOKENS')]);
+    expect(cut).toEqual({ ok: true, stopReason: 'length', toolCalls: [{ id: 'call_0', name: 'browser', args: { action: 'nav' } }], providerState: { protocol: 'gemini', parts } });
+    expect(await parse([chunk([{ text: 'No.' }], 'SAFETY')])).toMatchObject({ ok: true, text: 'No.', stopReason: 'refusal' });
   });
 
   it('reports a blocked prompt as the final failure it is, naming the reason, not as a cut stream', async () => {

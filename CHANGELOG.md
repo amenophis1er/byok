@@ -3,6 +3,41 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.14
+
+- **A cut-off turn hands out the calls it made whole.** With `stopReason`
+  `length` or `refusal`, `toolCalls` holds the calls whose arguments came
+  whole and `providerState` keeps their blocks, on every protocol; only the
+  call the turn was cut off in (`truncatedToolCall`) is held back and
+  dropped. Answer them, then replay: the providers want a result for every
+  call given back. They were dropped from both, and the turn could not be
+  replayed. On Chat Completions a call announced and cut before any
+  argument came (`arguments: ''`) is now the truncated one, not a call with
+  `{}`.
+- **`failure.streamed` is false without an `onEvent`.** Nothing streams to
+  no sink, so a stream cut after text, or a connection dropped then, is
+  `retryable` when the caller gave no sink. It was marked streamed, and
+  final.
+- **A rate limit reported inside a Responses stream keeps its data.** An
+  `error` or `response.failed` event carries what it names — ChatGPT's
+  `resets_at` / `resets_in_seconds`, `usage_limit_reached` as `quota:
+  'plan'`, the words "try again in 20s" — in `retryAfterMs`, `resetAt`,
+  `quota` and `limit`, and is `retryable` when the wait is a minute at most
+  or the window a minute; a code alone claims nothing. `bodyRateLimit` reads
+  such a body.
+- **`reasoning` reaches every Chat Completions server.** `reasoning_effort`
+  goes to OpenRouter, Groq, Ollama, Google's compatible root and the rest, the
+  level asked for or, for `'off'`, `none` — `low` to gpt-oss, which has
+  nothing less, and an OpenAI model's own least behind a gateway
+  (`openai/gpt-5.1`) — the field a server refuses dropped on the retry as
+  before. It went to OpenAI alone, and `'off'` reached Ollama only as
+  `think: false`, which its `/v1` ignores.
+- **The Gemini placeholder signature is decided per call.** A turn's first
+  call without a kept `thought_signature` gets the placeholder whatever a
+  later call of the turn kept; a first call with one keeps it. One kept
+  signature anywhere in the turn left the first call bare. Regional Vertex
+  hosts (`us-central1-aiplatform.googleapis.com`) count as Google's.
+
 ## 0.1.13
 
 - **`reasoning: 'on'`**: thinking and its summaries at the provider's own

@@ -235,8 +235,8 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the limit or a filter may carry a call: never hand one out. Gemini sends a call whole, as an object, or not at
-  // all, so none is ever known to be cut off in the middle: no `truncatedToolCall` here.
+  // Gemini sends a call whole, as an object, or not at all, so none is ever known to be cut off in the middle: no `truncatedToolCall`
+  // here, and the calls a cut-off turn carries are handed out, to be answered before the turn is replayed, its parts kept.
   const runnable = mapped === 'end';
   // Grounding names the queries and the sources of the turn, not which query brought which: each entry is the query alone.
   const webSearch = queries.length > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
@@ -247,9 +247,9 @@ export async function geminiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
     ...(text ? { text } : {}),
     ...(reasoning ? { reasoning } : {}),
     ...(webSearch ? { webSearch } : {}),
-    ...(runnable && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
     // The parts come back as sent, signatures included; thought summaries without one are left out.
-    ...(runnable && parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
+    ...(parts.length > 0 ? { providerState: tagged.gemini(parts.filter((p) => !p['thought'] || p['thoughtSignature'])) } : {}),
     stopReason: runnable && toolCalls.length > 0 ? 'tool_use' : mapped,
     ...(model ? { model } : {}),
     ...(usage ? { usage } : {}),

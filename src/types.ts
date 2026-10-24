@@ -431,13 +431,14 @@ export interface AIFailure {
   code?: string;
   /** On `timeout`: which limit passed — the idle one (`idleTimeoutMs`: nothing arrived for that long) or the whole-request one (`timeoutMs`). */
   timeout?: 'idle' | 'total';
-  /** Whether text or a tool call had streamed to `onEvent` before the failure: the user may have seen it, so the turn is never `retryable`. */
+  /** Whether text or a tool call had streamed to `onEvent` before the failure: the user may have seen it, so the turn is never `retryable`. Always false without an `onEvent`, which nothing reached. */
   streamed: boolean;
 }
 
 export interface AIChatResult {
   ok: boolean;
   text?: string;
+  /** The calls to answer: with `stopReason` `tool_use`, the turn's; with `length` or `refusal`, those the cut-off turn had made whole (see `truncatedToolCall`). */
   toolCalls?: AIToolCall[];
   providerState?: unknown;
   stopReason?: AIStopReason;
@@ -445,7 +446,11 @@ export interface AIChatResult {
   model?: string;
   /** The web searches the provider ran for this turn, when it ran any. */
   webSearch?: AIWebSearch;
-  /** A tool call the turn was cut off in the middle of (`stopReason` `length` or `refusal`): its id, name and the arguments as far as they came. Never in `toolCalls`. */
+  /**
+   * A tool call the turn was cut off in the middle of (`stopReason` `length` or `refusal`): its id, name and the arguments as far as
+   * they came. Never in `toolCalls`, which on such a turn holds the calls that came whole — answer them, then replay the turn: the
+   * providers want a result for every call they are given back.
+   */
   truncatedToolCall?: { id: string; name: string; raw: string };
   /** The reasoning the provider showed — Anthropic's summarized thinking, a Responses reasoning summary, Gemini's thought summaries, a model's inline `<think>` text — when it showed any. Never the raw chain of thought. */
   reasoning?: string;
