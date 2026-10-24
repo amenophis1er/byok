@@ -41,7 +41,9 @@ describe('the kinds', () => {
     const loop: Record<string, unknown> = {}; loop['me'] = loop;
     for (const bad of [turn({}, loop), turn(loop, undefined)]) {
       const cyclic = await chat(conn, 'k', bad, { fetch });
-      expect(cyclic).toMatchObject({ failure: { kind: 'request' } });
+      expect(cyclic).toMatchObject({ failure: { kind: 'request', cause: expect.stringMatching(/circular/i) } });
+      expect(cyclic.error).toMatch(/^The request (body could not be serialised|could not be built): .*circular/i);
+      expect(cyclic.error).not.toMatch(/network/i);
       expect(cyclic).not.toHaveProperty('retryable');
     }
     expect(fetch).not.toHaveBeenCalled();

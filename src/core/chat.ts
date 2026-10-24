@@ -164,6 +164,9 @@ export async function chat(conn: Connection, credential: ConnectionCredential, r
         ...(error.requestId ? { requestId: error.requestId } : {}),
       }, { ...rateLimitFields(error), ...(retryable ? { retryable: true } : {}) });
     }
+    // A `TypeError` here was thrown building the request (a cycle in it), not by the transport, which `post` wraps: the request's
+    // failure, in its own words.
+    if (error instanceof TypeError) return failed(`The request could not be built: ${error.message}`, { kind: 'request', cause: error.message });
     const message = errMessage(error);
     return failed(message, { kind: 'request' }, /^HTTP (5\d\d|529)\b|overloaded|backend failed/i.test(message) ? { retryable: true } : {});
   } finally {
