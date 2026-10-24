@@ -58,9 +58,10 @@ export const checksSignatures = (model: string): boolean => /^gemini-(?:[3-9]|\d
 function modelParts(message: Extract<AIMessage, { role: 'assistant' }>, placeholder: boolean): Part[] {
   const own = geminiState(message.providerState);
   if (own) {
-    if (!placeholder || own.some((p) => typeof p['thoughtSignature'] === 'string')) return own as Part[];
+    // The validator reads the first function call's signature: that part gets the placeholder when it has none, whatever the others carry.
     const first = own.findIndex((p) => p['functionCall']);
-    return first === -1 ? (own as Part[]) : own.map((p, i) => (i === first ? { ...p, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER } : p)) as Part[];
+    if (!placeholder || first === -1 || typeof own[first]!['thoughtSignature'] === 'string') return own as Part[];
+    return own.map((p, i) => (i === first ? { ...p, thoughtSignature: GEMINI_SIGNATURE_PLACEHOLDER } : p)) as Part[];
   }
   const parts: Part[] = [];
   if (message.content) parts.push({ text: message.content });

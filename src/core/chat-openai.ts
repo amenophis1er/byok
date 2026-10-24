@@ -371,16 +371,18 @@ export async function openaiResult(events: AsyncIterable<SseEvent>, onEvent?: Ch
   });
 
   const mapped = STOP[finishReason] ?? 'end';
-  // A turn cut off by the token limit or a filter may carry a truncated call: never hand one out, but say which it was — the last
+  // A turn cut off by the token limit or a filter may carry truncated calls: never hand one out, but say which the last was — a call
   // whose arguments did not come whole (one that parses was complete; the cut then fell in the text after it), or came not at all,
   // an announced call with no arguments yet. The calls that came whole are handed out all the same, to be answered before the turn
   // is replayed, and their extra_content kept.
   const runnable = mapped === 'tool_use' || mapped === 'end';
-  const broken = runnable ? undefined : [...fragments.entries()].reverse().map(([index, fragment]) => ({ raw: fragment.args, call: toolCalls.find((call) => call.id === settle(index, fragment))! }))
-    .find(({ raw, call }) => call.argsError || raw.trim() === '');
-  const cut = broken ? { id: broken.call.id, name: broken.call.name, raw: broken.raw } : undefined;
-  const whole = cut ? toolCalls.filter((call) => call.id !== cut.id) : toolCalls;
-  if (cut) delete extraContent[cut.id];
+  const broken = runnable ? [] : [...fragments.entries()].sort(([a], [b]) => a - b).map(([index, fragment]) => ({ raw: fragment.args, call: toolCalls.find((call) => call.id === settle(index, fragment))! }))
+    .filter(({ raw, call }) => call.argsError || raw.trim() === '');
+  const last = broken[broken.length - 1];
+  const cut = last ? { id: last.call.id, name: last.call.name, raw: last.raw } : undefined;
+  const held = new Set(broken.map(({ call }) => call.id));
+  const whole = toolCalls.filter((call) => !held.has(call.id));
+  for (const id of held) delete extraContent[id];
   const cleaned = text.trim();
   const thoughts = reasoning.trim();
   return {

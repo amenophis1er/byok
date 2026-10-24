@@ -158,6 +158,10 @@ describe('streamed response', () => {
     // the turn is replayed, their extra_content kept. A turn whose calls all came whole (the cut fell after them) names none, nor does a whole turn.
     const two = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{"x":' }, extra_content: { v: 1 } }, { index: 1, id: 'b', function: { name: 'browser', arguments: '{}' }, extra_content: { v: 2 } }] }), chunk({}, 'length')]));
     expect(two).toMatchObject({ stopReason: 'length', truncatedToolCall: { id: 'a', name: 'browser', raw: '{"x":' }, toolCalls: [{ id: 'b', name: 'browser', args: {} }], providerState: { protocol: 'chat-completions', extraContent: { b: { v: 2 } } } });
+    // Several cut calls: every one held back and dropped from the state, the last named.
+    const many = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '' }, extra_content: { v: 1 } }, { index: 1, id: 'b', function: { name: 'browser', arguments: '{"ok":true}' } }, { index: 2, id: 'c', function: { name: 'browser', arguments: '{"x":' } }] }), chunk({}, 'length')]));
+    expect(many).toMatchObject({ stopReason: 'length', truncatedToolCall: { id: 'c', name: 'browser', raw: '{"x":' }, toolCalls: [{ id: 'b', name: 'browser', args: { ok: true } }] });
+    expect(many).not.toHaveProperty('providerState');
     const after = await parse(openaiSse([chunk({ tool_calls: [{ index: 0, id: 'a', function: { name: 'browser', arguments: '{}' } }] }), chunk({ content: 'and then' }, 'length')]));
     expect(after).not.toHaveProperty('truncatedToolCall');
     expect(after).toMatchObject({ stopReason: 'length', text: 'and then', toolCalls: [{ id: 'a', name: 'browser', args: {} }] });

@@ -152,8 +152,8 @@ describe('streamed response', () => {
     expect(after).not.toHaveProperty('truncatedToolCall');
     expect(after).toMatchObject({ stopReason: 'length', text: 'and then', toolCalls: [{ id: 'x', name: 'browser', args: { action: 'observe' } }],
       providerState: { protocol: 'anthropic', blocks: [{ type: 'tool_use', id: 'x', name: 'browser', input: { action: 'observe' } }, { type: 'text', text: 'and then' }] } });
-    // Whole and cut in one turn: the whole one handed out and kept, the cut one named and dropped.
-    const mixed = await parse([start, ...toolUse(0, 'a', ['{"action":"observe"}']), ...toolUse(1, 'b', ['{"action":"nav']), ...stop('max_tokens')]);
+    // Whole and cut in one turn: the whole one handed out and kept, every cut one dropped, the last of them named.
+    const mixed = await parse([start, ...toolUse(0, 'z', ['{"act']), ...toolUse(1, 'a', ['{"action":"observe"}']), ...toolUse(2, 'b', ['{"action":"nav']), ...stop('max_tokens')]);
     expect(mixed).toMatchObject({ stopReason: 'length', toolCalls: [{ id: 'a', name: 'browser' }], truncatedToolCall: { id: 'b', name: 'browser', raw: '{"action":"nav' },
       providerState: { protocol: 'anthropic', blocks: [{ type: 'tool_use', id: 'a', name: 'browser', input: { action: 'observe' } }] } });
     const whole = await parse([start, ...toolUse(0, 'x', ['{"action":"observe"}']), ...stop('tool_use')]);

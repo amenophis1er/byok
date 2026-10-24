@@ -22,7 +22,7 @@ import type { AIChatRequest, AIChatResult, AIContentPart, AIMessage, AIServerToo
 import type { SseEvent } from './sse.js';
 import type { ChatEventSink } from './events.js';
 import { streamFailure } from './failure.js';
-import { bodyRateLimit } from './rate-limit.js';
+import { bodyRateLimit, type RateLimit } from './rate-limit.js';
 import { lowestEffort } from './chat-openai.js';
 import { responsesState, tagged } from './provider-state.js';
 import { approximateLocation, functionTools, webSearchTool } from './tools.js';
@@ -145,6 +145,14 @@ function wholeJson(args: string): boolean {
   try { JSON.parse(args); return true; } catch { return false; }
 }
 
+/** What a failure event says about coming back; without the provider's words (the model a quota names) where they are hidden. */
+function comeBack(body: string, providerText: boolean): RateLimit {
+  const fields = bodyRateLimit(body);
+  if (providerText || !fields.limit) return fields;
+  const { model: _model, ...limit } = fields.limit;
+  return { ...fields, limit };
+}
+
 /** A failure event's body in words, the ChatGPT way: without the provider's text. */
 export const codexFailure = (body: string): string => codexHttpError(0, body).replace(' (HTTP 0)', '');
 
@@ -154,9 +162,9 @@ export const codexFailure = (body: string): string => codexHttpError(0, body).re
  * `response.failed` are failures (worded by `failure`), and so is a stream
  * that ends before either.
  */
-export async function codexResult(events: AsyncIterable<SseEvent>, failure: (body: string) => string = codexFailure, onEvent?: ChatEventSink): Promise<AIChatResult> {
+export async function codexResult(events: AsyncIterable<SseEvent>, failure: (body: string) => string = codexFailure, onEvent?: ChatEventSink, { providerText = failure !== codexFailure }: { /** Whether the provider's own words may come through (never ChatGPT's): here, the model a quota names. */ providerText?: boolean } = {}): Promise<AIChatResult> {
   const texts = new Map<string, string>();
-  const calls = new Map<string, { callId: string; name: string; args: string; gotDelta: boolean; started?: boolean; ended?: boolean }>();
+  const calls = new Map<string, { callId: string; name: string; args: string; gotDelta: boolean; started?: boolean; ended?: boolean; incomplete?: boolean }>();
   const announce = (entry: { callId: string; name: string; started?: boolean }) => {
     if (entry.started) return;
     entry.started = true;
@@ -248,6 +256,7 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
         const entry = call(item);
         if (entry.ended) break; // a repeated `done` changes nothing
         if (!entry.name && typeof item.name === 'string') entry.name = item.name;
+        if (item.status === 'incomplete') entry.incomplete = true;
         announce(entry);
         if (!entry.gotDelta && typeof item.arguments === 'string') {
           entry.args = item.arguments;
@@ -277,11 +286,11 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
       // A failure event, with whatever it says about coming back (ChatGPT's `resets_at`, a plan's window): its code, not an assumed status.
       case 'response.failed': {
         const body = JSON.stringify(event['response'] ?? {});
-        return { ...streamFailure(failure(body), event['response']?.error?.code ?? event['response']?.error?.type), ...bodyRateLimit(body) };
+        return { ...streamFailure(failure(body), event['response']?.error?.code ?? event['response']?.error?.type), ...comeBack(body, providerText) };
       }
       case 'error': {
         const body = JSON.stringify({ error: event['error'] ?? event });
-        return { ...streamFailure(failure(body), event['error']?.code ?? event['error']?.type ?? event['code']), ...bodyRateLimit(body) };
+        return { ...streamFailure(failure(body), event['error']?.code ?? event['error']?.type ?? event['code']), ...comeBack(body, providerText) };
       }
       default:
     }
@@ -305,17 +314,20 @@ export async function codexResult(events: AsyncIterable<SseEvent>, failure: (bod
   const reasoning = thoughts.join('\n\n').trim();
   // The Responses API names each search's queries, not its sources: each entry is the query alone.
   const webSearch = searchCalls > 0 || sources.size > 0 ? { queries, sources: [...sources.values()], searches: queries.map((query) => ({ query, sources: [] })) } : undefined;
-  // A turn cut off by the limit or a filter may carry a truncated call: never hand that one out, but say which it was — the last one
-  // never reported done, or whose arguments did not come whole; none when every call came whole. The calls that came whole are handed
-  // out all the same, to be answered before the turn is replayed, and their items kept. The filter is a refusal; the rest is the limit.
+  // A turn cut off by the limit or a filter may carry truncated calls: never hand one out, but say which the last was — a call never
+  // reported done, reported incomplete, or whose arguments did not come whole or at all; none when every call came whole. The calls
+  // that came whole are handed out all the same, to be answered before the turn is replayed, and their items kept. The filter is a
+  // refusal; the rest is the limit.
   if (incomplete) {
-    const broken = [...calls.values()].reverse().find((entry) => !entry.ended || !wholeJson(entry.args));
-    const whole = broken ? toolCalls.filter((call) => call.id !== broken.callId) : toolCalls;
-    const kept = broken ? items.filter((item) => item['type'] !== 'function_call' || item['call_id'] !== broken.callId) : items;
+    const broken = [...calls.values()].filter((entry) => !entry.ended || entry.incomplete || entry.args.trim() === '' || !wholeJson(entry.args));
+    const last = broken[broken.length - 1];
+    const held = new Set(broken.map((entry) => entry.callId));
+    const whole = toolCalls.filter((call) => !held.has(call.id));
+    const kept = items.filter((item) => item['type'] !== 'function_call' || !held.has(String(item['call_id'])));
     return {
       ok: true, ...(text ? { text } : {}), ...(reasoning ? { reasoning } : {}), ...(webSearch ? { webSearch } : {}),
       ...(whole.length > 0 ? { toolCalls: whole } : {}),
-      ...(broken ? { truncatedToolCall: { id: broken.callId, name: broken.name, raw: broken.args } } : {}),
+      ...(last ? { truncatedToolCall: { id: last.callId, name: last.name, raw: last.args } } : {}),
       ...(kept.length > 0 ? { providerState: tagged.responses(kept) } : {}),
       stopReason: incompleteReason === 'content_filter' ? 'refusal' : 'length', ...(model ? { model } : {}), ...(usage ? { usage } : {}),
     };

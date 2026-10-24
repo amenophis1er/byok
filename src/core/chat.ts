@@ -423,7 +423,7 @@ async function responsesTurn(t: Turn): Promise<AIChatResult> {
     // ChatGPT's refusals in its own words; no protocol fall-through there, the Codex backend is Responses only.
     throw codex ? new HttpError(res.status, codexHttpError(res.status, text), rateLimitOf(res.status, res.headers, text), failureSource(res, text, { message: false })) : httpError(res, text);
   }
-  return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent);
+  return codexResult(readSse(bodyOf(t, res)), codex ? codexFailure : providerFailure, t.onEvent, { providerText: !codex });
 }
 
 /**
