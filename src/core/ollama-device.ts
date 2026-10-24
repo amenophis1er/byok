@@ -19,6 +19,7 @@
  */
 
 import { fetchOf, type RequestOptions } from './http.js';
+import { authFailure } from './auth-error.js';
 
 export const OLLAMA_BASE = 'https://ollama.com';
 /** Bounds the poll loop; the connect page itself has no expiry we can read. */
@@ -88,7 +89,7 @@ export async function whoami(pair: CryptoKeyPair, options: RequestOptions = {}):
   const url = new URL('/api/me', OLLAMA_BASE);
   const res = await fetchOf(options)(url, { method: 'POST', headers: await signRequest(pair, 'POST', url) });
   if (res.status === 401 || res.status === 403) return null;
-  if (!res.ok) throw new Error(`Ollama sign-in check failed (${res.status}): ${await res.text()}`);
+  if (!res.ok) throw authFailure('Ollama', 'Ollama sign-in check', res.status, await res.text());
   const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const id = typeof j.ID === 'string' ? j.ID : '';
   if (!id || id === NO_USER) return null;

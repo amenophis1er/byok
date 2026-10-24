@@ -182,7 +182,7 @@ export async function startDeviceLogin(options: RequestOptions = {}): Promise<De
         'Device-code login is not enabled on this ChatGPT account. Turn it on: ChatGPT → Settings → Security & Login → "Enable device code authorization for Codex", then try again.',
       );
     }
-    throw new Error(`Device login start failed (${res.status}): ${await res.text()}`);
+    throw authFailure('ChatGPT', 'Device login start', res.status, await res.text());
   }
   const j = (await res.json()) as Record<string, unknown>;
   const deviceAuthId = typeof j.device_auth_id === 'string' ? j.device_auth_id : '';
@@ -246,7 +246,8 @@ export async function pollDevice(deviceAuthId: string, userCode: string, options
   }
   if (code === 'deviceauth_authorization_pending') return { status: 'pending' };
   if (code === 'slow_down') return { status: 'slow_down' };
-  return { status: 'denied', error: `Device auth failed (${res.status})${bodyText ? `: ${bodyText}` : ''}` };
+  // The code, never the body: ChatGPT's wording is not echoed.
+  return { status: 'denied', error: `Device auth failed (${res.status}${typeof code === 'string' && code ? `: ${code}` : ''}).` };
 }
 
 /** Exchange the approval for tokens. Form-encoded; DEVICE redirect uri. */
@@ -334,7 +335,7 @@ export async function codexComplete(
     }),
   });
   if (!res.ok || !res.body) {
-    throw new Error(`Codex request failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    throw authFailure('ChatGPT', 'Codex request', res.status, await res.text());
   }
 
   const reader = res.body.getReader();

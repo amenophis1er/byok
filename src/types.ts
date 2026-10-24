@@ -63,36 +63,89 @@ export interface AIConfigView {
   connections: ConnectionView[];
 }
 
-/**
- * Preset base URLs offered in the UI for openai-compatible connections. A
- * base URL is the API root: requests go to `${baseUrl}/chat/completions` and
- * `${baseUrl}/models`. A `{placeholder}` in it (an account id) is for the
- * user to fill in.
- */
-export const OPENAI_COMPATIBLE_PRESETS: {
+/** A known OpenAI-compatible server, for a host picker: where it is, what it needs, how to name it. */
+export interface OpenAiCompatiblePreset {
+  /** A stable id (`groq`, `cloudflare-ai-gateway`), the same when the label is reworded. */
+  id: string;
   label: string;
+  /** The API root, with a `{placeholder}` for each of `fields`. */
   baseUrl: string;
   /** Local/self-hosted endpoints usually need no key. */
   keyOptional?: boolean;
   /** The server's own protocol, when it is better served than Chat Completions; pass it on save. */
   protocol?: Protocol;
-}[] = [
-  { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
-  { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'gemini' },
-  { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
-  { label: 'Vercel AI Gateway', baseUrl: 'https://ai-gateway.vercel.sh/v1' },
-  { label: 'Cloudflare Workers AI', baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1' },
-  { label: 'Cloudflare AI Gateway', baseUrl: 'https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/compat' },
-  { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1' },
-  { label: 'Mistral', baseUrl: 'https://api.mistral.ai/v1' },
-  { label: 'xAI', baseUrl: 'https://api.x.ai/v1' },
-  { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1' },
-  { label: 'Together AI', baseUrl: 'https://api.together.xyz/v1' },
-  { label: 'Fireworks AI', baseUrl: 'https://api.fireworks.ai/inference/v1' },
-  { label: 'Cerebras', baseUrl: 'https://api.cerebras.ai/v1' },
-  { label: 'Ollama (cloud)', baseUrl: 'https://ollama.com/v1' },
-  { label: 'Ollama (local)', baseUrl: 'http://localhost:11434/v1', keyOptional: true },
+  /** Where a key is made, when the provider has such a page. */
+  keyUrl?: string;
+  /** A model a picker can preselect before any listing answers; the listing is the authority. */
+  defaultModel?: string;
+  /** The `{placeholders}` in `baseUrl`, in order, each with a label to ask for it by. */
+  fields?: Array<{ name: string; label: string }>;
+}
+
+/**
+ * Preset base URLs offered in the UI for openai-compatible connections. A
+ * base URL is the API root: requests go to `${baseUrl}/chat/completions` and
+ * `${baseUrl}/models`. A `{placeholder}` in it (an account id) is for the
+ * user to fill in; `presetOf` matches a filled-in URL back to its preset.
+ */
+export const OPENAI_COMPATIBLE_PRESETS: OpenAiCompatiblePreset[] = [
+  { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', keyUrl: 'https://platform.openai.com/api-keys', defaultModel: 'gpt-5.5' },
+  { id: 'gemini', label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'gemini', keyUrl: 'https://aistudio.google.com/apikey', defaultModel: 'gemini-3-flash' },
+  { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/settings/keys' },
+  { id: 'vercel-ai-gateway', label: 'Vercel AI Gateway', baseUrl: 'https://ai-gateway.vercel.sh/v1', keyUrl: 'https://vercel.com/dashboard' },
+  { id: 'cloudflare-workers-ai', label: 'Cloudflare Workers AI', baseUrl: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1', keyUrl: 'https://dash.cloudflare.com/profile/api-tokens', fields: [{ name: 'account_id', label: 'Account ID' }] },
+  { id: 'cloudflare-ai-gateway', label: 'Cloudflare AI Gateway', baseUrl: 'https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/compat', keyUrl: 'https://dash.cloudflare.com/profile/api-tokens', fields: [{ name: 'account_id', label: 'Account ID' }, { name: 'gateway_id', label: 'Gateway ID' }] },
+  { id: 'groq', label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', keyUrl: 'https://console.groq.com/keys', defaultModel: 'openai/gpt-oss-120b' },
+  { id: 'mistral', label: 'Mistral', baseUrl: 'https://api.mistral.ai/v1', keyUrl: 'https://console.mistral.ai/api-keys', defaultModel: 'mistral-large-latest' },
+  { id: 'xai', label: 'xAI', baseUrl: 'https://api.x.ai/v1', keyUrl: 'https://console.x.ai' },
+  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', keyUrl: 'https://platform.deepseek.com/api_keys', defaultModel: 'deepseek-chat' },
+  { id: 'together', label: 'Together AI', baseUrl: 'https://api.together.xyz/v1', keyUrl: 'https://api.together.ai/settings/api-keys' },
+  { id: 'fireworks', label: 'Fireworks AI', baseUrl: 'https://api.fireworks.ai/inference/v1', keyUrl: 'https://app.fireworks.ai/settings/users/api-keys' },
+  { id: 'cerebras', label: 'Cerebras', baseUrl: 'https://api.cerebras.ai/v1', keyUrl: 'https://cloud.cerebras.ai', defaultModel: 'gpt-oss-120b' },
+  { id: 'ollama-cloud', label: 'Ollama (cloud)', baseUrl: 'https://ollama.com/v1', keyUrl: 'https://ollama.com/settings/keys', defaultModel: 'gpt-oss:120b' },
+  { id: 'ollama-local', label: 'Ollama (local)', baseUrl: 'http://localhost:11434/v1', keyOptional: true },
 ];
+
+/** A host for comparison: lowercased, the loopback names as one (`localhost`, `127.0.0.1`, `[::1]`). */
+function hostKey(hostname: string): string {
+  const host = hostname.toLowerCase();
+  return host === '127.0.0.1' || host === '[::1]' || host === '::1' ? 'localhost' : host;
+}
+
+/**
+ * The preset a base URL is an instance of, with the values its placeholders
+ * took: `presetOf('https://gateway.ai.cloudflare.com/v1/abc/gw1/compat')` is
+ * the AI Gateway preset with `{ account_id: 'abc', gateway_id: 'gw1' }`. The
+ * URL is normalised first; hosts compare without case, and `localhost`,
+ * `127.0.0.1` and `[::1]` count as one. Nothing for a URL no preset matches,
+ * or one with a placeholder still unfilled.
+ */
+export function presetOf(baseUrl: string): { preset: OpenAiCompatiblePreset; values: Record<string, string> } | undefined {
+  let url: URL;
+  try { url = new URL(normalizeBaseUrl(baseUrl)); } catch { return undefined; }
+  // The path decoded, so a placeholder left in it (`{account_id}`, which `URL` percent-encodes) is seen as one and matches nothing.
+  let path: string;
+  try { path = decodeURIComponent(url.pathname).replace(/\/+$/, ''); } catch { return undefined; }
+  for (const preset of OPENAI_COMPATIBLE_PRESETS) {
+    const template = new URL(preset.baseUrl);
+    if (template.protocol !== url.protocol || hostKey(template.hostname) !== hostKey(url.hostname) || template.port !== url.port) continue;
+    const names: string[] = [];
+    // The path as written: `URL` would percent-encode the braces of a placeholder.
+    const templatePath = preset.baseUrl.slice(template.origin.length).replace(/[?#].*$/, '');
+    const pattern = templatePath.replace(/\/+$/, '').split(/(\{[a-z_]+\})/).map((piece) => {
+      const field = /^\{([a-z_]+)\}$/.exec(piece);
+      if (!field) return piece.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
+      names.push(field[1]!);
+      return '([^/{}]+)';
+    }).join('');
+    const match = new RegExp(`^${pattern}$`).exec(path);
+    if (!match) continue;
+    const values: Record<string, string> = {};
+    names.forEach((name, i) => { values[name] = match[i + 1]!; });
+    return { preset, values };
+  }
+  return undefined;
+}
 
 /**
  * Normalize a user-typed base URL to an API root: add a scheme, drop trailing
@@ -127,7 +180,8 @@ export function defaultLabel(kind: ProviderKind, baseUrl: string): string {
   if (kind === 'anthropic') return 'Anthropic';
   if (kind === 'chatgpt') return 'ChatGPT';
   if (kind === 'chrome-builtin') return 'Chrome built-in (on-device)';
-  const preset = OPENAI_COMPATIBLE_PRESETS.find((p) => p.baseUrl === normalizeBaseUrl(baseUrl));
+  // The template as typed (a placeholder still unfilled) is the preset too; a filled-in URL matches through its placeholders.
+  const preset = OPENAI_COMPATIBLE_PRESETS.find((p) => p.baseUrl === normalizeBaseUrl(baseUrl)) ?? presetOf(baseUrl)?.preset;
   if (preset) return preset.label;
   try {
     return new URL(normalizeBaseUrl(baseUrl)).hostname;

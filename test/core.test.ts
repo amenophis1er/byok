@@ -3,7 +3,7 @@
  * credential, no storage, no chrome.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chat, HttpError, listModels, protocolOf, type Connection } from '../src/core/index.js';
+import { chat, HttpError, listModels, protocolOf, workersAiAccount, type Connection } from '../src/core/index.js';
 import { openaiSse, streamOf } from './helpers.js';
 
 const sse = (text: string) => new Response(streamOf(text, 11), { status: 200, headers: { 'content-type': 'text/event-stream' } });
@@ -177,4 +177,13 @@ it('names the protocol a connection speaks', () => {
   expect(protocolOf({ kind: 'chatgpt' })).toBe('responses');
   expect(protocolOf({ kind: 'openai-compatible' })).toBe('chat-completions');
   expect(protocolOf({ kind: 'openai-compatible', protocol: 'gemini' })).toBe('gemini');
+});
+
+describe('workersAiAccount', () => {
+  it('names the account in a Workers AI root, so a host can tell which listing a URL gets', () => {
+    expect(workersAiAccount('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1')).toBe('abc');
+    expect(workersAiAccount('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/')).toBeUndefined();
+    expect(workersAiAccount('https://gateway.ai.cloudflare.com/v1/abc/gw/compat')).toBeUndefined();
+    expect(workersAiAccount('nope')).toBeUndefined();
+  });
 });

@@ -64,7 +64,10 @@ describe('startDeviceLogin', () => {
 
   it('rejects other failures and responses without a code', async () => {
     mockFetch(new Response('boom', { status: 500 }), json({ device_auth_id: 'd' }));
-    await expect(startDeviceLogin()).rejects.toThrow('Device login start failed (500): boom');
+    // The status and the code, never the body.
+    const failure = await startDeviceLogin().catch((error: unknown) => error as Error);
+    expect(failure).toMatchObject({ name: 'AuthError', status: 500, message: 'Device login start failed (HTTP 500).' });
+    expect(String(failure)).not.toContain('boom');
     await expect(startDeviceLogin()).rejects.toThrow('returned no code');
   });
 });
@@ -95,7 +98,7 @@ describe('pollDevice', () => {
 
   it('denies on a refusal, keeping the body; a server failure or a dropped connection is not the user\'s answer, so it keeps polling', async () => {
     mockFetch(json({ error: 'access_denied' }, 400), new Response('gateway', { status: 502 }));
-    expect(await pollDevice('d', 'u')).toEqual({ status: 'denied', error: 'Device auth failed (400): {"error":"access_denied"}' });
+    expect(await pollDevice('d', 'u')).toEqual({ status: 'denied', error: 'Device auth failed (400: access_denied).' });
     expect(await pollDevice('d', 'u')).toEqual({ status: 'pending' });
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
     expect(await pollDevice('d', 'u')).toEqual({ status: 'pending' });
@@ -203,8 +206,10 @@ describe('codexComplete', () => {
     expect(fetch.mock.calls[0]![1]!.headers).not.toHaveProperty('chatgpt-account-id');
   });
 
-  it('fails with the status and a trimmed body', async () => {
-    mockFetch(new Response('y'.repeat(500), { status: 401 }));
-    await expect(codexComplete(input, new AbortController().signal)).rejects.toThrow(`Codex request failed (401): ${'y'.repeat(300)}`);
+  it('fails with the status and the code, never the body', async () => {
+    mockFetch(new Response(JSON.stringify({ error: { code: 'usage_limit_reached', message: 'y'.repeat(500) } }), { status: 401 }));
+    const failure = await codexComplete(input, new AbortController().signal).catch((error: unknown) => error as Error);
+    expect(failure).toMatchObject({ name: 'AuthError', status: 401, code: 'usage_limit_reached', message: 'Codex request failed (HTTP 401: usage_limit_reached).' });
+    expect(String(failure)).not.toContain('yyyy');
   });
 });

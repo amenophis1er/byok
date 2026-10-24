@@ -62,7 +62,9 @@ describe('startOpencodeLogin', () => {
 
   it('rejects failures, responses without a code, and a verification page off https', async () => {
     mockFetch(new Response('boom', { status: 500 }), json({ device_code: 'd' }), json({ device_code: 'd', user_code: 'u', verification_uri_complete: 'http://evil.test/' }));
-    await expect(startOpencodeLogin()).rejects.toThrow('OpenCode sign-in start failed (500): boom');
+    const failure = await startOpencodeLogin().catch((error: unknown) => error as Error);
+    expect(failure).toMatchObject({ name: 'AuthError', status: 500, message: 'OpenCode sign-in start failed (HTTP 500).' });
+    expect(String(failure)).not.toContain('boom');
     await expect(startOpencodeLogin()).rejects.toThrow('returned no code');
     await expect(startOpencodeLogin()).rejects.toThrow('not https');
   });

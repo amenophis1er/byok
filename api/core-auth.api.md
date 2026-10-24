@@ -209,6 +209,7 @@ export function refreshTokens(refreshToken: string, options?: RequestOptions): P
 // @public
 export interface RequestOptions {
     fetch?: Fetch;
+    signal?: AbortSignal;
 }
 
 // @public

@@ -72,7 +72,7 @@ function parseTokens(raw: unknown): OpencodeTokens {
 /** Start the device grant: a code for the user and the page to enter it on (it is pre-filled there). Every call here takes the host's `fetch` in `options`, else the global one. */
 export async function startOpencodeLogin(clientId = DEFAULT_CLIENT_ID, options: RequestOptions = {}): Promise<OpencodeDeviceStart> {
   const res = await post('/auth/device/code', { client_id: clientId, supports_org_scope: true }, options);
-  if (!res.ok) throw new Error(`OpenCode sign-in start failed (${res.status}): ${await res.text()}`);
+  if (!res.ok) throw authFailure('OpenCode', 'OpenCode sign-in start', res.status, await res.text());
   const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const deviceCode = typeof j.device_code === 'string' ? j.device_code : '';
   const userCode = typeof j.user_code === 'string' ? j.user_code : '';
@@ -111,7 +111,13 @@ export async function pollOpencode(deviceCode: string, clientId = DEFAULT_CLIENT
   return { status: 'pending' };
 }
 
-/** Rotate the token pair. The Console answers `invalid_grant` once the session was revoked: only a new sign-in recovers. */
+/**
+ * Rotate the token pair. The Console answers `invalid_grant` once the session
+ * was revoked: only a new sign-in recovers. The Console documents no endpoint
+ * that revokes a device-flow session, so signing out is local: drop the
+ * tokens; the session lives on the server until it expires, or until the
+ * user revokes it in the Console.
+ */
 export async function refreshOpencodeTokens(refreshToken: string, clientId = DEFAULT_CLIENT_ID, options: RequestOptions = {}): Promise<OpencodeTokens> {
   const res = await post('/auth/device/token', { grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId }, options);
   // The Console answers `invalid_grant` once the session was revoked: only a new sign-in recovers (`reconnect`).

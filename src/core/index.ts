@@ -13,7 +13,7 @@
 
 export { chat, protocolCandidates, networkCause, transportCode, TIMED_OUT, type ChatOptions, type ChatRequest } from './chat.js';
 export type { ChatEvent, ChatEventSink } from './events.js';
-export { listModels, getModelInfo } from './models.js';
+export { listModels, getModelInfo, workersAiAccount } from './models.js';
 export { knownModelInfo, knownModelInfoByName, modelName, type ModelFacts } from './model-info.js';
 export { protocolOf, type Connection } from './connection.js';
 export { stripProviderState, readProviderState, tagged as providerState, type ProviderState, type ProviderStateProtocol } from './provider-state.js';

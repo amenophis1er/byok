@@ -5,6 +5,26 @@ while on 0.x, a breaking change bumps the minor version.
 
 ## 0.1.14
 
+- **Presets for a host picker.** Each entry of `OPENAI_COMPATIBLE_PRESETS`
+  (type `OpenAiCompatiblePreset`) carries a stable `id` (`groq`,
+  `cloudflare-ai-gateway`), `keyUrl` where the provider has a key page,
+  `defaultModel` where one is safe to preselect, and `fields` naming the
+  `{placeholders}` of its URL. `presetOf(baseUrl)` matches a URL to its
+  preset with the values its placeholders took (`gateway.ai.cloudflare.com/v1/abc/gw1/compat`
+  → `{ account_id: 'abc', gateway_id: 'gw1' }`), hosts compared without
+  case and `localhost`, `127.0.0.1`, `[::1]` as one host; `defaultLabel`
+  uses it, so a filled-in Cloudflare URL is labelled by its preset.
+- **`RequestOptions.signal`** bounds a listing, a sign-in start or poll, a
+  refresh: passed to every request the call makes. `chat()` keeps its own.
+- **`workersAiAccount(baseUrl)`** is exported from `/core`.
+- **Sign-in failures carry the status and the code, never the body.** The
+  OpenCode and ChatGPT device-flow starts, a ChatGPT device-poll denial, the
+  Codex completion and the Ollama pairing check throw an `AuthError` (or
+  word the denial) from the status and the provider's code; the response
+  text went into the message.
+- **OpenCode sign-out is local**, documented: the Console has no endpoint
+  that revokes a device-flow session.
+
 - **`failure.endedEarly`** on a stream that closed before the provider's
   closing event, naming no error — as data, where only the sentence told it
   from an error the stream reported without a code. `transient` reads it.
