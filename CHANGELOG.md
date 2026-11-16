@@ -3,7 +3,7 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
-## Unreleased
+## 0.1.15
 
 - `useAiPlatform(platform)` and `AiPlatform` (`./background`): the worker's handlers on a host that is not a Chrome
   extension (a Node daemon, a desktop app). The host gives what the worker asks of Chrome (storage kept for good,
