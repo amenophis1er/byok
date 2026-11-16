@@ -3,6 +3,14 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## Unreleased
+
+- `useAiPlatform(platform)` and `AiPlatform` (`./background`): the worker's handlers on a host that is not a Chrome
+  extension (a Node daemon, a desktop app). The host gives what the worker asks of Chrome (storage kept for good,
+  storage for a sign-in in progress, a way to show a consent page, the secrets at rest) and runs
+  `createAiMessageHandler` and `chat` as they are: the same connections, views, sign-ins and messages. Chrome's is the
+  default (`chromePlatform`), so an extension changes nothing.
+
 ## 0.1.14
 
 - **Presets for a host picker.** Each entry of `OPENAI_COMPATIBLE_PRESETS`

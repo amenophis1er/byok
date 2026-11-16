@@ -25,15 +25,8 @@ import {
   type Protocol,
   type ProviderKind,
 } from '../types.js';
-import {
-  configureCryptoDb,
-  createSigningKey,
-  decryptBlob,
-  deleteSigningKey,
-  encryptString,
-  getSigningKey,
-  type EncBlob,
-} from './crypto.js';
+import { configureCryptoDb, type EncBlob } from './crypto.js';
+import { chromePlatform, type AiPlatform } from './platform.js';
 import { chat as coreChat, networkCause, TIMED_OUT } from '../core/chat.js';
 import { listModels as coreListModels } from '../core/models.js';
 import { protocolOf, type Connection } from '../core/connection.js';
@@ -121,6 +114,26 @@ interface Resolved {
 
 let opts: Resolved = resolve({});
 
+/** Where the handlers keep things and show pages: Chrome's unless a host gave its own (useAiPlatform). */
+let platform: AiPlatform = chromePlatform;
+
+/**
+ * Run the handlers somewhere that is not a Chrome extension's worker: give
+ * what they need from the host (see AiPlatform), once, before the first
+ * message. `createAiMessageHandler` and `chat` are then used as in a worker.
+ * With no argument, Chrome's is put back.
+ */
+export function useAiPlatform(host: AiPlatform = chromePlatform): void {
+  platform = host;
+  configQueue = Promise.resolve();
+}
+
+const encryptString = (plain: string) => platform.secrets.encryptString(plain);
+const decryptBlob = (blob: EncBlob | null | undefined) => platform.secrets.decryptBlob(blob);
+const createSigningKey = (id: string) => platform.secrets.createSigningKey(id);
+const getSigningKey = (id: string) => platform.secrets.getSigningKey(id);
+const deleteSigningKey = (id: string) => platform.secrets.deleteSigningKey(id);
+
 function resolve(o: AiHandlerOptions): Resolved {
   return {
     prefix: o.prefix ?? 'aiconnect',
@@ -180,7 +193,7 @@ const COMPLETE_TIMEOUT_MS = 60_000;
  * console. Off by default so message content isn't logged in normal use.
  */
 async function debugOn(): Promise<boolean> {
-  return (await chrome.storage.local.get(opts.debugFlagKey))[opts.debugFlagKey] === true;
+  return (await platform.local.get(opts.debugFlagKey)) === true;
 }
 function dlog(label: string, data: unknown): void {
   console.log(`%c[ai-connect] ${label}`, 'color:#00a884;font-weight:bold', data);
@@ -217,9 +230,7 @@ function legacyApiRoot(baseUrl: string): string {
  * Any plaintext key found is encrypted on the way in.
  */
 async function load(): Promise<StoredConfig> {
-  const raw = (await chrome.storage.local.get(opts.storageKey))[opts.storageKey] as
-    | Record<string, unknown>
-    | undefined;
+  const raw = (await platform.local.get(opts.storageKey)) as Record<string, unknown> | undefined;
   if (!raw) return empty();
 
   // v3 — already migrated. Base URLs become API roots in memory; the next save persists them.
@@ -273,7 +284,7 @@ async function load(): Promise<StoredConfig> {
 }
 
 async function save(cfg: StoredConfig): Promise<void> {
-  await chrome.storage.local.set({ [opts.storageKey]: cfg });
+  await platform.local.set(opts.storageKey, cfg);
 }
 
 /**
@@ -388,8 +399,8 @@ const PENDING_KEY = 'aiConnectAnthropicLogin';
 async function anthropicLoginStart(): Promise<AIResult<AIAnthropicLoginStart>> {
   try {
     const { verifier, state, authorizeUrl } = await startLogin();
-    await chrome.storage.session.set({ [PENDING_KEY]: { verifier, state } });
-    if (opts.openConsentTab) void chrome.tabs.create({ url: authorizeUrl }).catch(() => {});
+    await platform.session.set(PENDING_KEY, { verifier, state });
+    if (opts.openConsentTab) void platform.openTab(authorizeUrl).catch(() => {});
     return { ok: true, data: { authorizeUrl } };
   } catch (error) {
     return { ok: false, error: errMessage(error) };
@@ -402,7 +413,7 @@ async function anthropicLoginComplete(
   req: AIAnthropicLoginCompleteRequest,
 ): Promise<AIResult<{ id: string }>> {
   try {
-    const pending = (await chrome.storage.session.get(PENDING_KEY))[PENDING_KEY] as
+    const pending = (await platform.session.get(PENDING_KEY)) as
       | { verifier: string; state: string }
       | undefined;
     if (!pending) throw new Error('Sign-in expired — start again.');
@@ -411,7 +422,7 @@ async function anthropicLoginComplete(
       expectedState: pending.state,
       verifier: pending.verifier,
     });
-    await chrome.storage.session.remove(PENDING_KEY);
+    await platform.session.remove(PENDING_KEY);
     const id = await createSubscriptionConnection({
       auth: 'oauth',
       label: req.label || 'Claude (Pro/Max)',
@@ -483,8 +494,8 @@ const CHATGPT_PENDING = 'aiConnectChatgptDevice';
 async function chatgptLoginStart(): Promise<AIResult<{ userCode: string; verifyUrl: string }>> {
   try {
     const start = await startDeviceLogin();
-    await chrome.storage.session.set({ [CHATGPT_PENDING]: { ...start, slowDowns: 0 } });
-    if (opts.openConsentTab) void chrome.tabs.create({ url: start.verifyUrl }).catch(() => {});
+    await platform.session.set(CHATGPT_PENDING, { ...start, slowDowns: 0 });
+    if (opts.openConsentTab) void platform.openTab(start.verifyUrl).catch(() => {});
     return { ok: true, data: { userCode: start.userCode, verifyUrl: start.verifyUrl } };
   } catch (error) {
     return { ok: false, error: errMessage(error) };
@@ -495,31 +506,29 @@ async function chatgptLoginStart(): Promise<AIResult<{ userCode: string; verifyU
  *  polls (MV3) without losing the session — it lives in session storage. */
 async function chatgptLoginPoll(label: string): Promise<AIResult<AIChatgptPoll>> {
   try {
-    const pending = (await chrome.storage.session.get(CHATGPT_PENDING))[CHATGPT_PENDING] as
+    const pending = (await platform.session.get(CHATGPT_PENDING)) as
       | (DeviceStart & { slowDowns: number })
       | undefined;
     if (!pending) throw new Error('Sign-in expired — start again.');
     if (Date.now() > pending.expiresAt) {
-      await chrome.storage.session.remove(CHATGPT_PENDING);
+      await platform.session.remove(CHATGPT_PENDING);
       throw new Error('Sign-in timed out after 15 minutes — start again.');
     }
     const poll = await pollDevice(pending.deviceAuthId, pending.userCode);
     if (poll.status === 'pending') return { ok: true, data: { status: 'pending' } };
     if (poll.status === 'slow_down') {
-      await chrome.storage.session.set({
-        [CHATGPT_PENDING]: { ...pending, slowDowns: pending.slowDowns + 1 },
-      });
+      await platform.session.set(CHATGPT_PENDING, { ...pending, slowDowns: pending.slowDowns + 1 });
       return { ok: true, data: { status: 'pending' } };
     }
     if (poll.status === 'denied') {
-      await chrome.storage.session.remove(CHATGPT_PENDING);
+      await platform.session.remove(CHATGPT_PENDING);
       throw new Error(poll.error);
     }
     const tokens = await exchangeDeviceCode({
       authorizationCode: poll.authorizationCode,
       codeVerifier: poll.codeVerifier,
     });
-    await chrome.storage.session.remove(CHATGPT_PENDING);
+    await platform.session.remove(CHATGPT_PENDING);
     // The catalog's first model is the one the backend puts forward for this account.
     const catalog = await codexModels({ accessToken: tokens.accessToken, accountId: tokens.accountId, originator: opts.codexOriginator }).catch(() => []);
     const conn: StoredConnection = {
@@ -555,17 +564,15 @@ const OLLAMA_PENDING = 'aiConnectOllamaConnect';
  *  (survives an SW restart while the user clicks Connect). */
 async function ollamaLoginStart(deviceName: string): Promise<AIResult<AIOllamaLoginStart>> {
   try {
-    const previous = (await chrome.storage.session.get(OLLAMA_PENDING))[OLLAMA_PENDING] as
+    const previous = (await platform.session.get(OLLAMA_PENDING)) as
       | { id: string }
       | undefined;
     if (previous) await deleteSigningKey(previous.id);
     const id = crypto.randomUUID();
     const pair = await createSigningKey(id);
     const url = connectUrl(deviceName.trim() || 'Chrome extension', await publicKeyLine(pair));
-    await chrome.storage.session.set({
-      [OLLAMA_PENDING]: { id, expiresAt: Date.now() + CONNECT_TIMEOUT_MS },
-    });
-    if (opts.openConsentTab) void chrome.tabs.create({ url }).catch(() => {});
+    await platform.session.set(OLLAMA_PENDING, { id, expiresAt: Date.now() + CONNECT_TIMEOUT_MS });
+    if (opts.openConsentTab) void platform.openTab(url).catch(() => {});
     return { ok: true, data: { connectUrl: url, pollMs: CONNECT_POLL_MS } };
   } catch (error) {
     return { ok: false, error: errMessage(error) };
@@ -575,19 +582,19 @@ async function ollamaLoginStart(deviceName: string): Promise<AIResult<AIOllamaLo
 /** One poll, driven by the UI: is the pending key paired yet? */
 async function ollamaLoginPoll(label: string): Promise<AIResult<AIOllamaPoll>> {
   try {
-    const pending = (await chrome.storage.session.get(OLLAMA_PENDING))[OLLAMA_PENDING] as
+    const pending = (await platform.session.get(OLLAMA_PENDING)) as
       | { id: string; expiresAt: number }
       | undefined;
     if (!pending) throw new Error('Sign-in expired — start again.');
     const pair = await getSigningKey(pending.id);
     if (!pair || Date.now() > pending.expiresAt) {
-      await chrome.storage.session.remove(OLLAMA_PENDING);
+      await platform.session.remove(OLLAMA_PENDING);
       await deleteSigningKey(pending.id);
       throw new Error('Sign-in timed out after 15 minutes — start again.');
     }
     const account = await whoami(pair);
     if (!account) return { ok: true, data: { status: 'pending' } };
-    await chrome.storage.session.remove(OLLAMA_PENDING);
+    await platform.session.remove(OLLAMA_PENDING);
     await addConnection({
       id: pending.id,
       kind: 'openai-compatible',
@@ -612,8 +619,8 @@ const OPENCODE_PENDING = 'aiConnectOpencodeDevice';
 async function opencodeLoginStart(): Promise<AIResult<AIOpencodeLoginStart>> {
   try {
     const start = await startOpencodeLogin(opts.opencodeClientId);
-    await chrome.storage.session.set({ [OPENCODE_PENDING]: { ...start, slowDowns: 0 } });
-    if (opts.openConsentTab) void chrome.tabs.create({ url: start.verifyUrl }).catch(() => {});
+    await platform.session.set(OPENCODE_PENDING, { ...start, slowDowns: 0 });
+    if (opts.openConsentTab) void platform.openTab(start.verifyUrl).catch(() => {});
     return { ok: true, data: { userCode: start.userCode, verifyUrl: start.verifyUrl, pollMs: opencodePollDelayMs(start.intervalSec, 0) } };
   } catch (error) {
     return { ok: false, error: errMessage(error) };
@@ -623,26 +630,26 @@ async function opencodeLoginStart(): Promise<AIResult<AIOpencodeLoginStart>> {
 /** One poll, driven by the UI so the worker may die between polls; the grant lives in session storage. */
 async function opencodeLoginPoll(label: string): Promise<AIResult<AIOpencodePoll>> {
   try {
-    const pending = (await chrome.storage.session.get(OPENCODE_PENDING))[OPENCODE_PENDING] as
+    const pending = (await platform.session.get(OPENCODE_PENDING)) as
       | (OpencodeDeviceStart & { slowDowns: number })
       | undefined;
     if (!pending) throw new Error('Sign-in expired — start again.');
     if (Date.now() > pending.expiresAt) {
-      await chrome.storage.session.remove(OPENCODE_PENDING);
+      await platform.session.remove(OPENCODE_PENDING);
       throw new Error('The code expired — start the sign-in again.');
     }
     const poll = await pollOpencode(pending.deviceCode, opts.opencodeClientId);
     if (poll.status === 'pending') return { ok: true, data: { status: 'pending', pollMs: opencodePollDelayMs(pending.intervalSec, pending.slowDowns) } };
     if (poll.status === 'slow_down') {
       const slowDowns = pending.slowDowns + 1;
-      await chrome.storage.session.set({ [OPENCODE_PENDING]: { ...pending, slowDowns } });
+      await platform.session.set(OPENCODE_PENDING, { ...pending, slowDowns });
       return { ok: true, data: { status: 'pending', pollMs: opencodePollDelayMs(pending.intervalSec, slowDowns) } };
     }
     if (poll.status === 'denied') {
-      await chrome.storage.session.remove(OPENCODE_PENDING);
+      await platform.session.remove(OPENCODE_PENDING);
       throw new Error(poll.error);
     }
-    await chrome.storage.session.remove(OPENCODE_PENDING);
+    await platform.session.remove(OPENCODE_PENDING);
     const account = await opencodeAccount(poll.tokens);
     const conn: StoredConnection = {
       id: crypto.randomUUID(),
@@ -925,5 +932,7 @@ export function registerAiHandlers(options: AiHandlerOptions = {}): void {
   );
 }
 
+export { chromePlatform, type AiPlatform } from './platform.js';
+export type { EncBlob } from './crypto.js';
 export { CODEX_MODELS, CODEX_CLIENT_VERSION } from '../core/openai-oauth.js';
 export { OPENCODE_BASE } from '../core/opencode-oauth.js';
