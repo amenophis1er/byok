@@ -362,6 +362,10 @@ async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ 
   }
   return withConfig(async (cfg) => {
     let conn = req.id ? cfg.connections.find((c) => c.id === req.id) : undefined;
+    // A kept credential stays with the server it was given for: sent elsewhere only when typed again (or cleared).
+    if (conn && req.apiKeyMode !== 'set' && req.apiKeyMode !== 'clear' && holdsCredential(conn) && !sameDestination(conn, req.kind, baseUrl)) {
+      return { ok: false, error: ELSEWHERE };
+    }
     if (!conn) {
       conn = {
         id: crypto.randomUUID(),
@@ -387,6 +391,27 @@ async function saveConnection(req: AISaveConnectionRequest): Promise<AIResult<{ 
     await save(cfg);
     return { ok: true, data: { id: conn.id } };
   });
+}
+
+const ELSEWHERE = 'This connection\'s key was saved for another server. Enter the key again to use it with this one.';
+
+/** A connection holds something a server would accept: a key or token, or a device key. */
+function holdsCredential(c: StoredConnection): boolean {
+  return c.auth === 'device-key' || !!c.apiKeyEnc?.ct;
+}
+
+/**
+ * The same provider and server as a saved connection: its kind, and for a server with an address, that address's
+ * origin (scheme, host and port; the path may change, as from /v1 to a gateway's route on the same host).
+ */
+function sameDestination(saved: StoredConnection, kind: ProviderKind, baseUrl: string): boolean {
+  if (saved.kind !== kind) return false;
+  if (!saved.baseUrl && !baseUrl) return true;
+  try {
+    return new URL(saved.baseUrl).origin === new URL(baseUrl).origin;
+  } catch {
+    return false;
+  }
 }
 
 /* ── Claude subscription sign-in ──────────────────────────────────── */
@@ -729,6 +754,8 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
       ...(stored ? { id: stored.id, auth: stored.auth, accountId: stored.accountId } : {}),
       ...(stored && !req.apiKey ? { issuer: stored.issuer, orgId: stored.orgId } : {}),
     };
+    // The saved credential goes only where it was saved for: a form whose server was changed lists with a key typed in it.
+    if (stored && !req.apiKey && !sameDestination(stored, req.kind, conn.baseUrl)) return { ok: false, error: ELSEWHERE };
     const credential = req.apiKey || (stored ? await credentialFor(stored) : '');
     return { ok: true, data: await coreListModels(conn, credential) };
   } catch (error) {
@@ -861,6 +888,11 @@ export function createAiMessageHandler(
   configureCryptoDb(opts.cryptoDbName);
   const p = opts.prefix;
   return (message, sendResponse) => {
+    // Whatever a handler throws (storage that cannot be read, a secret that cannot be opened) is its answer: a
+    // rejection nobody handles would leave the UI waiting, and ends a Node host.
+    const answer = (work: Promise<unknown>): void => {
+      void work.then(sendResponse, (error) => sendResponse({ ok: false, error: errMessage(error) }));
+    };
     // A UI built against a newer protocol than this worker: refuse, and say how to fix it.
     const version = (message as { v?: unknown } | undefined)?.v;
     if (typeof message?.type === 'string' && message.type.startsWith(`${p}:ai-`) && typeof version === 'number' && version > PROTOCOL_VERSION) {
@@ -869,54 +901,54 @@ export function createAiMessageHandler(
     }
     switch (message?.type) {
       case `${p}:ai-get`:
-        void getView().then(sendResponse);
+        answer(getView());
         return true;
       case `${p}:ai-set-active`:
-        void setActive(message as AISetActiveRequest).then(sendResponse);
+        answer(setActive(message as AISetActiveRequest));
         return true;
       case `${p}:ai-save-connection`:
-        void saveConnection(message as AISaveConnectionRequest).then(sendResponse);
+        answer(saveConnection(message as AISaveConnectionRequest));
         return true;
       case `${p}:ai-delete-connection`:
-        void deleteConnection(message as AIDeleteConnectionRequest).then(sendResponse);
+        answer(deleteConnection(message as AIDeleteConnectionRequest));
         return true;
       case `${p}:ai-list-models`:
-        void listModels(message as AIListModelsRequest).then(sendResponse);
+        answer(listModels(message as AIListModelsRequest));
         return true;
       case `${p}:ai-complete`:
-        void complete(message as AICompleteRequest).then(sendResponse);
+        answer(complete(message as AICompleteRequest));
         return true;
       case `${p}:ai-chat`: {
         const { type: _type, ...request } = message as AIChatMessageRequest;
-        void chat(request).then(sendResponse);
+        answer(chat(request));
         return true;
       }
       case `${p}:ai-anthropic-login-start`:
-        void anthropicLoginStart().then(sendResponse);
+        answer(anthropicLoginStart());
         return true;
       case `${p}:ai-anthropic-login-complete`:
-        void anthropicLoginComplete(message as AIAnthropicLoginCompleteRequest).then(sendResponse);
+        answer(anthropicLoginComplete(message as AIAnthropicLoginCompleteRequest));
         return true;
       case `${p}:ai-anthropic-paste-token`:
-        void anthropicPasteToken(message as AIAnthropicPasteTokenRequest).then(sendResponse);
+        answer(anthropicPasteToken(message as AIAnthropicPasteTokenRequest));
         return true;
       case `${p}:ai-chatgpt-login-start`:
-        void chatgptLoginStart().then(sendResponse);
+        answer(chatgptLoginStart());
         return true;
       case `${p}:ai-chatgpt-login-poll`:
-        void chatgptLoginPoll((message as { label?: string }).label ?? '').then(sendResponse);
+        answer(chatgptLoginPoll((message as { label?: string }).label ?? ''));
         return true;
       case `${p}:ai-ollama-login-start`:
-        void ollamaLoginStart((message as { deviceName?: string }).deviceName ?? '').then(sendResponse);
+        answer(ollamaLoginStart((message as { deviceName?: string }).deviceName ?? ''));
         return true;
       case `${p}:ai-ollama-login-poll`:
-        void ollamaLoginPoll((message as { label?: string }).label ?? '').then(sendResponse);
+        answer(ollamaLoginPoll((message as { label?: string }).label ?? ''));
         return true;
       case `${p}:ai-opencode-login-start`:
-        void opencodeLoginStart().then(sendResponse);
+        answer(opencodeLoginStart());
         return true;
       case `${p}:ai-opencode-login-poll`:
-        void opencodeLoginPoll((message as { label?: string }).label ?? '').then(sendResponse);
+        answer(opencodeLoginPoll((message as { label?: string }).label ?? ''));
         return true;
       default:
         return false;

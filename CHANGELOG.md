@@ -10,6 +10,14 @@ while on 0.x, a breaking change bumps the minor version.
   storage for a sign-in in progress, a way to show a consent page, the secrets at rest) and runs
   `createAiMessageHandler` and `chat` as they are: the same connections, views, sign-ins and messages. Chrome's is the
   default (`chromePlatform`), so an extension changes nothing.
+- **A saved key goes only to the server it was saved for.** Listing models with a saved connection's credential, and
+  saving a connection while keeping its key, are refused when the provider or the server's origin (scheme, host,
+  port) is not the one the key was saved with: `This connection's key was saved for another server. Enter the key
+  again to use it with this one.` A key typed in the form goes where the form says, as before; a path changed on
+  the same host keeps the key. A UI that could be made to ask (a message forged to the worker) could otherwise
+  have a stored key sent to a server of its choosing.
+- Every handler answers, whatever it throws: storage that cannot be read or a secret that cannot be opened is
+  `{ ok: false, error }`, where the UI was left waiting (and a Node host ended by the unhandled rejection).
 
 ## 0.1.14
 
