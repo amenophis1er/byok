@@ -3,6 +3,30 @@
 All notable changes to this package. It follows [semantic versioning](https://semver.org);
 while on 0.x, a breaking change bumps the minor version.
 
+## 0.1.15
+
+- `useAiPlatform(platform)` and `AiPlatform` (`./background`): the worker's handlers on a host that is not a Chrome
+  extension (a Node daemon, a desktop app). The host gives what the worker asks of Chrome (storage kept for good,
+  storage for a sign-in in progress, a way to show a consent page, the secrets at rest) and runs
+  `createAiMessageHandler` and `chat` as they are: the same connections, views, sign-ins and messages. Chrome's is the
+  default (`chromePlatform`), so an extension changes nothing.
+- **A saved key goes only to the server it was saved for.** Listing models with a saved connection's credential, and
+  saving a connection while keeping its key, are refused when the provider or the server's origin (scheme, host,
+  port) is not the one the key was saved with: `This connection's key was saved for another server. Enter the key
+  again to use it with this one.` A key typed in the form goes where the form says, as before; a path changed on
+  the same host keeps the key. A UI that could be made to ask (a message forged to the worker) could otherwise
+  have a stored key sent to a server of its choosing.
+  A ChatGPT listing uses a saved sign-in only when it is a ChatGPT one.
+- `apiRoot()` refuses a base URL with a `?`, a `#` or a name and password in it: each request adds its own path to
+  the root, which a query or fragment would swallow.
+- A secret that cannot be opened no longer fails the whole listing: its connection is shown without a key, to be
+  given one again or removed. `createAiClient().get()` throws when the worker could not read the connections,
+  where it handed on `{ ok: false, error }` as if it were the list.
+- The handlers work on a copy of what the host's store hands out: a save that fails leaves nothing half made in a
+  store that returns its own objects.
+- Every handler answers, whatever it throws: storage that cannot be read or a secret that cannot be opened is
+  `{ ok: false, error }`, where the UI was left waiting (and a Node host ended by the unhandled rejection).
+
 ## 0.1.14
 
 - **Presets for a host picker.** Each entry of `OPENAI_COMPATIBLE_PRESETS`

@@ -17,12 +17,36 @@ export interface AiHandlerOptions {
 }
 
 // @public
+export interface AiPlatform {
+    local: {
+        get(key: string): Promise<unknown>;
+        set(key: string, value: unknown): Promise<void>;
+    };
+    openTab(url: string): Promise<void>;
+    secrets: {
+        encryptString(plain: string): Promise<EncBlob>;
+        decryptBlob(blob: EncBlob | null | undefined): Promise<string>;
+        createSigningKey(id: string): Promise<CryptoKeyPair>;
+        getSigningKey(id: string): Promise<CryptoKeyPair | undefined>;
+        deleteSigningKey(id: string): Promise<void>;
+    };
+    session: {
+        get(key: string): Promise<unknown>;
+        set(key: string, value: unknown): Promise<void>;
+        remove(key: string): Promise<void>;
+    };
+}
+
+// @public
 export function chat(req: AIChatRequest, options?: {
     signal?: AbortSignal;
 }): Promise<AIChatResult>;
 
 // @public
 export function chatgptPollDelay(intervalSec: number, slowDowns: number): number;
+
+// @public
+export const chromePlatform: AiPlatform;
 
 // @public
 export const CODEX_CLIENT_VERSION = "0.162.0";
@@ -36,10 +60,19 @@ export function createAiMessageHandler(options?: AiHandlerOptions): (message: {
 }, sendResponse: (r: unknown) => void) => boolean;
 
 // @public
+export interface EncBlob {
+    ct: string;
+    iv: string;
+}
+
+// @public
 export const OPENCODE_BASE = "https://opencode.ai/inference/v1";
 
 // @public
 export function registerAiHandlers(options?: AiHandlerOptions): void;
+
+// @public
+export function useAiPlatform(host?: AiPlatform): void;
 
 // (No @packageDocumentation comment for this package)
 

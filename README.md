@@ -492,6 +492,37 @@ reads them from any provider response you fetch yourself, the headers as a
 `Headers`, a `Map` keyed by lowercase names, or a plain record in any case
 (Node's `IncomingHttpHeaders`).
 
+### The whole worker, on a host that is not an extension
+
+`./core` leaves keys, storage and sign-in to you. A host that wants the
+worker as it is (the saved connections, the redacted view, the sign-in
+flows, token refresh, the same messages as `createAiClient` sends) can run
+`@amenophis1er/byok/background` itself, in Node or a desktop app, by giving
+what the worker asks of Chrome:
+
+```ts
+import { chat, createAiMessageHandler, useAiPlatform, type AiPlatform } from '@amenophis1er/byok/background';
+
+const platform: AiPlatform = {
+  local: { get: async (key) => db.get(key), set: async (key, value) => db.set(key, value) },      // kept for good
+  session: { get: async (k) => mem.get(k), set: async (k, v) => { mem.set(k, v); }, remove: async (k) => { mem.delete(k); } },
+  openTab: async () => {},                    // no browser of its own: the UI opens the address it is given
+  secrets: { encryptString, decryptBlob, createSigningKey, getSigningKey, deleteSigningKey },   // yours: a key from the system keychain, say
+};
+useAiPlatform(platform);                       // once, before the first message
+const handle = createAiMessageHandler({ prefix: 'myapp', openConsentTab: false });
+
+// a message from your UI, over whatever carries it (the same shapes createAiClient sends)
+const answer = await new Promise((resolve) => handle(message, resolve));
+const turn = await chat({ system, messages, tools }, { signal });
+```
+
+The secrets are the host's whole responsibility: `encryptString` and
+`decryptBlob` must round-trip (`''` ↔ `{ iv: '', ct: '' }`), and a signing key
+is an Ed25519 `CryptoKeyPair` kept under an id (an Ollama device key). The
+header rewrites of `dnr-rules.json` are a browser's need; a host with its
+own `fetch` sends what it sends.
+
 ## What the host extension must declare
 
 **Permissions** — `storage`, `declarativeNetRequest` (subscription auth
