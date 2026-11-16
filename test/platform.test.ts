@@ -98,6 +98,18 @@ describe('a host of its own (useAiPlatform)', () => {
     }
     expect((await ask(handle, { type: 'd:ai-list-models', kind: 'anthropic', baseUrl: '', apiKey: '', id })).ok).toBe(false); // nor as another provider's
     expect(calls.length).toBe(sentTo); // nothing left for those
+    // nor to ChatGPT: asked as a ChatGPT listing, a key of another provider is not used (the built-in list answers)
+    const codex = await ask(handle, { type: 'd:ai-list-models', kind: 'chatgpt', baseUrl: '', apiKey: '', id });
+    expect(codex.ok).toBe(true);
+    expect(calls.length).toBe(sentTo);
+    // its own server typed as people type it (no scheme, a trailing slash) is still its own
+    expect((await ask(handle, { type: 'd:ai-list-models', kind: 'openai-compatible', baseUrl: 'api.example.test/v1/', apiKey: '', id })).ok).toBe(true);
+    calls.length = sentTo;
+    // an address that would swallow the request's own path is no API root
+    for (const baseUrl of ['https://api.example.test/private/x?x=', 'https://api.example.test/v1#', 'https://user:pw@api.example.test/v1']) {
+      expect((await ask(handle, { type: 'd:ai-list-models', kind: 'openai-compatible', baseUrl, apiKey: 'sk-typed' })).ok).toBe(false);
+    }
+    expect(calls.length).toBe(sentTo);
     // with a key typed in the form, any server: that key is the form's to send
     expect((await ask(handle, { type: 'd:ai-list-models', kind: 'openai-compatible', baseUrl: 'https://collector.example/v1', apiKey: 'sk-typed', id })).ok).toBe(true);
     expect(calls.at(-1)).toEqual({ url: 'https://collector.example/v1/models', auth: 'Bearer sk-typed' });
@@ -110,6 +122,37 @@ describe('a host of its own (useAiPlatform)', () => {
     expect((await ask(handle, { ...base, baseUrl: 'https://api.example.test/v1', apiKeyMode: 'keep' })).ok).toBe(true); // its model changed, same server
     expect((await ask(handle, { ...base, baseUrl: 'https://collector.example/v1', apiKeyMode: 'set', apiKey: 'sk-new-0000' })).ok).toBe(true); // typed again: its to send
     expect((await ask(handle, { ...base, baseUrl: 'https://third.example/v1', apiKeyMode: 'clear' })).ok).toBe(true); // or cleared
+  });
+
+  it('a secret that cannot be opened does not hide the connections: listed without a key, to be fixed or removed', async () => {
+    vi.stubGlobal('chrome', undefined);
+    const host = await memoryPlatform();
+    useAiPlatform(host.platform);
+    const handle = createAiMessageHandler({ prefix: 'd', openConsentTab: false });
+    const a = await ask(handle, { type: 'd:ai-save-connection', kind: 'openai-compatible', label: 'A', baseUrl: 'https://a.example/v1', model: 'm', apiKeyMode: 'set', apiKey: 'sk-aaaa1111' });
+    await ask(handle, { type: 'd:ai-save-connection', kind: 'openai-compatible', label: 'B', baseUrl: 'https://b.example/v1', model: 'm', apiKeyMode: 'set', apiKey: 'sk-bbbb2222' });
+    // A's secret no longer opens (sealed under a key that is gone)
+    const cfg = host.local.get('aiConnections') as { connections: { id: string; apiKeyEnc: { iv: string; ct: string } }[] };
+    cfg.connections.find((c) => c.id === a.data.id)!.apiKeyEnc.ct = Buffer.from('not what was sealed, at all').toString('base64');
+    const view = await ask(handle, { type: 'd:ai-get' });
+    expect(view.connections.map((c: { label: string; hasKey: boolean; keyHint: string }) => [c.label, c.hasKey, c.keyHint])).toEqual([['A', false, ''], ['B', true, '····2222']]);
+    expect((await ask(handle, { type: 'd:ai-delete-connection', id: a.data.id })).ok).toBe(true);
+  });
+
+  it('what the host\'s store hands out is not changed before it is saved: a save that fails leaves nothing half made', async () => {
+    vi.stubGlobal('chrome', undefined);
+    const host = await memoryPlatform();
+    const kept = new Map<string, unknown>(); // a store that hands out its own objects
+    useAiPlatform({
+      ...host.platform,
+      local: { get: async (k) => kept.get(k), set: async (k, v) => { kept.set(k, v); } },
+      secrets: { ...host.platform.secrets, encryptString: async (plain) => { if (plain === 'boom') throw new Error('no key to seal with'); return host.platform.secrets.encryptString(plain); } },
+    });
+    const handle = createAiMessageHandler({ prefix: 'd', openConsentTab: false });
+    await ask(handle, { type: 'd:ai-save-connection', kind: 'openai-compatible', label: 'One', baseUrl: 'https://a.example/v1', model: 'm', apiKeyMode: 'set', apiKey: 'sk-aaaa1111' });
+    const failed = await ask(handle, { type: 'd:ai-save-connection', kind: 'openai-compatible', label: 'Two', baseUrl: 'https://b.example/v1', model: 'm', apiKeyMode: 'set', apiKey: 'boom' });
+    expect(failed).toEqual({ ok: false, error: 'no key to seal with' });
+    expect((await ask(handle, { type: 'd:ai-get' })).connections.map((c: { label: string }) => c.label)).toEqual(['One']);
   });
 
   it('a handler that fails answers so: storage that cannot be read is an error, not a silence', async () => {

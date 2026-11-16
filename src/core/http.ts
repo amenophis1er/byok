@@ -10,11 +10,19 @@ import { providerDetailsOf, requestIdOf } from './failure.js';
 export const ANTHROPIC_BASE = 'https://api.anthropic.com';
 export const ANTHROPIC_VERSION = '2023-06-01';
 
-/** The API root requests go to; refuses one with an unfilled `{placeholder}`. */
+/**
+ * The API root requests go to; refuses one with an unfilled `{placeholder}`, and one with a `?`, a `#` or a
+ * name and password in it: each request adds its own path to the root, and a root that ends in a query or a
+ * fragment would swallow that path (the request would go wherever the root alone says).
+ */
 export function apiRoot(baseUrl: string): string {
   const base = normalizeBaseUrl(baseUrl);
   const placeholder = /\{[^}]*\}/.exec(base);
   if (placeholder) throw new Error(`Replace ${placeholder[0]} in the base URL with your own value.`);
+  let url: URL | undefined;
+  try { url = new URL(base); } catch { /* not a URL: the request says so */ }
+  if (url && (url.search || url.hash || base.includes('?') || base.includes('#'))) throw new Error('The base URL is the address of the API alone: nothing after a ? or a #.');
+  if (url && (url.username || url.password)) throw new Error('The base URL takes no name or password: the key goes in its own field.');
   return base;
 }
 

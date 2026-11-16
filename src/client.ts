@@ -59,7 +59,13 @@ export function createAiClient(options: { prefix?: string } = {}): AiClient {
     chrome.runtime.sendMessage({ ...payload, type: `${p}:${type}`, v: PROTOCOL_VERSION }) as Promise<T>;
 
   return {
-    get: () => send('ai-get'),
+    // (the one answer that is not a result of its own: a worker that could not read the connections says
+    // { ok: false, error }, which is thrown here rather than handed on as a list of connections)
+    get: async () => {
+      const view = await send<AIConfigView | { ok: false; error?: string }>('ai-get');
+      if (view && 'ok' in view && view.ok === false) throw new Error(view.error || 'The AI connections could not be read.');
+      return view as AIConfigView;
+    },
     setActive: (id) => send('ai-set-active', { id }),
     saveConnection: (input) => send('ai-save-connection', { ...input }),
     deleteConnection: (id) => send('ai-delete-connection', { id }),

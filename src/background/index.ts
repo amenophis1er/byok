@@ -230,8 +230,10 @@ function legacyApiRoot(baseUrl: string): string {
  * Any plaintext key found is encrypted on the way in.
  */
 async function load(): Promise<StoredConfig> {
-  const raw = (await platform.local.get(opts.storageKey)) as Record<string, unknown> | undefined;
-  if (!raw) return empty();
+  const kept = (await platform.local.get(opts.storageKey)) as Record<string, unknown> | undefined;
+  if (!kept) return empty();
+  // a copy: what follows changes it before it is saved, and a host's store may hand out its own object
+  const raw = structuredClone(kept);
 
   // v3 — already migrated. Base URLs become API roots in memory; the next save persists them.
   if (Array.isArray(raw.connections)) {
@@ -319,7 +321,9 @@ async function toView(c: StoredConnection): Promise<ConnectionView> {
       revision: c.revision ?? 0,
     };
   }
-  const key = await decryptBlob(c.apiKeyEnc);
+  // A secret that cannot be opened (the key that sealed it is gone) is shown as none: the connection is still
+  // listed, to be given its key again or removed, and the others with it.
+  const key = await decryptBlob(c.apiKeyEnc).catch(() => '');
   return {
     id: c.id,
     kind: c.kind,
@@ -745,7 +749,8 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
     if (req.kind === 'chrome-builtin') return { ok: true, data: await coreListModels({ kind: 'chrome-builtin', baseUrl: '' }, '') };
     // The Codex catalog, for the signed-in account; the curated list when it cannot be fetched.
     if (req.kind === 'chatgpt') {
-      return { ok: true, data: stored ? await codexModelsFor(stored) : fallbackCodexModels() };
+      // (the saved sign-in only when it is a ChatGPT one: another connection's key has nothing to do at chatgpt.com)
+      return { ok: true, data: stored?.kind === 'chatgpt' ? await codexModelsFor(stored) : fallbackCodexModels() };
     }
     // The form's kind and base URL, which may be edited, and the saved sign-in's auth. A key typed in
     // the form is tried as itself, a plain Bearer, not under the saved sign-in's issuer.
@@ -755,7 +760,7 @@ async function listModels(req: AIListModelsRequest): Promise<AIResult<ModelInfo[
       ...(stored && !req.apiKey ? { issuer: stored.issuer, orgId: stored.orgId } : {}),
     };
     // The saved credential goes only where it was saved for: a form whose server was changed lists with a key typed in it.
-    if (stored && !req.apiKey && !sameDestination(stored, req.kind, conn.baseUrl)) return { ok: false, error: ELSEWHERE };
+    if (stored && !req.apiKey && !sameDestination(stored, req.kind, conn.baseUrl ? apiRoot(conn.baseUrl) : '')) return { ok: false, error: ELSEWHERE };
     const credential = req.apiKey || (stored ? await credentialFor(stored) : '');
     return { ok: true, data: await coreListModels(conn, credential) };
   } catch (error) {
